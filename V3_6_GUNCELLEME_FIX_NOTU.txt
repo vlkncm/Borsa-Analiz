@@ -1,0 +1,19 @@
+BORSA ANALİZ PRO MAX v3.6 — LİSTE GÜNCELLEME DÜZELTMESİ
+
+DÜZELTİLEN HATALAR
+1. pandas.read_html ham HTML'yi dosya yolu sanıyordu.
+   Çözüm: StringIO kullanıldı.
+2. KAP yeni Next.js yapısına geçti.
+   Çözüm: Sayfa içindeki stockCode alanları okunuyor.
+3. Güncelleme tamamlandıktan sonra düğmeye tekrar basıldığında
+   silinmiş Qt thread nesnesine erişim riski vardı.
+   Çözüm: Thread referansları güvenli biçimde temizleniyor.
+4. Kaynak güncelleme başarısızlığı programı durdurmuyor.
+   Son güvenilir liste kullanılmaya devam ediyor.
+
+TEST
+- Programı aç.
+- Otomatik güncellemenin bitmesini bekle.
+- Listeleri Güncelle düğmesine tekrar bas.
+- Beklenmeyen Hata penceresi çıkmamalı.
+- Durum kutusunda bulunan hisse ve halka arz sayısı görünmeli.

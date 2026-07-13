@@ -1,0 +1,8 @@
+BORSA ANALİZ PRO MAX v3.0
+
+- 2-6 Hafta Test menüden kaldırıldı.
+- Bugünün Fırsatları ekranı eklendi.
+- En güçlü 10 aday ayrı gösterilir.
+- Bir hisseye çift tıklayınca ayrıntı penceresi açılır.
+- AI Güven Puanı ücretli yapay zekâ değildir; mevcut analiz katmanlarının birleşik puanıdır.
+- Excel raporunda Bugunun Firsatlari sayfası oluşur.

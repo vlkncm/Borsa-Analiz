@@ -1,0 +1,14 @@
+V3.1 YASAL / PROFESYONEL HAZIRLIK
+
+- İlk açılışta zorunlu sorumluluk reddi onayı
+- Her zaman görünen alt uyarı bandı
+- Yasal Uyarı / Hakkında menüsü
+- Kullanıcı arayüzünde AL/SAT yerine daha nötr görünüm ifadeleri
+- AI Güven Puanı yerine Algoritmik Güven Puanı ifadesi
+- Excel'de Yasal Uyarı sayfası ve Dashboard uyarısı
+- TXT raporunun başında sorumluluk reddi
+- Kurulumda kullanım koşullarını kabul etme ekranı
+- Kurulum klasörüne lisans, sorumluluk reddi ve gizlilik dosyaları
+- 2-6 Hafta Test sayfası rapordan kaldırıldı
+
+Bu düzenlemeler hukuki danışmanlığın yerini tutmaz.

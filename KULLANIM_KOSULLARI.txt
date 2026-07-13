@@ -1,0 +1,14 @@
+BORSA ANALİZ PRO MAX — KULLANIM KOŞULLARI VE SORUMLULUK REDDİ
+
+1. Bu yazılım yatırım danışmanlığı, portföy yöneticiliği, aracılık veya kişiye özel yatırım tavsiyesi hizmeti sunmaz.
+2. Yazılımın ürettiği tüm puan, sıralama, görünüm, hedef, stop, olasılık, grafik ve metinler genel nitelikte algoritmik karar destek çıktılarıdır.
+3. Hiçbir çıktı kesin getiri, fiyat hareketi, tavan, kâr veya zarardan korunma garantisi vermez.
+4. Kullanılan fiyat, haber, KAP, faaliyet raporu ve diğer veriler gecikebilir, eksik veya hatalı olabilir. Kullanıcı işlem öncesinde resmi kaynaklardan doğrulama yapmalıdır.
+5. Geçmiş performans ve backtest sonuçları gelecekteki performansın garantisi değildir.
+6. Kullanıcı yatırım kararını kendi mali durumu, bilgi düzeyi ve risk tercihine göre verir. Doğabilecek finansal sonuçlardan kullanıcı sorumludur.
+7. Yazılım sahibi veri kesintileri, hesaplama hataları, gecikmeler, kullanıcı işlemleri veya finansal kayıplardan sorumlu değildir.
+8. Yazılım otomatik emir iletmez ve kullanıcının hesabına erişmez.
+9. Yazılımın izinsiz kopyalanması, yeniden satılması veya değiştirilerek dağıtılması yasaktır.
+10. Bu koşulların kabulü yürürlükteki mevzuattan doğan vazgeçilemez hakları ortadan kaldırmaz.
+
+ÖNEMLİ: Sadece “yatırım tavsiyesi değildir” ibaresi kullanmak, izne tabi bir faaliyeti kendiliğinden hukuka uygun hale getirmez. Ürünün satış modeli, reklam metinleri ve işlevleri piyasaya sunulmadan önce uzman hukukçu tarafından incelenmelidir.

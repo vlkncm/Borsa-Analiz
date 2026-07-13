@@ -1,0 +1,23 @@
+BORSA ANALİZ PRO MAX v4.2 — DASHBOARD VE TEMETTÜ DÜZENLEMESİ
+
+DASHBOARD
+- Excel Dashboard tamamen yeniden düzenlendi.
+- Dekoratif boş hücrelere “Veri yok” yazılmıyor.
+- KPI kartları ayrı bloklarda gösteriliyor.
+- İlk 10 aday sade sütunlarla listeleniyor.
+- En yakın 5 temettü Dashboard'a eklendi.
+- Uygulama Dashboard'ında adaylar ve temettüler ayrı panellerde gösteriliyor.
+- Verilerin birbirine girmesini önlemek için esnek düzen kullanılıyor.
+
+TEMETTÜ
+- Yaklaşan temettüler en yakın tarihten uzağa sıralanıyor.
+- Kalan Gün kolonu eklendi.
+- Bugün ve sonraki 7 gün renkle vurgulanıyor.
+- Tarihi geçmiş ödemeler yaklaşanların altında.
+- Tarihi olmayan kayıtlar en altta ve ödeme geçmişine göre sıralı.
+
+KURULUM
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+
+OLUŞACAK DOSYA
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.2.0.exe

@@ -1,0 +1,40 @@
+BORSA ANALİZ PRO MAX v4.0 BETA
+
+BU PAKETTEKİ TEMEL DEĞİŞİKLİKLER
+
+1. DOĞRULANMIŞ HİSSE EVRENİ
+- Kullanıcının başarılı analizinden doğrulanan 581 gerçek fiyat verili sembol pakete eklendi.
+- Varant, fon veya Yahoo'da fiyat verisi olmayan kodların çoğu ana taramadan çıkarıldı.
+- Her başarılı tarama sonunda doğrulanmış liste yeniden kaydedilir.
+
+2. YENİ ÇOK KATMANLI PUANLAMA
+- Trend %18
+- Momentum %14
+- Hacim %9
+- Risk/Getiri %14
+- Çoklu zaman dilimi %10
+- Temel analiz %10
+- KAP/Haber %8
+- Faaliyet raporu %7
+- Makro %5
+- Tarihsel olasılık %5
+
+3. GERÇEKÇİ GÜVEN PUANI
+- Tek bir RSI, MACD veya hacim sinyali 100 puan üretemez.
+- Üst sınır 97'dir.
+- Güçlü AL için güven, risk/getiri ve MTF uyumu birlikte aranır.
+
+4. 2-6 HAFTA PUANI
+- Ayrı v4 2-6 Hafta puanı hesaplanır.
+- Katı aday filtresi v4 güven puanını kullanır.
+
+5. UYUMLULUK
+- Eski ekranlar çalışmaya devam etsin diye Broker Skor ve Broker Aksiyon alanları v4 sonucuyla güncellenir.
+
+KURULUM DOSYASI
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+Çıktı:
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.0.0.exe
+
+NOT
+Bu sürüm v4.0 BETA'dır. Gerçek piyasa verisiyle en az birkaç tam tarama ve sonuç kontrolü yapılmadan ticari final sürüm olarak dağıtılmamalıdır.

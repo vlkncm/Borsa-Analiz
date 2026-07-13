@@ -1,0 +1,14 @@
+BORSA ANALİZ PRO MAX v3.5
+
+Doldurulan yeni alanlar:
+- 15 günlük teknik görünüm ve olası fiyat bandı
+- Algoritmik teknik yorum
+- Teknik risk seviyesi
+- EMA200, ATR, ADX
+- 20 ve 60 günlük getiri
+- Ana destek/direnç
+- Risk/getiri oranları
+- Trend yönü ve olasılık puanı
+
+Veri kaynağında bulunmayan metinler “Veri yok” olarak gösterilir.
+15 günlük görünüm kesin fiyat veya getiri garantisi değildir.

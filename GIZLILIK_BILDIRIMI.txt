@@ -1,0 +1,3 @@
+GİZLİLİK BİLDİRİMİ
+
+Bu sürüm kullanıcıdan ad, e-posta, telefon, aracı kurum bilgisi veya portföy parolası istemez. Uygulama analiz raporlarını kullanıcının Belgeler klasöründe saklar. Harici veri sağlayıcılarına yalnızca kamuya açık piyasa verisi talepleri gönderilir. Gelecekte hesap, lisans, ödeme veya telemetri özellikleri eklenirse bu bildirim güncellenmelidir.

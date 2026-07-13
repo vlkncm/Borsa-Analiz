@@ -1,0 +1,25 @@
+BORSA ANALİZ PRO MAX v2.0 — TEK TIKLA KURULUM HAZIRLAMA
+
+1. Bu ZIP dosyasını bilgisayarında bir klasöre çıkar.
+2. Çıkan klasörü aç.
+3. EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıkla.
+4. İlk çalıştırmada paketlerin kurulması birkaç dakika sürebilir.
+5. İşlem bitince SetupOutput klasörü otomatik açılır.
+6. Paylaşacağın tek dosya:
+
+   Setup_Borsa_Analiz_Pro_MAX_v2.0.1.exe
+
+Karşı bilgisayarda Python, PyCharm veya Inno Setup gerekmez.
+Sadece Setup dosyasını çalıştırması yeterlidir.
+
+Geliştirici bilgisayarında gerekenler:
+- Python / PyCharm Python ortamı
+- Inno Setup 6
+- İnternet bağlantısı (ilk paket kurulumunda)
+
+Uyarı:
+Program yatırım tavsiyesi değildir. Faaliyet raporu ve KAP verileri ücretsiz web
+kaynaklarıyla alınır; bazı şirketlerde veri bulunamayabilir.
+
+
+Duzeltme v2.0.1: rapor_yazdir limit parametresi uyumsuzlugu giderildi.

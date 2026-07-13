@@ -1,0 +1,34 @@
+BORSA ANALİZ PRO MAX v3.3 — STABİL SÜRÜM
+
+Bu sürümde yapılan sağlamlaştırmalar:
+
+1. KAP/SPK isteklerinde 3 kez yeniden deneme
+2. Zaman aşımı ve HTTP hata yönetimi
+3. Yeni BIST listesini kabul etmeden önce:
+   - En az 350, en fazla 900 sembol kontrolü
+   - Sembol biçimi kontrolü
+   - Tekrarlanan sembol kontrolü
+   - Önceki listeye göre anormal değişim kontrolü
+4. Bozuk yeni listeyi reddedip son güvenilir listeye dönüş
+5. Dosyaları önce geçici dosyaya yazıp sonra değiştirme (atomik kayıt)
+6. Veri yaşı göstergesi
+7. Hata logları
+8. Beklenmeyen arayüz hatalarında global hata yakalama
+9. Excel izin hatasında tarih-saatli yeni rapor dosyasına dönüş
+10. İnternet kesilse bile önbellekle devam
+11. Sistem kontrol modülü
+12. Tek EXE + Setup paketi
+
+ÖNEMLİ:
+Hiçbir internet tabanlı yazılım için “sıfır hata” garantisi verilemez.
+Bu sürümün amacı, dış kaynak hatalarında çökmek yerine güvenli biçimde devam etmektir.
+
+TEST SIRASI:
+- Uygulamayı internet açıkken çalıştır
+- Listeleri Güncelle düğmesine bas
+- Analizi başlat
+- Excel ve grafikleri aç
+- İnterneti kapat
+- Programı yeniden aç
+- Eski güvenilir listelerle devam ettiğini doğrula
+- Halka Arzlar sayfasının açıldığını doğrula

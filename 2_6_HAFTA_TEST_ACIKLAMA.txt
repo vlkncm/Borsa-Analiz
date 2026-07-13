@@ -1,0 +1,14 @@
+2-6 HAFTA BÖLÜMÜ NASIL TEST EDİLİR?
+
+1. Analizi tamamlayın.
+2. Uygulamada '2-6 Hafta Potansiyel' bölümünü açın.
+   - Katı filtreyi geçen hisse varsa burada görünür.
+   - Hiçbiri geçmezse yakın adaylar ve Bilgi sütunu görünür.
+3. '2-6 Hafta Test' bölümünü açın.
+4. Her hisse için:
+   - Geçen Şart Sayısı
+   - Elenme Nedeni
+   - Altı ayrı şartın True/False sonucu
+   görülebilir.
+
+Bu sistem kesin getiri tahmini değildir; geçmiş veri ve teknik koşullara dayalı aday filtresidir.

@@ -1,0 +1,22 @@
+BORSA ANALİZ PRO MAX v4.1 — STABİLİTE VE HIZ
+
+KRİTİK DÜZELTME
+- MergedCell salt okunur hücre hatası giderildi.
+- Birleştirilmiş Excel hücreleri boş hücre doldurma işleminde atlanıyor.
+
+YAHOO HATALARI
+- HTTP 500/503 ve bağlantı sorunlarında 3 kez yeniden deneme yapılır.
+- Veri yine alınamazsa ilgili hisse atlanır; tarama tamamen durmaz.
+
+RAPOR GÜVENLİĞİ
+- Excel kaydı başarısız olursa CSV acil yedek oluşturulur.
+
+HIZLI AÇILIŞ
+- PyInstaller --onefile yerine --onedir kullanılır.
+- Kullanıcıya yine tek Setup.exe verilir.
+- Program açılırken 300 MB paket her seferinde geçici klasöre çıkarılmaz.
+- Python veya PyCharm gerekmez.
+- Terminal açılmaz.
+
+KURULUM DOSYASI
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.1.0.exe

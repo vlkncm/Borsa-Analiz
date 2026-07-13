@@ -1,0 +1,14 @@
+BORSA ANALİZ PRO MAX v4.1.1 — BUILD DÜZELTMESİ
+
+PyInstaller derlemeyi başarıyla tamamlıyordu; ancak BAT dosyası eski yolu kontrol ediyordu.
+
+Eski yol:
+dist\BorsaAnalizProMAX.exe
+
+Doğru onedir yolu:
+dist\BorsaAnalizProMAX\BorsaAnalizProMAX.exe
+
+Bu sürümde BAT kontrolü ve Inno Setup kaynak yolu düzeltildi.
+
+Oluşacak kurulum:
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.1.1.exe

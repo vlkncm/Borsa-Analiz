@@ -1,0 +1,18 @@
+BORSA ANALİZ PRO MAX v4.2.1 — MERGEDCELL KRİTİK DÜZELTME
+
+HATANIN NEDENİ
+Dashboard kartı A4:B7 şeklinde tek parça birleştiriliyordu.
+Program daha sonra A6 hücresine değer yazmaya çalışıyordu.
+A6 bir MergedCell olduğu için salt okunur hatası oluşuyordu.
+
+DÜZELTME
+- Başlık alanı ve değer alanı ayrı ayrı birleştirildi.
+- Örnek:
+  Başlık: A4:B5
+  Değer:  A6:B7
+- Değer yalnızca birleştirilmiş alanın sol üst hücresine yazılıyor.
+- Ek güvenlik için guvenli_hucre_yaz yardımcı fonksiyonu eklendi.
+- CSV acil yedek sistemi korunuyor.
+
+OLUŞACAK KURULUM
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.2.1.exe

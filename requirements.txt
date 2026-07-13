@@ -1,0 +1,15 @@
+PySide6
+pandas
+numpy
+yfinance
+openpyxl
+requests
+matplotlib
+Pillow
+pypdf
+beautifulsoup4
+pyinstaller
+
+lxml
+
+html5lib

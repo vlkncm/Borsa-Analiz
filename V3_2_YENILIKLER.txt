@@ -1,0 +1,16 @@
+BORSA ANALİZ PRO MAX v3.2 — PİYASA LİSTESİ VE HALKA ARZ GÜNCELLEMESİ
+
+YENİ ÖZELLİKLER
+- Uygulama açıldığında KAP'taki BIST şirket listesi arka planda kontrol edilir.
+- Başarılı güncelleme Documents/Borsa Analiz Pro MAX/piyasa_verileri klasörüne kaydedilir.
+- Analiz motoru güncel liste varsa onu, yoksa EXE içindeki başlangıç listesini kullanır.
+- SPK'nın İlk Halka Arz Başvurusu sayfası okunur.
+- SPK'nın İlk Halka Arz Verileri sayfasıyla karşılaştırma yapılır.
+- Sol menüye Halka Arzlar ekranı eklenmiştir.
+- İnternet veya resmî sayfa erişimi başarısız olursa son başarılı önbellek kullanılır.
+- Sol menüde LİSTELERİ GÜNCELLE düğmesiyle elle yenileme yapılabilir.
+
+ÖNEMLİ
+- 'Başvuru yapıldı' ifadesi halka arzın onaylandığı anlamına gelmez.
+- Talep toplama tarihleri ve nihai fiyatlar işlem öncesinde SPK, KAP ve Borsa İstanbul'dan doğrulanmalıdır.
+- Resmî sitelerin sayfa yapısı değişirse otomatik okuma geçici olarak çalışmayabilir; program gömülü/önbellek listeyle devam eder.

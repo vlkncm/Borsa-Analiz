@@ -1,0 +1,22 @@
+BORSA ANALİZ PRO MAX v3.4 — STABİL VE RESPONSIVE SÜRÜM
+
+BU SÜRÜMDE DÜZELTİLENLER
+- Sol menü farklı ekran boyutlarında taşmayacak şekilde yeniden tasarlandı.
+- Menü seçenekleri kaydırılabilir hale getirildi.
+- Güncelleme durumu ayrı kutuya alındı.
+- Analiz, güncelleme ve rapor düğmeleri altta sabitlendi.
+- Buton aralıkları ve yükseklikleri düzeltildi.
+- Alt yasal uyarı çubuğunun yazısı artık kesilmiyor.
+- İlk açılışta “0 hisse” yerine “Henüz güncellenmedi” gösteriliyor.
+- v3.3 güvenli liste doğrulama, önbellek, yeniden deneme ve hata kaydı korumaları devam ediyor.
+
+KURULUM DOSYASINI OLUŞTURMA
+1. EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+2. İşlem tamamlanınca SetupOutput klasörü açılır.
+3. Paylaşılacak dosya:
+   Setup_Borsa_Analiz_Pro_MAX_v3.4.0.exe
+
+GERÇEKÇİ GÜVENİLİRLİK NOTU
+İnternet, Yahoo, KAP, SPK veya Windows kaynaklı dış hatalar tamamen engellenemez.
+Bu sürüm, dış hata oluştuğunda çökmek yerine son güvenilir veriyle devam edecek
+ve hatayı log dosyasına yazacak şekilde hazırlanmıştır.
