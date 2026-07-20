@@ -357,6 +357,12 @@ def tabloya_cevir(results):
             "Formasyon": item.get("formasyon", ""),
             "Formasyon Puanı": item.get("formasyon_puani", 0),
             "Formasyon Notu": item.get("formasyon_notu", ""),
+            "Formasyon Yönü": item.get("formasyon_yonu", "NÖTR"),
+            "Formasyon Teyit": item.get("formasyon_teyit", "Hayır"),
+            "Formasyon Kırılım": round(item.get("formasyon_kirilim", 0), 2),
+            "Formasyon Hedef": round(item.get("formasyon_hedef", 0), 2),
+            "Formasyon Stop": round(item.get("formasyon_stop", 0), 2),
+            "Diğer Formasyon Adayları": item.get("formasyon_adaylari", ""),
             "Ana Destek": round(item.get("ana_destek", 0), 2),
             "Ana Direnç": round(item.get("ana_direnc", 0), 2),
             "Destek Gücü": item.get("destek_gucu", 0),
@@ -851,6 +857,20 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     df = tabloya_cevir(results)
     potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
     firsatlar_df = bugunun_firsatlari_hazirla(df)
+    formasyon_kolonlari = [
+        "Hisse", "Formasyon", "Formasyon Puanı", "Formasyon Yönü",
+        "Formasyon Teyit", "Formasyon Kırılım", "Formasyon Hedef",
+        "Formasyon Stop", "Fiyat", "v4 Güven Puanı", "Formasyon Notu",
+        "Diğer Formasyon Adayları"
+    ]
+    formasyon_kolonlari = [c for c in formasyon_kolonlari if c in df.columns]
+    formasyon_df = df[
+        (df["Formasyon"].fillna("") != "") &
+        (df["Formasyon"].fillna("") != "Belirgin formasyon yok")
+    ][formasyon_kolonlari].sort_values(
+        ["Formasyon Teyit", "Formasyon Puanı"],
+        ascending=[True, False]
+    ) if "Formasyon" in df.columns else pd.DataFrame()
 
     output_dir = output_klasoru()
 
@@ -873,6 +893,8 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         dashboard_olustur(writer, df, baslangic_zamani, temettu_df)
         firsatlar_df.to_excel(writer, index=False, sheet_name="Bugunun Firsatlari")
         df.to_excel(writer, index=False, sheet_name="Tum Sonuclar")
+        if not formasyon_df.empty:
+            formasyon_df.to_excel(writer, index=False, sheet_name="Formasyonlar")
         df[df["Broker Aksiyon"] == "GÜÇLÜ AL"].head(50).to_excel(writer, index=False, sheet_name="Guclu AL")
         df[df["Broker Aksiyon"] == "AL"].head(50).to_excel(writer, index=False, sheet_name="AL")
         df[df["Broker Aksiyon"] == "TUT"].head(50).to_excel(writer, index=False, sheet_name="TUT")
@@ -970,7 +992,7 @@ def ozet_yazdir(results, baslangic_zamani):
 
 def main():
     baslangic_zamani = time.time()
-    print("Borsa Analiz Pro MAX v4.2.1 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    print("Borsa Analiz Pro MAX v4.4 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     hisseler = hisseleri_txt_oku()
     print(f"Toplam taranacak hisse: {len(hisseler)}")

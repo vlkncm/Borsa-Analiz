@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from piyasa_guncelleme import tum_listeleri_guncelle, cache_halka_arz_oku, veri_yasi_gun
+from takip_modulu import takip_listesini_oku, takip_listesini_yaz, takip_fiyatlarini_getir, normalize_sembol
 
 
 def global_exception_hook(exc_type, exc_value, exc_traceback):
@@ -587,10 +588,195 @@ class YasalUyariSayfasi(QWidget):
         layout.addWidget(metin)
 
 
+
+class TakipFiyatWorker(QObject):
+    finished = Signal(bool, object, str)
+
+    def __init__(self, semboller):
+        super().__init__()
+        self.semboller = list(semboller)
+
+    def run(self):
+        try:
+            df = takip_fiyatlarini_getir(self.semboller)
+            self.finished.emit(True, df, "Takip listesi güncellendi.")
+        except Exception:
+            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+
+
+class TakipListesiSayfasi(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.semboller = takip_listesini_oku()
+        self.thread = None
+        self.worker = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        baslik = QLabel("Takip Listem")
+        baslik.setObjectName("pageTitle")
+        layout.addWidget(baslik)
+
+        aciklama = QLabel(
+            "Yalnızca seçtiğin hisselerin son fiyat, günlük değişim, yüksek, düşük ve hacim bilgilerini yeniler."
+        )
+        aciklama.setObjectName("subText")
+        aciklama.setWordWrap(True)
+        layout.addWidget(aciklama)
+
+        ust = QHBoxLayout()
+        self.sembol_giris = QLineEdit()
+        self.sembol_giris.setPlaceholderText("Örnek: ASELS veya ASELS.IS")
+        self.sembol_giris.returnPressed.connect(self.ekle)
+        ust.addWidget(self.sembol_giris, 1)
+
+        ekle_btn = QPushButton("TAKİBE EKLE")
+        ekle_btn.clicked.connect(self.ekle)
+        ust.addWidget(ekle_btn)
+
+        cikar_btn = QPushButton("SEÇİLİYİ ÇIKAR")
+        cikar_btn.clicked.connect(self.seciliyi_cikar)
+        ust.addWidget(cikar_btn)
+
+        self.yenile_btn = QPushButton("FİYATLARI YENİLE")
+        self.yenile_btn.setObjectName("startButton")
+        self.yenile_btn.clicked.connect(self.fiyatlari_yenile)
+        ust.addWidget(self.yenile_btn)
+        layout.addLayout(ust)
+
+        self.durum = QLabel()
+        self.durum.setObjectName("subText")
+        layout.addWidget(self.durum)
+
+        self.tablo = QTableWidget()
+        self.tablo.setAlternatingRowColors(True)
+        self.tablo.setSortingEnabled(True)
+        self.tablo.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tablo.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tablo.verticalHeader().setVisible(False)
+        self.tablo.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.tablo, 1)
+
+        self.listeyi_goster()
+
+    def listeyi_goster(self):
+        rows = [{"Hisse": s.replace(".IS", "")} for s in self.semboller]
+        self._tablo_yaz(pd.DataFrame(rows, columns=["Hisse"]))
+        self.durum.setText(f"Takip edilen hisse sayısı: {len(self.semboller)}")
+
+    def ekle(self):
+        sembol = normalize_sembol(self.sembol_giris.text())
+        if not sembol:
+            QMessageBox.warning(self, "Geçersiz Hisse", "Geçerli bir BIST kodu yaz. Örnek: ASELS")
+            return
+        if sembol not in self.semboller:
+            self.semboller.append(sembol)
+            self.semboller = sorted(set(self.semboller))
+            takip_listesini_yaz(self.semboller)
+        self.sembol_giris.clear()
+        self.listeyi_goster()
+
+    def seciliyi_cikar(self):
+        satirlar = sorted({index.row() for index in self.tablo.selectionModel().selectedRows()}, reverse=True)
+        if not satirlar:
+            QMessageBox.information(self, "Seçim Yok", "Çıkarmak istediğin hisse satırını seç.")
+            return
+
+        silinecek = []
+        for row in satirlar:
+            item = self.tablo.item(row, 0)
+            if item:
+                silinecek.append(normalize_sembol(item.text()))
+
+        self.semboller = [s for s in self.semboller if s not in silinecek]
+        takip_listesini_yaz(self.semboller)
+        self.listeyi_goster()
+
+    def fiyatlari_yenile(self):
+        if not self.semboller:
+            QMessageBox.information(self, "Takip Listesi Boş", "Önce en az bir hisse ekle.")
+            return
+
+        try:
+            if self.thread is not None and self.thread.isRunning():
+                return
+        except RuntimeError:
+            self.thread = None
+            self.worker = None
+
+        self.yenile_btn.setEnabled(False)
+        self.durum.setText("Seçili hisselerin fiyatları güncelleniyor...")
+
+        self.thread = QThread()
+        self.worker = TakipFiyatWorker(self.semboller)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._yenileme_bitti)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self._thread_temizle)
+        self.thread.start()
+
+    def _thread_temizle(self):
+        thread = self.thread
+        self.worker = None
+        self.thread = None
+        if thread is not None:
+            try:
+                thread.deleteLater()
+            except RuntimeError:
+                pass
+
+    def _yenileme_bitti(self, basarili, df, mesaj):
+        self.yenile_btn.setEnabled(True)
+        if basarili:
+            self._tablo_yaz(df)
+            self.durum.setText(
+                f"{len(df)} hisse güncellendi — {datetime.now().strftime('%H:%M:%S')}"
+            )
+        else:
+            self.durum.setText("Fiyatlar güncellenemedi.")
+            QMessageBox.warning(self, "Güncelleme Hatası", mesaj)
+
+    def _tablo_yaz(self, df):
+        self.tablo.setSortingEnabled(False)
+        self.tablo.clear()
+        self.tablo.setRowCount(len(df))
+        self.tablo.setColumnCount(len(df.columns))
+        self.tablo.setHorizontalHeaderLabels([str(c) for c in df.columns])
+
+        for r, (_, row) in enumerate(df.iterrows()):
+            for c, value in enumerate(row):
+                if pd.isna(value):
+                    text = "-"
+                elif isinstance(value, float):
+                    text = f"{value:.2f}"
+                elif isinstance(value, int) and str(df.columns[c]) == "Hacim":
+                    text = f"{value:,}".replace(",", ".")
+                else:
+                    text = str(value)
+
+                item = QTableWidgetItem(text)
+                if str(df.columns[c]) == "Günlük Değişim %":
+                    try:
+                        number = float(value)
+                        if number > 0:
+                            item.setForeground(Qt.green)
+                        elif number < 0:
+                            item.setForeground(Qt.red)
+                    except Exception:
+                        pass
+                self.tablo.setItem(r, c, item)
+
+        self.tablo.setSortingEnabled(True)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v4.1")
+        self.setWindowTitle(APP_NAME + " v4.4")
         self.resize(1500, 900)
         icon = uygulama_klasoru()/"logo.ico"
         if icon.exists(): self.setWindowIcon(QIcon(str(icon)))
@@ -618,10 +804,12 @@ class MainWindow(QMainWindow):
         self.dashboard = Dashboard(); self.firsatlar = FirsatlarSayfasi(); self.tum = VeriTablosu("Tüm Sonuçlar"); self.pot = VeriTablosu("2-6 Hafta Potansiyel")
         self.tem = VeriTablosu("Temettü Takibi"); self.kap = VeriTablosu("KAP / Haber")
         self.faaliyet = VeriTablosu("Faaliyet Raporları")
+        self.formasyonlar = VeriTablosu("Formasyonlar")
+        self.takip = TakipListesiSayfasi()
         self.halka_arz = VeriTablosu("Halka Arzlar — SPK Başvuruları ve Tamamlanan Arzlar")
         self.back = VeriTablosu("Backtest")
         self.graf = GrafiklerSayfasi(); self.raporlar = RaporlarSayfasi(self); self.log = self.log_sayfasi(); self.yasal = YasalUyariSayfasi()
-        for w in [self.dashboard,self.firsatlar,self.tum,self.pot,self.tem,self.kap,self.faaliyet,self.halka_arz,self.back,self.graf,self.raporlar,self.log,self.yasal]: self.stack.addWidget(w)
+        for w in [self.dashboard,self.firsatlar,self.tum,self.pot,self.tem,self.kap,self.faaliyet,self.formasyonlar,self.takip,self.halka_arz,self.back,self.graf,self.raporlar,self.log,self.yasal]: self.stack.addWidget(w)
         self.stil_uygula()
         r = en_yeni_excel()
         if r: self.rapor_yukle(r)
@@ -657,7 +845,7 @@ class MainWindow(QMainWindow):
             logo_label.setMaximumHeight(110)
             ana_layout.addWidget(logo_label)
 
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v4.2.1")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v4.4")
         brand.setAlignment(Qt.AlignCenter)
         brand.setObjectName("brand")
         brand.setMaximumHeight(66)
@@ -684,12 +872,14 @@ class MainWindow(QMainWindow):
             ("Temettü Takibi", 4),
             ("KAP / Haber", 5),
             ("Faaliyet Raporları", 6),
-            ("Halka Arzlar", 7),
-            ("Backtest", 8),
-            ("Grafikler", 9),
-            ("Raporlar", 10),
-            ("Canlı Log", 11),
-            ("Yasal Uyarı / Hakkında", 12),
+            ("Formasyonlar", 7),
+            ("Takip Listem", 8),
+            ("Halka Arzlar", 9),
+            ("Backtest", 10),
+            ("Grafikler", 11),
+            ("Raporlar", 12),
+            ("Canlı Log", 13),
+            ("Yasal Uyarı / Hakkında", 14),
         ]
 
         for text, index in menu_items:
@@ -749,7 +939,7 @@ class MainWindow(QMainWindow):
 
     def sayfa_degistir(self,index):
         self.stack.setCurrentIndex(index)
-        if index==9: self.graf.yenile()
+        if index==11: self.graf.yenile()
 
 
     def piyasa_guncelle_baslat(self):
@@ -830,7 +1020,7 @@ class MainWindow(QMainWindow):
     def analiz_baslat(self):
         if self.analysis_thread and self.analysis_thread.isRunning():
             QMessageBox.information(self,"Analiz devam ediyor","Analiz zaten çalışıyor."); return
-        self.log_alani.clear(); self.stack.setCurrentIndex(11); self.analiz_buton.setEnabled(False); self.analiz_buton.setText("ANALİZ ÇALIŞIYOR...")
+        self.log_alani.clear(); self.stack.setCurrentIndex(13); self.analiz_buton.setEnabled(False); self.analiz_buton.setText("ANALİZ ÇALIŞIYOR...")
         self.analysis_thread=QThread(); self.analysis_worker=AnalysisWorker(); self.analysis_worker.moveToThread(self.analysis_thread)
         self.analysis_thread.started.connect(self.analysis_worker.run); self.analysis_worker.log.connect(self.log_ekle); self.analysis_worker.finished.connect(self.analiz_bitti); self.analysis_worker.finished.connect(self.analysis_thread.quit)
         self.analysis_thread.start()
@@ -876,6 +1066,7 @@ class MainWindow(QMainWindow):
             self.kap.dataframe_yukle(tum[cols] if cols else tum)
         else: self.kap.dataframe_yukle(pd.DataFrame())
         self.faaliyet.dataframe_yukle(sayfalar.get("Faaliyet Raporlari", pd.DataFrame()))
+        self.formasyonlar.dataframe_yukle(sayfalar.get("Formasyonlar", pd.DataFrame()))
         b=sayfalar.get("Backtest Ozet",pd.DataFrame())
         if b.empty: b=sayfalar.get("Backtest Islemler",pd.DataFrame())
         self.back.dataframe_yukle(b); self.graf.yenile(); self.raporlar.guncelle(rapor)

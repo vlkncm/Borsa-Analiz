@@ -1,0 +1,33 @@
+BORSA ANALİZ PRO MAX v4.3 — FORMASYON MOTORU
+
+EKLENEN FORMASYONLAR
+- Omuz Baş Omuz (OBO)
+- Ters Omuz Baş Omuz (TOBO)
+- Bayrak
+- Flama
+- Fincan Kulp
+- İkili Dip / İkili Tepe
+- Üçlü Dip / Üçlü Tepe
+- Çanak / Ters Çanak
+- Düşen Kama / Yükselen Kama
+
+HER FORMASYON İÇİN
+- Güven puanı
+- Yukarı / aşağı yön
+- Kırılım teyidi
+- Kırılım seviyesi
+- Olası teknik hedef
+- Formasyona özel stop
+- Açıklama
+- Diğer olası formasyon adayları
+
+GÜVENLİK
+- Formasyon tek başına AL/SAT kararı üretmez.
+- Sadece teyitli ve güçlü formasyonlar v4 puanına sınırlı katkı yapar.
+- Hacim teyidi güven puanını artırır.
+- Formasyon sonuçları olasılıksal teknik yorumdur; kesinlik içermez.
+
+KURULUM
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+Çıktı:
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.3.0.exe

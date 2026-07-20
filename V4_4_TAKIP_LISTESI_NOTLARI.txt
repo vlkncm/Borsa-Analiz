@@ -1,0 +1,27 @@
+BORSA ANALİZ PRO MAX v4.4 — TAKİP LİSTESİ VE HIZLI FİYAT
+
+YENİ ÖZELLİK
+- Sol menüye Takip Listem bölümü eklendi.
+- Hisse kodu yazarak takip listesine ekleme yapılabilir.
+- Seçili satırlar takipten çıkarılabilir.
+- Takip listesi program kapatıldığında kaybolmaz.
+
+FİYATLARI YENİLE
+Yalnızca takip edilen hisseler için:
+- Son Fiyat
+- Günlük Değişim %
+- Gün İçi Yüksek
+- Gün İçi Düşük
+- Hacim
+- Son Güncelleme zamanı
+
+580 hissenin tamamı taranmaz. Bu nedenle hızlı çalışır.
+
+KAYIT DOSYASI
+Belgeler\Borsa Analiz Pro MAX\takip_listesi.json
+
+KURULUM
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+
+OLUŞACAK DOSYA
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.4.0.exe

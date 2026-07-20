@@ -200,6 +200,13 @@ def v4_puanla(item: Dict[str, Any], final: bool = False) -> Dict[str, Any]:
     if gf(item.get("risk_getiri_1")) < 1:
         raw -= 7
 
+    # Formasyon tek başına karar vermez; yalnızca teyitli desenler sınırlı katkı sağlar.
+    form_score = gf(item.get("formasyon_puani"))
+    form_dir = str(item.get("formasyon_yonu", "NÖTR")).upper()
+    form_confirmed = str(item.get("formasyon_teyit", "")).lower() == "evet"
+    if form_confirmed and form_score >= 65:
+        raw += min(6, (form_score - 60) * 0.12) if form_dir == "YUKARI" else -min(6, (form_score - 60) * 0.12)
+
     # 100/100 should be practically impossible.
     confidence = int(round(clamp(raw, 8, 97)))
 
@@ -250,6 +257,8 @@ def v4_puanla(item: Dict[str, Any], final: bool = False) -> Dict[str, Any]:
         reasons.append("Faaliyet görünümü olumlu")
     if kap_news >= 65:
         reasons.append("KAP/haber desteği var")
+    if form_confirmed and form_score >= 65 and form_dir == "YUKARI":
+        reasons.append(f"{item.get('formasyon', 'Formasyon')} teyitli")
 
     warning = []
     if risk < 45:
@@ -260,6 +269,8 @@ def v4_puanla(item: Dict[str, Any], final: bool = False) -> Dict[str, Any]:
         warning.append("Zaman dilimi uyumsuz")
     if gf(item.get("rsi")) >= 75:
         warning.append("RSI yüksek")
+    if form_confirmed and form_score >= 65 and form_dir == "AŞAĞI":
+        warning.append(f"{item.get('formasyon', 'Düşüş formasyonu')} teyitli")
 
     return {
         "v4_guven_puani": confidence,

@@ -1,4 +1,5 @@
 import yfinance as yf
+from formasyon_motoru import formasyonlari_tespit_et
 import pandas as pd
 import time
 from datetime import datetime
@@ -351,6 +352,7 @@ def teknik_analiz(symbol, kategori):
             price, ema20, ema50, ema200, rsi, macd, macd_signal,
             atr, adx, ret20, ret60, ana_destek, ana_direnc, score
         )
+        formasyon = formasyonlari_tespit_et(df)
 
         # ==========================
         # Mevcut karar sistemi
@@ -402,9 +404,15 @@ def teknik_analiz(symbol, kategori):
             "ret_60": ret60,
             "guven": score,
             "genel_skor": score,
-            "formasyon": "Belirgin formasyon yok",
-            "formasyon_puani": 0,
-            "formasyon_notu": "Otomatik olarak doğrulanmış formasyon bulunamadı",
+            "formasyon": formasyon["formasyon"],
+            "formasyon_puani": formasyon["formasyon_puani"],
+            "formasyon_notu": formasyon["formasyon_notu"],
+            "formasyon_yonu": formasyon["formasyon_yonu"],
+            "formasyon_teyit": formasyon["formasyon_teyit"],
+            "formasyon_kirilim": formasyon["formasyon_kirilim"],
+            "formasyon_hedef": formasyon["formasyon_hedef"],
+            "formasyon_stop": formasyon["formasyon_stop"],
+            "formasyon_adaylari": formasyon["formasyon_adaylari"],
             "tahmini_sure": "2-6 hafta",
             "tahmin_15gun": gelecek["tahmin_15gun"],
             "ai_yorum": gelecek["ai_yorum"],

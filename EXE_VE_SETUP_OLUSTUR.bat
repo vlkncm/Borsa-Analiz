@@ -1,11 +1,11 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Borsa Analiz Pro MAX v4.2.1 - EXE ve SETUP Olustur
+title Borsa Analiz Pro MAX v2 - EXE ve SETUP Olustur
 
 echo.
 echo ==================================================
-echo  BORSA ANALIZ PRO MAX v4.2.1
+echo  BORSA ANALIZ PRO MAX v4.4.0
 echo  EXE ve SETUP OLUSTURMA
 echo ==================================================
 echo.
@@ -16,32 +16,20 @@ if not exist "%PYTHON%" (
     echo Yeni Python ortami olusturuluyor...
     where py >nul 2>nul
     if errorlevel 1 (
-        echo.
         echo HATA: Python bulunamadi.
-        echo Python 3.11 veya 3.12 kurulu olmali.
+        echo PyCharm icinden bu klasoru proje olarak acip Python kurmalisin.
         pause
         exit /b 1
     )
-
     py -m venv .venv
-    if errorlevel 1 (
-        echo.
-        echo HATA: Python sanal ortami olusturulamadi.
-        pause
-        exit /b 1
-    )
 )
 
-echo.
 echo Gerekli paketler kuruluyor...
 "%PYTHON%" -m pip install --upgrade pip
-if errorlevel 1 goto :paket_hatasi
+if errorlevel 1 goto :hata
 
 "%PYTHON%" -m pip install -r requirements.txt
-if errorlevel 1 goto :paket_hatasi
-
-"%PYTHON%" -m pip install pyinstaller
-if errorlevel 1 goto :paket_hatasi
+if errorlevel 1 goto :hata
 
 echo.
 echo Eski derleme dosyalari temizleniyor...
@@ -74,18 +62,14 @@ echo Hizli uygulama klasoru olusturuluyor...
 --hidden-import piyasa_guncelleme ^
 --hidden-import sistem_kontrol ^
 --hidden-import v4_puanlama ^
+--hidden-import formasyon_motoru ^
+--hidden-import takip_modulu ^
+--collect-submodules PySide6.QtWidgets ^
+--collect-submodules PySide6.QtCore ^
+--collect-submodules PySide6.QtGui ^
 app_qt.py
 
-if errorlevel 1 goto :pyinstaller_hatasi
-
-if not exist "dist\BorsaAnalizProMAX\BorsaAnalizProMAX.exe" (
-    echo.
-    echo HATA: PyInstaller tamamlandi ancak EXE bulunamadi.
-    echo Beklenen:
-    echo %~dp0dist\BorsaAnalizProMAX\BorsaAnalizProMAX.exe
-    pause
-    exit /b 1
-)
+if not exist "dist\BorsaAnalizProMAX\BorsaAnalizProMAX.exe" goto :hata
 
 echo.
 echo EXE BASARILI:
@@ -96,74 +80,32 @@ set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
 
 if not exist "%ISCC%" (
-    echo.
     echo HATA: Inno Setup Compiler bulunamadi.
     echo Inno Setup 6 kurulu olmali.
     pause
     exit /b 1
 )
 
-if not exist "BorsaAnalizProMAX_v2.iss" (
-    echo.
-    echo HATA: BorsaAnalizProMAX_v2.iss bulunamadi.
-    pause
-    exit /b 1
-)
-
 echo Windows kurulum dosyasi olusturuluyor...
 "%ISCC%" "BorsaAnalizProMAX_v2.iss"
-if errorlevel 1 goto :inno_hatasi
+if errorlevel 1 goto :hata
 
-set "SETUP_FILE="
-
-if exist "SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.2.1.exe" (
-    set "SETUP_FILE=%~dp0SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.2.1.exe"
-) else (
-    for %%F in ("SetupOutput\*.exe") do (
-        if exist "%%~F" set "SETUP_FILE=%%~fF"
-    )
-)
-
-if not defined SETUP_FILE (
+if exist "SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.4.0.1.exe" (
     echo.
-    echo HATA: Kurulum tamamlandi ancak Setup dosyasi bulunamadi.
-    echo SetupOutput klasorunu kontrol et.
+    echo ==================================================
+    echo  HER SEY BASARILI
+    echo  PAYLASILACAK TEK DOSYA:
+    echo  %~dp0SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v4.4.0.1.exe
+    echo ==================================================
+    explorer "%~dp0SetupOutput"
     pause
-    exit /b 1
+    exit /b 0
 )
 
+:hata
 echo.
 echo ==================================================
-echo  HER SEY BASARILI
-echo  PAYLASILACAK TEK DOSYA:
-echo  %SETUP_FILE%
-echo ==================================================
-explorer "%~dp0SetupOutput"
-pause
-exit /b 0
-
-:paket_hatasi
-echo.
-echo ==================================================
-echo HATA: Gerekli Python paketleri kurulamad.
-echo Internet baglantisini ve requirements.txt dosyasini kontrol et.
-echo ==================================================
-pause
-exit /b 1
-
-:pyinstaller_hatasi
-echo.
-echo ==================================================
-echo HATA: PyInstaller EXE olustururken hata verdi.
-echo Yukaridaki son hata satirlarini kontrol et.
-echo ==================================================
-pause
-exit /b 1
-
-:inno_hatasi
-echo.
-echo ==================================================
-echo HATA: Inno Setup kurulum dosyasini olusturamadi.
+echo HATA: Derleme tamamlanamadi.
 echo Yukaridaki son hata satirlarini kontrol et.
 echo ==================================================
 pause
