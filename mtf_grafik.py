@@ -5,11 +5,12 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
 import pandas as pd
-import yfinance as yf
+from veri_saglayici import veri as yf
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
 
 def guvenli_float(x, default=0.0):
@@ -219,12 +220,16 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         if df.empty or len(df) < 60:
             return ""
 
-        df = df.dropna(subset=["Close"]).copy()
+        for column in ["Open", "High", "Low", "Close", "Volume"]:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+        df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
         df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
         df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
         df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
+        df["RSI"] = rsi_hesapla(df["Close"])
+        df["MACD"], df["MACD_SINYAL"] = macd_hesapla(df["Close"])
 
-        son = df.tail(140).copy()
+        son = df.tail(120).copy()
 
         fiyat = guvenli_float(item.get("price", son["Close"].iloc[-1]))
         destek = guvenli_float(item.get("ana_destek", item.get("destek", 0)))
@@ -233,13 +238,26 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         hedef1 = guvenli_float(item.get("hedef_1", 0))
         hedef2 = guvenli_float(item.get("hedef_2", 0))
 
-        plt.figure(figsize=(13, 7))
-        ax = plt.gca()
+        plt.style.use("dark_background")
+        fig = plt.figure(figsize=(15, 10), facecolor="#020617")
+        grid = fig.add_gridspec(5, 1, height_ratios=[5, 1.2, 1.5, 1.5, 0.15], hspace=0.08)
+        ax = fig.add_subplot(grid[0])
+        ax_volume = fig.add_subplot(grid[1], sharex=ax)
+        ax_rsi = fig.add_subplot(grid[2], sharex=ax)
+        ax_macd = fig.add_subplot(grid[3], sharex=ax)
+        x = list(range(len(son)))
 
-        ax.plot(son.index, son["Close"], label="Kapanış", linewidth=1.8)
-        ax.plot(son.index, son["EMA20"], label="EMA20", linewidth=1.2)
-        ax.plot(son.index, son["EMA50"], label="EMA50", linewidth=1.2)
-        ax.plot(son.index, son["EMA200"], label="EMA200", linewidth=1.0)
+        for i, (_, candle) in enumerate(son.iterrows()):
+            up = candle["Close"] >= candle["Open"]
+            color = "#22c55e" if up else "#ef4444"
+            ax.vlines(i, candle["Low"], candle["High"], color=color, linewidth=0.8)
+            bottom = min(candle["Open"], candle["Close"])
+            height = max(abs(candle["Close"] - candle["Open"]), max(candle["Close"] * 0.0005, 0.001))
+            ax.add_patch(Rectangle((i - 0.32, bottom), 0.64, height, facecolor=color, edgecolor=color, linewidth=0.5))
+
+        ax.plot(x, son["EMA20"], label="EMA20", linewidth=1.2, color="#38bdf8")
+        ax.plot(x, son["EMA50"], label="EMA50", linewidth=1.2, color="#f59e0b")
+        ax.plot(x, son["EMA200"], label="EMA200", linewidth=1.0, color="#a78bfa")
 
         if destek > 0:
             ax.axhline(destek, linestyle="--", linewidth=1.2, label=f"Destek {destek:.2f}")
@@ -259,16 +277,45 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         )
 
         ax.set_title(baslik)
-        ax.set_xlabel("Tarih")
-        ax.set_ylabel("Fiyat")
-        ax.legend(loc="best", fontsize=8)
-        ax.grid(True, alpha=0.25)
+        ax.set_ylabel("Fiyat (TL)")
+        ax.legend(loc="upper left", fontsize=8, ncol=4)
+        ax.grid(True, alpha=0.15)
 
-        plt.tight_layout()
+        volume_colors = ["#22c55e" if c >= o else "#ef4444" for o, c in zip(son["Open"], son["Close"])]
+        ax_volume.bar(x, son["Volume"].fillna(0), color=volume_colors, width=0.7, alpha=0.75)
+        ax_volume.set_ylabel("Hacim", fontsize=8)
+        ax_volume.grid(True, alpha=0.1)
+
+        ax_rsi.plot(x, son["RSI"], color="#38bdf8", linewidth=1.1, label="RSI(14)")
+        ax_rsi.axhline(70, color="#ef4444", linestyle="--", linewidth=0.8)
+        ax_rsi.axhline(30, color="#22c55e", linestyle="--", linewidth=0.8)
+        ax_rsi.set_ylim(0, 100)
+        ax_rsi.set_ylabel("RSI")
+        ax_rsi.grid(True, alpha=0.1)
+
+        histogram = son["MACD"] - son["MACD_SINYAL"]
+        macd_colors = ["#22c55e" if value >= 0 else "#ef4444" for value in histogram]
+        ax_macd.bar(x, histogram, color=macd_colors, width=0.7, alpha=0.7)
+        ax_macd.plot(x, son["MACD"], color="#38bdf8", linewidth=1.0, label="MACD")
+        ax_macd.plot(x, son["MACD_SINYAL"], color="#f59e0b", linewidth=1.0, label="Sinyal")
+        ax_macd.axhline(0, color="#64748b", linewidth=0.7)
+        ax_macd.set_ylabel("MACD")
+        ax_macd.legend(loc="upper left", fontsize=7, ncol=2)
+        ax_macd.grid(True, alpha=0.1)
+
+        tick_step = max(1, len(son) // 10)
+        ticks = x[::tick_step]
+        labels = [son.index[i].strftime("%d.%m.%y") for i in ticks]
+        ax_macd.set_xticks(ticks)
+        ax_macd.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
+        plt.setp(ax.get_xticklabels(), visible=False)
+        plt.setp(ax_volume.get_xticklabels(), visible=False)
+        plt.setp(ax_rsi.get_xticklabels(), visible=False)
+        fig.tight_layout()
 
         path = out_dir / f"{symbol.replace('.', '_')}_grafik.png"
-        plt.savefig(path, dpi=140)
-        plt.close()
+        fig.savefig(path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
 
         return str(path)
 

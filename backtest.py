@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import math
 import pandas as pd
-import yfinance as yf
+from veri_saglayici import veri as yf
 
 
 def rsi_hesapla(df, period=14):
@@ -14,9 +14,14 @@ def rsi_hesapla(df, period=14):
     avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
 
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    # pd.NA kullanmak seriyi ``object`` tipine ceviriyor ve sifir kayipli
+    # (kesintisiz yukselen) serileri yanlislikla RSI=50 yapiyordu.
+    rs = avg_gain / avg_loss.mask(avg_loss == 0)
     rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50)
+    rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    rsi = rsi.mask((avg_gain == 0) & (avg_loss > 0), 0.0)
+    rsi = rsi.mask((avg_gain == 0) & (avg_loss == 0), 50.0)
+    return rsi.fillna(50.0).astype(float)
 
 
 def macd_hesapla(df):
@@ -41,7 +46,9 @@ def backtest_hisse(
     period: str = "5y",
     holding_days: int = 20,
     hedef_katsayi: float = 2.0,
-    stop_katsayi: float = 1.5
+    stop_katsayi: float = 1.5,
+    komisyon_bps: float = 10.0,
+    kayma_bps: float = 5.0,
 ):
     """
     Basit sinyal testi:
@@ -99,8 +106,12 @@ def backtest_hisse(
             )
 
             if sinyal and yeni_macd_kesisim:
-                giris_tarih = df.index[i]
-                giris = price
+                # Sinyal ancak kapanistan sonra kesinlesir. Ayni kapanistan almak
+                # ileriye-bakis yanliligi yaratir; en erken sonraki acilista girilir.
+                entry_i = i + 1
+                giris_tarih = df.index[entry_i]
+                ham_giris = float(df.iloc[entry_i]["Open"])
+                giris = ham_giris * (1 + kayma_bps / 10_000)
                 stop = giris - (atr * stop_katsayi)
                 hedef = giris + ((giris - stop) * hedef_katsayi)
 
@@ -108,27 +119,30 @@ def backtest_hisse(
                 cikis_tarih = None
                 sonuc = "SÜRE SONU"
 
-                for j in range(i + 1, min(i + holding_days + 1, len(df))):
+                for j in range(entry_i, min(entry_i + holding_days, len(df))):
+                    open_price = float(df.iloc[j]["Open"])
                     high = float(df.iloc[j]["High"])
                     low = float(df.iloc[j]["Low"])
                     close = float(df.iloc[j]["Close"])
 
                     if low <= stop:
-                        cikis = stop
+                        # Asagi boslukta stop fiyatindan gerceklesme varsayilamaz.
+                        cikis = min(stop, open_price) * (1 - kayma_bps / 10_000)
                         cikis_tarih = df.index[j]
                         sonuc = "STOP"
                         break
 
                     if high >= hedef:
-                        cikis = hedef
+                        cikis = hedef * (1 - kayma_bps / 10_000)
                         cikis_tarih = df.index[j]
                         sonuc = "HEDEF"
                         break
 
-                    cikis = close
+                    cikis = close * (1 - kayma_bps / 10_000)
                     cikis_tarih = df.index[j]
 
-                getiri = ((cikis - giris) / giris) * 100 if giris > 0 else 0
+                brut_getiri = ((cikis - giris) / giris) * 100 if giris > 0 else 0
+                getiri = brut_getiri - (2 * komisyon_bps / 100)
 
                 islemler.append({
                     "Hisse": symbol,
@@ -140,11 +154,13 @@ def backtest_hisse(
                     "Hedef": round(hedef, 2),
                     "Sonuç": sonuc,
                     "Getiri %": round(getiri, 2),
+                    "Brut Getiri %": round(brut_getiri, 2),
+                    "Tahmini Maliyet %": round(2 * komisyon_bps / 100, 3),
                     "Holding Gün": holding_days
                 })
 
                 # Aynı sinyal üst üste işlem açmasın diye çıkış sonrasına atla
-                i += holding_days
+                i = max(i + 1, j + 1)
             else:
                 i += 1
 
@@ -156,6 +172,7 @@ def backtest_hisse(
                     "Başarı %": 0,
                     "Ortalama Getiri %": 0,
                     "Toplam Getiri %": 0,
+                    "Bilesik Getiri %": 0,
                     "En İyi İşlem %": 0,
                     "En Kötü İşlem %": 0,
                     "Hedef Sayısı": 0,
@@ -176,6 +193,7 @@ def backtest_hisse(
             "Başarı %": round((kazanan / toplam) * 100, 2) if toplam else 0,
             "Ortalama Getiri %": round(float(islem_df["Getiri %"].mean()), 2),
             "Toplam Getiri %": round(float(islem_df["Getiri %"].sum()), 2),
+            "Bilesik Getiri %": round(float(((1 + islem_df["Getiri %"] / 100).prod() - 1) * 100), 2),
             "En İyi İşlem %": round(float(islem_df["Getiri %"].max()), 2),
             "En Kötü İşlem %": round(float(islem_df["Getiri %"].min()), 2),
             "Hedef Sayısı": hedef_sayisi,
@@ -195,6 +213,7 @@ def backtest_hisse(
                 "Başarı %": 0,
                 "Ortalama Getiri %": 0,
                 "Toplam Getiri %": 0,
+                "Bilesik Getiri %": 0,
                 "En İyi İşlem %": 0,
                 "En Kötü İşlem %": 0,
                 "Hedef Sayısı": 0,

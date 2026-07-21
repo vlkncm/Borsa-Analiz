@@ -1,8 +1,27 @@
-import yfinance as yf
+from veri_saglayici import veri as yf
 from formasyon_motoru import formasyonlari_tespit_et
+from fibonacci_motoru import fibonacci_analizi
 import pandas as pd
 import time
+import threading
 from datetime import datetime
+from profesyonel_analiz import profesyonel_analiz
+
+_BENCHMARK_LOCK = threading.Lock()
+_BENCHMARK_CACHE = None
+
+
+def bist100_verisi():
+    global _BENCHMARK_CACHE
+    if _BENCHMARK_CACHE is not None:
+        return _BENCHMARK_CACHE.copy()
+    with _BENCHMARK_LOCK:
+        if _BENCHMARK_CACHE is None:
+            data = guvenli_yf_download("^XU100", period="2y", interval="1d", retries=1)
+            if data is not None and isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            _BENCHMARK_CACHE = temiz_fiyat_verisi(data) if data is not None else pd.DataFrame()
+    return _BENCHMARK_CACHE.copy()
 
 # Favori hisselerin
 WATCHLIST = [
@@ -60,6 +79,45 @@ def guvenli_sayi(value, default=0.0):
         return default
 
 
+def temiz_fiyat_verisi(df: pd.DataFrame) -> pd.DataFrame:
+    """Eksik/0 OHLC içeren, henüz tamamlanmamış günlük barları analizden çıkarır."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    required = ["Open", "High", "Low", "Close"]
+    if any(column not in work.columns for column in required):
+        return pd.DataFrame()
+    for column in required + (["Volume"] if "Volume" in work.columns else []):
+        work[column] = pd.to_numeric(work[column], errors="coerce").astype("float64")
+    if "Volume" not in work.columns:
+        work["Volume"] = 0.0
+    else:
+        # Bazı az işlem gören hisselerde hacim tümüyle boş gelebilir.
+        work["Volume"] = work["Volume"].fillna(0.0)
+    work = work.dropna(subset=required)
+    work = work[(work[required] > 0).all(axis=1)]
+    return work.sort_index()
+
+
+def veri_islem_gunu_gecikmesi(veri_tarihi, simdi=None) -> int:
+    """Beklenen son tamamlanmış seansa göre veri gecikmesini hesaplar."""
+    now = pd.Timestamp(simdi) if simdi is not None else pd.Timestamp.now(tz="Europe/Istanbul")
+    if now.tzinfo is not None:
+        now = now.tz_convert("Europe/Istanbul").tz_localize(None)
+    expected = now.normalize()
+    if expected.weekday() >= 5:
+        expected = expected - pd.offsets.BDay(1)
+    elif now.hour < 19:
+        expected = expected - pd.offsets.BDay(1)
+    last = pd.Timestamp(veri_tarihi)
+    if last.tzinfo is not None:
+        last = last.tz_localize(None)
+    last = last.normalize()
+    if last >= expected:
+        return 0
+    return len(pd.bdate_range(last + pd.offsets.BDay(1), expected))
+
+
 def atr_hesapla(df, period=14):
     onceki_kapanis = df["Close"].shift(1)
     tr = pd.concat([
@@ -81,10 +139,10 @@ def adx_hesapla(df, period=14):
         (df["High"] - onceki_kapanis).abs(),
         (df["Low"] - onceki_kapanis).abs()
     ], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean().replace(0, pd.NA)
+    atr = tr.rolling(period).mean().replace(0, float("nan"))
     plus_di = 100 * plus_dm.rolling(period).mean() / atr
     minus_di = 100 * minus_dm.rolling(period).mean() / atr
-    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, pd.NA)) * 100
+    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, float("nan"))) * 100
     return dx.rolling(period).mean()
 
 
@@ -207,7 +265,7 @@ def teknik_analiz(symbol, kategori):
     try:
         df = guvenli_yf_download(
             symbol,
-            period="9mo",
+            period="2y",
             interval="1d",
             retries=3
         )
@@ -216,6 +274,10 @@ def teknik_analiz(symbol, kategori):
 
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+
+        ham_satir = len(df)
+        df = temiz_fiyat_verisi(df)
+        temizlenen_satir = ham_satir - len(df)
 
         if df.empty or len(df) < 60:
             print(f"{symbol}: Veri yok veya yetersiz.")
@@ -232,6 +294,7 @@ def teknik_analiz(symbol, kategori):
         df["ADX"] = adx_hesapla(df)
         df["RET20"] = df["Close"].pct_change(20) * 100
         df["RET60"] = df["Close"].pct_change(60) * 100
+        df["RET252"] = df["Close"].pct_change(252) * 100
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
@@ -250,6 +313,21 @@ def teknik_analiz(symbol, kategori):
         adx = guvenli_sayi(last.get("ADX"), 0)
         ret20 = guvenli_sayi(last.get("RET20"), 0)
         ret60 = guvenli_sayi(last.get("RET60"), 0)
+        ret252 = guvenli_sayi(last.get("RET252"), 0)
+        veri_yasi = max(0, (pd.Timestamp.now().normalize() - pd.Timestamp(df.index[-1]).tz_localize(None).normalize()).days)
+        islem_gunu_gecikmesi = veri_islem_gunu_gecikmesi(df.index[-1])
+        veri_guven = 90  # Tek kaynak kullanıldığı için 100 verilmez.
+        veri_guven -= min(20, temizlenen_satir * 5)
+        veri_guven -= max(0, veri_yasi - 1) * 5
+        if len(df) < 300:
+            veri_guven -= 10
+        if islem_gunu_gecikmesi > 0:
+            veri_guven = min(veri_guven, 50)
+        veri_guven = int(max(0, min(90, veri_guven)))
+        if islem_gunu_gecikmesi > 0:
+            veri_durumu = "ESKİ VERİ - KARAR YOK"
+        else:
+            veri_durumu = "GÜVENİLİR" if veri_guven >= 80 else "KONTROL GEREKLİ" if veri_guven >= 60 else "ZAYIF"
 
         score = 0
         reasons = []
@@ -353,6 +431,8 @@ def teknik_analiz(symbol, kategori):
             atr, adx, ret20, ret60, ana_destek, ana_direnc, score
         )
         formasyon = formasyonlari_tespit_et(df)
+        fibonacci = fibonacci_analizi(df)
+        profesyonel = profesyonel_analiz(df, bist100_verisi())
 
         # ==========================
         # Mevcut karar sistemi
@@ -374,6 +454,14 @@ def teknik_analiz(symbol, kategori):
             aksiyon = "TUT"
         return {
             "symbol": symbol,
+            "veri_tarihi": pd.Timestamp(df.index[-1]).strftime("%Y-%m-%d"),
+            "veri_yasi_gun": veri_yasi,
+            "veri_islem_gunu_gecikmesi": islem_gunu_gecikmesi,
+            "veri_kaynagi": "Yahoo Finance (tek kaynak)",
+            "veri_guven_puani": veri_guven,
+            "veri_durumu": veri_durumu,
+            "veri_satir_sayisi": len(df),
+            "elenen_eksik_bar": temizlenen_satir,
             "kategori": kategori,
             "price": price,
             "rsi": rsi,
@@ -402,8 +490,10 @@ def teknik_analiz(symbol, kategori):
             "adx": adx,
             "ret_20": ret20,
             "ret_60": ret60,
+            "ret_252": ret252,
             "guven": score,
             "genel_skor": score,
+            **fibonacci,
             "formasyon": formasyon["formasyon"],
             "formasyon_puani": formasyon["formasyon_puani"],
             "formasyon_notu": formasyon["formasyon_notu"],
@@ -424,6 +514,7 @@ def teknik_analiz(symbol, kategori):
             "volume_ratio": volume_ratio,
             "reasons": reasons or ["Belirgin teknik üstünlük bulunamadı"],
             "risk_notes": risk_notes or ["Belirgin ek teknik risk notu bulunamadı"]
+            ,**profesyonel
         }
 
     except Exception as e:

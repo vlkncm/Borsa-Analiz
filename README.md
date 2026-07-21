@@ -1,81 +1,54 @@
-# 📈 Borsa Analiz Pro MAX
+# Borsa Analiz Pro MAX v7.2 FINAL
 
-Borsa Analiz Pro MAX, Python ve PySide6 ile geliştirilmiş, Borsa İstanbul (BIST) hisselerini teknik ve temel analiz kriterlerine göre değerlendiren masaüstü bir analiz uygulamasıdır.
+Sadeleştirilmiş BIST yatırım karar motoru.
 
-> ⚠️ Bu yazılım yatırım tavsiyesi vermez. Karar destek amacıyla geliştirilmiştir.
+## v7.2 merkezi veri katmanı
 
----
+- Fiyat verileri tek bir sağlayıcı katmanından alınır.
+- Ham OHLCV verileri yerel SQLite önbelleğinde saklanır.
+- Ağ kesintisinde son sağlam veri kullanılır; eski veri kalite filtresinden geçemez.
+- Lisanslı BIST API'si geldiğinde analiz motorları değiştirilmeden yeni adaptör eklenebilir.
+- Yahoo Finance geçici/yedek veri kaynağıdır.
 
-## 🚀 Özellikler
+## Ana kullanım
 
-- 📊 580+ BIST hissesini otomatik tarama
-- 📈 RSI, EMA20, EMA50, MACD analizleri
-- 🎯 Destek / Direnç hesaplama
-- 💰 Risk / Getiri analizi
-- 📅 2–6 haftalık potansiyel analizi
-- 💵 Temettü takibi
-- 📰 KAP duyurularının analizi
-- 📄 Faaliyet raporu değerlendirmesi
-- 🤖 AI destekli yorum sistemi
-- ⭐ Günün fırsat hisseleri
-- 📈 Çoklu zaman dilimi (MTF) analizi
-- 📑 Excel raporu oluşturma
-- 🖥️ Modern PySide6 arayüzü
-- 📦 Windows kurulum (Setup) desteği
+- Kısa vade: 5–20 iş günü için en güçlü 5 hisse
+- Orta vade: 1–3 ay için en güçlü 5 hisse
+- Uzun vade: 3–12 ay için en güçlü 5 hisse
+- Tek hisse analizi
+- Satış kararı
+- Takip listesi
+- Seçili hisse için KAP ve faaliyet raporu analizi
 
----
+Teknik göstergeler arka planda çalışır. Kullanıcıya alış aralığı, hedef, stop,
+tahmini getiri, süre, model olasılığı ve kısa karar gösterilir.
 
-## 🛠️ Kullanılan Teknolojiler
+> Bu yazılım yatırım tavsiyesi değildir. Model sonuçları kesinlik veya getiri garantisi içermez.
 
-- Python
-- PySide6 (Qt)
-- Pandas
-- OpenPyXL
-- yfinance
-- Matplotlib
-- Requests
+## Profesyonel sinyal güvenliği
 
----
+- Tek tuşla BIST taraması ve kısa, orta, uzun vade listeleri
+- Güncel olmayan veriyi otomatik eleme
+- Tutarlı alış, stop, hedef ve minimum risk/getiri kontrolü
+- Alım bölgesinde / geri çekilme bekle / teyit bekle işlem durumu
+- Kısa, orta ve uzun vade için ayrı puanlama
+- İki yıllık teknik geçmiş ve uzun vadede 252 günlük momentum
+- Sonraki gün giriş, komisyon, kayma ve bileşik getiri içeren backtest
 
-## 📸 Ekran Görüntüleri
+Sistem uygun kalite eşiğini geçen hisse bulamazsa listeyi boş bırakır. Bu davranış,
+zayıf piyasa koşullarında zorla alım önerisi üretilmesini önler.
 
-> Dashboard
+## v7.0 kanıt tabanlı analiz
 
-*(Buraya programın ekran görüntüsünü ekleyebilirsin.)*
+- Bollinger Z, Stochastic RSI, ROC, OBV, CMF, MFI, Sharpe ve Sortino ölçümleri
+- Kısa, orta ve uzun vade için benzer geçmiş piyasa rejimi analizi
+- Az örnekte başarı oranını aşağı çeken Wilson güven alt sınırı
+- Profesyonel kanıt puanı ve vade bazlı minimum kanıt filtresi
+- Yeterli benzer tarihsel örnek yoksa otomatik `İZLE - KANIT YETERSİZ` kararı
+- CCI, Supertrend ve Ichimoku trend teyitleri
+- BIST 100'e karşı 1 ay, 3 ay ve 1 yıllık göreceli güç ile beta
+- Normal dağılım dayatmayan 5.000 yollu tarihsel bootstrap Monte Carlo risk bantları
+- 1 aylık VaR95 ve kuyruk kaybını gösteren CVaR95
 
----
-
-## 📌 Yol Haritası
-
-### ✅ v4.2
-
-- Dashboard iyileştirmeleri
-- Temettü sıralama sistemi
-- Performans optimizasyonları
-- Hata düzeltmeleri
-
-### 🔜 Planlanan
-
-- Daha modern Dashboard
-- Lisans sistemi
-- Otomatik güncelleme
-- Gelişmiş AI analizleri
-- Daha hızlı veri motoru
-
----
-
-## ⚠️ Yasal Uyarı
-
-Bu program yalnızca eğitim ve karar destek amacıyla geliştirilmiştir.
-
-Program tarafından üretilen analizler, puanlamalar ve tahminler kesin yatırım tavsiyesi değildir.
-
-Yatırım kararları kullanıcının kendi sorumluluğundadır.
-
----
-
-## 👨‍💻 Geliştirici
-
-**Volkan Çam**
-
-Python • Desktop Development • Financial Analysis
+Hiçbir model veya hisse için yüzde 100 kazanç garantisi verilemez. Uygulamadaki alış,
+satış, stop, süre ve olasılık alanları ölçülebilir senaryolardır; emir veya garanti değildir.

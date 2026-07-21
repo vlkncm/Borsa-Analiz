@@ -17,6 +17,10 @@ from olasilik_temettu import olasilik_toplu_ekle, temettu_toplu_tara
 from faaliyet_raporu import faaliyet_toplu_analiz, faaliyet_dataframe
 from piyasa_guncelleme import guncel_hisse_dosyasi
 from v4_puanlama import v4_toplu_puanla
+from karar_motoru import karar_uret
+from vade_motoru import vade_listeleri_uret
+from veri_kalitesi import karantinadaki_semboller, tarama_sagligini_kaydet
+from sinyal_gecmisi import sinyal_gecmisini_guncelle
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -83,52 +87,33 @@ def hisseleri_txt_oku(dosya_adi="bist_hisseleri_613_aktif.txt"):
     3) Güncel KAP listesi
     4) Eski gömülü liste
     """
-    user_verified = dogrulanmis_hisse_dosyasi()
-    if user_verified.exists():
-        try:
-            hisseler = [
-                x.strip() for x in user_verified.read_text(encoding="utf-8").splitlines()
-                if x.strip()
-            ]
-            if len(hisseler) >= 450:
-                print(f"Doğrulanmış v4 hisse listesi kullanılıyor: {len(hisseler)} sembol")
-                return sorted(set(hisseler))
-        except Exception as exc:
-            print(f"Doğrulanmış liste okunamadı: {exc}")
-
-    packaged_verified = resource_path("bist_hisseleri_dogrulanmis.txt")
-    if packaged_verified.exists():
-        try:
-            hisseler = [
-                x.strip() for x in packaged_verified.read_text(encoding="utf-8").splitlines()
-                if x.strip()
-            ]
-            if len(hisseler) >= 450:
-                print(f"Paket doğrulanmış hisse listesi kullanılıyor: {len(hisseler)} sembol")
-                return sorted(set(hisseler))
-        except Exception:
-            pass
-
-    guncel_yol = guncel_hisse_dosyasi()
-    if guncel_yol.exists():
-        try:
-            hisseler = [
-                x.strip() for x in guncel_yol.read_text(encoding="utf-8").splitlines()
-                if x.strip()
-            ]
-            if len(hisseler) >= 300:
-                print(f"KAP güncel listesi kullanılıyor: {len(hisseler)} sembol")
-                return sorted(set(hisseler))
-        except Exception as exc:
-            print(f"KAP listesi okunamadı: {exc}")
-
-    dosya_yolu = resource_path(dosya_adi)
-    hisseler = [
-        x.strip() for x in dosya_yolu.read_text(encoding="utf-8").splitlines()
-        if x.strip()
+    sources = [
+        ("Son doğrulanmış", dogrulanmis_hisse_dosyasi()),
+        ("Paket doğrulanmış", resource_path("bist_hisseleri_dogrulanmis.txt")),
+        ("Güncel piyasa", guncel_hisse_dosyasi()),
+        ("Paket aktif", resource_path(dosya_adi)),
     ]
-    print(f"Gömülü yedek liste kullanılıyor: {len(hisseler)} sembol")
-    return sorted(set(hisseler))
+    combined = set()
+    for label, path in sources:
+        if not path.exists():
+            continue
+        try:
+            symbols = {
+                x.strip().upper() for x in path.read_text(encoding="utf-8").splitlines()
+                if x.strip().upper().endswith(".IS")
+            }
+            combined.update(symbols)
+            print(f"{label} liste: {len(symbols)} | Birleşik: {len(combined)}")
+        except Exception as exc:
+            print(f"{label} liste okunamadı: {exc}")
+    if not combined:
+        raise FileNotFoundError("Kullanılabilir BIST sembol listesi bulunamadı")
+    quarantined = karantinadaki_semboller()
+    if quarantined:
+        combined.difference_update(quarantined)
+        print(f"Tekrarlayan veri hatası nedeniyle karantinada: {len(quarantined)} sembol")
+    print(f"Birleşik BIST aday evreni: {len(combined)} sembol")
+    return sorted(combined)
 
 
 def dogrulanmis_listeyi_kaydet(results):
@@ -164,6 +149,14 @@ def sonuclari_sirala(results):
 
 
 def profesyonel_veri_ekle(results):
+    """
+    v5.0: KAP ve faaliyet raporu ana taramada varsayılan olarak kapalıdır.
+    Ortam değişkenleriyle isteğe bağlı açılabilir:
+    PRO_KAP=1, PRO_FAALIYET=1
+    """
+    kap_aktif = os.environ.get("PRO_KAP", "1") == "1"
+    faaliyet_aktif = os.environ.get("PRO_FAALIYET", "0") == "1"
+
     print("\nMakro analiz yapılıyor...")
     makro = makro_analiz_yfinance()
     print(f"Makro: {makro.get('makro_etiket')} | {makro.get('makro_puan')}/100")
@@ -178,8 +171,14 @@ def profesyonel_veri_ekle(results):
 
     print(f"Pro analiz limiti: İlk {analiz_limiti} güçlü aday")
 
-    print(f"\nKAP analizi başlıyor. İlk {analiz_limiti} güçlü aday kontrol edilecek...")
-    kap_sonuclari = kap_toplu_analiz(zenginlestirilecek_liste, bekleme=0.15)
+    if kap_aktif:
+        kap_limiti = max(1, int(os.environ.get("KAP_ANALIZ_LIMIT", "10")))
+        kap_liste = zenginlestirilecek_liste[:kap_limiti]
+        print(f"\nKAP analizi başlıyor. İlk {len(kap_liste)} güçlü aday kontrollü olarak sorgulanacak...")
+        kap_sonuclari = kap_toplu_analiz(kap_liste, bekleme=0.35)
+    else:
+        print("\nKAP analizi ana taramada kapalı; isteğe bağlı kullanılabilir.")
+        kap_sonuclari = {}
 
     print("\nÇoklu zaman dilimi analizi başlıyor...")
     mtf_sonuclari = {}
@@ -189,8 +188,12 @@ def profesyonel_veri_ekle(results):
 
     faaliyet_limiti = int(os.environ.get("FAALIYET_ANALIZ_LIMIT", "10"))
     faaliyet_liste = zenginlestirilecek_liste[:faaliyet_limiti]
-    print(f"\nFaaliyet raporu analizi başlıyor. İlk {len(faaliyet_liste)} güçlü aday incelenecek...")
-    faaliyet_sonuclari = faaliyet_toplu_analiz(faaliyet_liste, bekleme=0.35)
+    if faaliyet_aktif:
+        print(f"\nFaaliyet raporu analizi başlıyor. İlk {len(faaliyet_liste)} güçlü aday incelenecek...")
+        faaliyet_sonuclari = faaliyet_toplu_analiz(faaliyet_liste, bekleme=0.35)
+    else:
+        print("\nFaaliyet raporu ana taramada kapalı; tek hisse ekranından isteğe bağlı çalıştırılabilir.")
+        faaliyet_sonuclari = {}
 
     yeni_results = []
     toplam = len(results)
@@ -328,6 +331,65 @@ def tabloya_cevir(results):
     for item in results:
         tablo.append({
             "Hisse": item["symbol"],
+            "Veri Tarihi": item.get("veri_tarihi", ""),
+            "Veri Yaşı (Gün)": item.get("veri_yasi_gun", 999),
+            "Veri Gecikmesi (İş Günü)": item.get("veri_islem_gunu_gecikmesi", 999),
+            "Veri Kaynağı": item.get("veri_kaynagi", "Bilinmiyor"),
+            "Veri Güven Puanı": item.get("veri_guven_puani", 0),
+            "Veri Durumu": item.get("veri_durumu", "KONTROL GEREKLİ"),
+            "Veri Satır Sayısı": item.get("veri_satir_sayisi", 0),
+            "Elenen Eksik Bar": item.get("elenen_eksik_bar", 0),
+            "Yatırım Kararı": item.get("yatirim_karari", "İZLE"),
+            "Önerilen Alış Alt": item.get("onerilen_alis_alt", 0),
+            "Önerilen Alış Üst": item.get("onerilen_alis_ust", 0),
+            "Önerilen Satış": item.get("onerilen_satis", 0),
+            "Önerilen Stop": item.get("onerilen_stop", 0),
+            "Beklenen Getiri %": item.get("beklenen_getiri_yuzde", 0),
+            "Beklenen Süre": item.get("beklenen_sure", "Veri yok"),
+            "Model Olasılığı %": item.get("model_olasiligi", 0),
+            "Karar Risk/Getiri": item.get("karar_risk_getiri", 0),
+            "Karar Nedenleri": item.get("karar_nedenleri", ""),
+            "Karar Uyarısı": item.get("karar_uyarisi", ""),
+            "Profesyonel Kanıt Puanı": item.get("profesyonel_kanit_puani", 0),
+            "Kısa Güvenli Olasılık %": item.get("kisa_guvenli_olasilik", 0),
+            "Orta Güvenli Olasılık %": item.get("orta_guvenli_olasilik", 0),
+            "Uzun Güvenli Olasılık %": item.get("uzun_guvenli_olasilik", 0),
+            "Kısa Kanıt Örneği": item.get("kisa_ornek", 0),
+            "Orta Kanıt Örneği": item.get("orta_ornek", 0),
+            "Uzun Kanıt Örneği": item.get("uzun_ornek", 0),
+            "Bollinger Z": item.get("bollinger_z", 0),
+            "Stoch RSI": item.get("stoch_rsi", 50),
+            "CMF 20": item.get("cmf_20", 0),
+            "MFI 14": item.get("mfi_14", 50),
+            "Sharpe 126": item.get("sharpe_126", 0),
+            "Sortino 126": item.get("sortino_126", 0),
+            "Profesyonel Analiz Notu": item.get("profesyonel_not", ""),
+            "CCI 20": item.get("cci_20", 0),
+            "Supertrend": item.get("supertrend", 0),
+            "Supertrend Yönü": item.get("supertrend_yonu", ""),
+            "Ichimoku Durumu": item.get("ichimoku_durumu", ""),
+            "Göreceli Güç 1 Ay": item.get("goreceli_guc_1a", 0),
+            "Göreceli Güç 3 Ay": item.get("goreceli_guc_3a", 0),
+            "Göreceli Güç 1 Yıl": item.get("goreceli_guc_1y", 0),
+            "BIST Beta 252": item.get("bist_beta_252", 0),
+            "MC 1 Hafta Yükseliş %": item.get("mc_1h_yukselis", 0),
+            "MC 1 Ay Yükseliş %": item.get("mc_1a_yukselis", 0),
+            "MC 3 Ay Yükseliş %": item.get("mc_3a_yukselis", 0),
+            "MC 1 Ay Kötümser %": item.get("mc_1a_kotumser_getiri", 0),
+            "MC 1 Ay İyimser %": item.get("mc_1a_iyimser_getiri", 0),
+            "MC VaR95 1 Ay %": item.get("mc_var95_1a", 0),
+            "MC CVaR95 1 Ay %": item.get("mc_cvar95_1a", 0),
+            "Monte Carlo Notu": item.get("monte_carlo_notu", ""),
+            "Fibonacci Durum": item.get("fib_durum", "VERİ YOK"),
+            "Fibonacci Puanı": item.get("fib_puani", 0),
+            "Fib %23,6": item.get("fib_23_6", 0),
+            "Fib %38,2": item.get("fib_38_2", 0),
+            "Fib %50": item.get("fib_50", 0),
+            "Fib %61,8": item.get("fib_61_8", 0),
+            "Fib %78,6": item.get("fib_78_6", 0),
+            "Fib Destek": item.get("fib_destek", 0),
+            "Fib Direnç": item.get("fib_direnc", 0),
+            "Fibonacci Yorum": item.get("fib_yorum", ""),
             "v4 Görünüm": item.get("v4_gorunum", "NÖTR / İZLE"),
             "v4 Güven Puanı": item.get("v4_guven_puani", item.get("broker_skor", 0)),
             "v4 2-6 Hafta Puanı": item.get("v4_2_6_hafta_puani", 0),
@@ -427,12 +489,15 @@ def tabloya_cevir(results):
             "KAP Skor": item.get("kap_skor", 0),
             "KAP Notu": item.get("kap_notu", ""),
             "KAP Başlıkları": item.get("kap_basliklari", ""),
+            "KAP Kaynak URL": item.get("kap_url", ""),
             "Makro Etiket": item.get("makro_etiket", ""),
             "Makro Puan": item.get("makro_puan", 50),
+            "Piyasa Rejimi": item.get("piyasa_rejimi", "YATAY / BELİRSİZ"),
             "Makro Notu": item.get("makro_notu", ""),
             "RSI": round(item.get("rsi", 0), 2),
             "ADX": round(item.get("adx", 0), 2),
             "ATR": round(item.get("atr", 0), 2),
+            "Hacim Oranı": round(item.get("volume_ratio", 1), 2),
             "EMA20": round(item.get("ema20", 0), 2),
             "EMA50": round(item.get("ema50", 0), 2),
             "EMA200": round(item.get("ema200", 0), 2),
@@ -440,6 +505,7 @@ def tabloya_cevir(results):
             "MACD Signal": round(item.get("macd_signal", 0), 2),
             "Son 20 Gün %": round(item.get("ret_20", 0), 2),
             "Son 60 Gün %": round(item.get("ret_60", 0), 2),
+            "Son 252 Gün %": round(item.get("ret_252", 0), 2),
             "Nedenler": " | ".join(item.get("reasons", [])),
             "Riskler": " | ".join(item.get("risk_notes", []))
         })
@@ -853,8 +919,15 @@ def bugunun_firsatlari_hazirla(df: pd.DataFrame) -> pd.DataFrame:
     )[mevcut].head(10)
 
 def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None):
+    results = [
+        item for item in results
+        if pd.notna(item.get("price")) and float(item.get("price", 0)) > 0
+    ]
+    if not results:
+        raise ValueError("Geçerli kapanış fiyatı bulunan sonuç yok; rapor oluşturulmadı.")
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
+    kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
     potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
     firsatlar_df = bugunun_firsatlari_hazirla(df)
     formasyon_kolonlari = [
@@ -879,6 +952,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
 
     portfoy = portfoy_onerisi_uret(df, sermaye=100000)
     faaliyet_df = faaliyet_dataframe(results)
+    sinyal_gecmisi_df, sinyal_performans_df = sinyal_gecmisini_guncelle(results)
 
     excel_path_fallback = None
     try:
@@ -891,8 +965,22 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     with writer_context as writer:
         pd.DataFrame(YASAL_UYARI_UZUN, columns=["UYARI"]).to_excel(writer, index=False, sheet_name="Yasal Uyari")
         dashboard_olustur(writer, df, baslangic_zamani, temettu_df)
+        kisa_df.to_excel(writer, index=False, sheet_name="Kisa Vade")
+        orta_df.to_excel(writer, index=False, sheet_name="Orta Vade")
+        uzun_df.to_excel(writer, index=False, sheet_name="Uzun Vade")
         firsatlar_df.to_excel(writer, index=False, sheet_name="Bugunun Firsatlari")
         df.to_excel(writer, index=False, sheet_name="Tum Sonuclar")
+        karar_kolonlari = [
+            "Hisse", "Yatırım Kararı", "Önerilen Alış Alt", "Önerilen Alış Üst",
+            "Önerilen Satış", "Önerilen Stop", "Beklenen Getiri %",
+            "Beklenen Süre", "Model Olasılığı %", "Karar Risk/Getiri",
+            "v4 Güven Puanı", "Fibonacci Puanı", "Formasyon",
+            "Karar Nedenleri", "Karar Uyarısı"
+        ]
+        karar_kolonlari = [c for c in karar_kolonlari if c in df.columns]
+        df[karar_kolonlari].head(20).to_excel(
+            writer, index=False, sheet_name="Bugunun Kararlari"
+        )
         if not formasyon_df.empty:
             formasyon_df.to_excel(writer, index=False, sheet_name="Formasyonlar")
         df[df["Broker Aksiyon"] == "GÜÇLÜ AL"].head(50).to_excel(writer, index=False, sheet_name="Guclu AL")
@@ -917,6 +1005,8 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
 
         if not faaliyet_df.empty:
             faaliyet_df.to_excel(writer, index=False, sheet_name="Faaliyet Raporlari")
+        sinyal_performans_df.to_excel(writer, index=False, sheet_name="Sinyal Performansi")
+        sinyal_gecmisi_df.tail(1000).to_excel(writer, index=False, sheet_name="Sinyal Gecmisi")
 
         # Bütün Excel sayfalarında boş hücreleri anlaşılır metinle göster.
         # Birleştirilmiş hücrelerin MergedCell nesneleri salt okunurdur.
@@ -992,12 +1082,13 @@ def ozet_yazdir(results, baslangic_zamani):
 
 def main():
     baslangic_zamani = time.time()
-    print("Borsa Analiz Pro MAX v4.4 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    print("Borsa Analiz Pro MAX v6.5 PROFESSIONAL TERMINAL başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     hisseler = hisseleri_txt_oku()
     print(f"Toplam taranacak hisse: {len(hisseler)}")
 
     results = []
+    failed_symbols = []
     max_worker = 6
 
     with ThreadPoolExecutor(max_workers=max_worker) as executor:
@@ -1013,9 +1104,17 @@ def main():
                     results.append(sonuc)
                     print(f"{tamamlanan}/{len(hisseler)} teknik tamamlandı: {symbol} | {sonuc.get('aksiyon')} | Güven {sonuc.get('guven')}")
                 else:
+                    failed_symbols.append(symbol)
                     print(f"{tamamlanan}/{len(hisseler)} atlandı: {symbol}")
             except Exception as e:
+                failed_symbols.append(symbol)
                 print(f"{tamamlanan}/{len(hisseler)} hata: {symbol} -> {e}")
+
+    tarama_sagligini_kaydet(
+        successful=[item.get("symbol", "") for item in results],
+        failed=failed_symbols,
+    )
+    print(f"Veri sağlığı: {len(results)} başarılı, {len(set(failed_symbols))} yeniden denenecek/karantina adayı")
 
     dogrulanmis_listeyi_kaydet(results)
     results = profesyonel_veri_ekle(results)
@@ -1024,24 +1123,33 @@ def main():
 
     rapor_yazdir(results, limit=30)
 
-    print("\nBacktest başlıyor. İlk 40 güçlü aday test edilecek...")
-    backtest_hisseler = [x["symbol"] for x in results[:40]]
-    backtest_ozet, backtest_islemler = backtest_toplu(backtest_hisseler, max_hisse=40)
-
-    print("\nGrafik üretimi başlıyor. İlk 20 güçlü aday için PNG grafik oluşturulacak...")
-    grafikler = grafik_toplu_olustur(results, limit=20, output_dir=str(output_klasoru() / "grafikler"))
-    for item in results:
-        sym = item.get("symbol")
-        if sym in grafikler:
-            item["grafik_dosyasi"] = grafikler[sym]
+    # v6.0 sade tarama: toplu backtest ve PNG grafik üretimi ana taramadan çıkarıldı.
+    # Mum, Fibonacci, formasyon, RSI, MACD, EMA, hacim, trend, MTF ve risk/getiri
+    # analizleri hisse taraması sırasında arka planda çalışmaya devam eder.
+    backtest_ozet = pd.DataFrame()
+    backtest_islemler = pd.DataFrame()
 
     print("\nTarihsel olasılık analizi başlıyor. İlk 30 güçlü aday hesaplanacak...")
     results = olasilik_toplu_ekle(results, limit=30)
     results = v4_toplu_puanla(results, final=True)
-    results = sonuclari_sirala(results)
+    for item in results:
+        item.update(karar_uret(item))
+    results = sorted(
+        results,
+        key=lambda x: (
+            x.get("yatirim_karari") == "BUGÜN AL",
+            x.get("model_olasiligi", 0),
+            x.get("beklenen_getiri_yuzde", 0),
+        ),
+        reverse=True,
+    )
 
-    print("\nTemettü taraması başlıyor...")
-    temettu_df = temettu_toplu_tara(hisseleri_txt_oku(), max_workers=8)
+    if os.environ.get("PRO_TEMETTU", "0") == "1":
+        print("\nTemettü taraması başlıyor...")
+        temettu_df = temettu_toplu_tara(hisseleri_txt_oku(), max_workers=8)
+    else:
+        print("\nTemettü taraması ana analizde kapalı; mevcut/boş liste kullanılacak.")
+        temettu_df = pd.DataFrame()
 
     try:
         sonuclari_kaydet(

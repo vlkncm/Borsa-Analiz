@@ -1,6 +1,16 @@
 .venv/
 venv/
 __pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+SetupOutput/
+release_*/
+*.sqlite3
+*.db
+output/
+.idea/
 *.pyc
 build/
 dist/

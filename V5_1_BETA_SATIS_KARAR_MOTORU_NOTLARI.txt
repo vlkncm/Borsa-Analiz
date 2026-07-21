@@ -1,0 +1,40 @@
+BORSA ANALİZ PRO MAX v5.1 BETA — SATIŞ KARAR MOTORU
+
+YENİ EKRAN
+Satış Kararı bölümünde:
+- Hisse kodu
+- Gerçek alış maliyeti
+girilir.
+
+PROGRAMIN ÜRETTİĞİ KARARLAR
+- TUT
+- KISMİ KÂR AL
+- KÂR AL
+- SAT
+- ACİL ÇIK
+
+HESAPLANANLAR
+- Güncel fiyat
+- Gerçek maliyete göre kâr/zarar %
+- Lot başına kâr/zarar
+- Model hedefi
+- Hedefe kalan oran
+- Hedef ilerleme oranı
+- Yeni koruma stopu
+- Önerilen kâr realizasyon oranı
+- Satış kararının nedenleri
+
+KARAR MANTIĞI
+- Stop kırılırsa ACİL ÇIK
+- Teknik görünüm bozulursa SAT
+- Hedefe yaklaşılırsa KISMİ KÂR AL
+- Hedefe ulaşılırsa KÂR AL
+- Hedefe ulaşılsa bile teknik görünüm çok güçlüyse %50 KISMİ KÂR AL
+- Hedefe alan varsa ve görünüm bozulmamışsa TUT
+
+ÖNEMLİ
+Bu sonuçlar teknik model senaryosudur. Kesin yatırım tavsiyesi, hedef,
+süre veya getiri garantisi değildir.
+
+KURULUM DOSYASI
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v5.1.0_BETA.exe

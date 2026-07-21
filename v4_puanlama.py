@@ -207,6 +207,13 @@ def v4_puanla(item: Dict[str, Any], final: bool = False) -> Dict[str, Any]:
     if form_confirmed and form_score >= 65:
         raw += min(6, (form_score - 60) * 0.12) if form_dir == "YUKARI" else -min(6, (form_score - 60) * 0.12)
 
+    fib_score = gf(item.get("fib_puani"), 50)
+    fib_status = str(item.get("fib_durum", "NÖTR")).upper()
+    if fib_status == "POZİTİF" and fib_score >= 65:
+        raw += min(5, (fib_score - 60) * 0.10)
+    elif fib_status == "NEGATİF":
+        raw -= min(5, (60 - fib_score) * 0.10)
+
     # 100/100 should be practically impossible.
     confidence = int(round(clamp(raw, 8, 97)))
 
@@ -259,6 +266,8 @@ def v4_puanla(item: Dict[str, Any], final: bool = False) -> Dict[str, Any]:
         reasons.append("KAP/haber desteği var")
     if form_confirmed and form_score >= 65 and form_dir == "YUKARI":
         reasons.append(f"{item.get('formasyon', 'Formasyon')} teyitli")
+    if fib_status == "POZİTİF" and fib_score >= 65:
+        reasons.append("Fibonacci desteği olumlu")
 
     warning = []
     if risk < 45:

@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 
 import pandas as pd
 import requests
-import yfinance as yf
+from veri_saglayici import veri as yf
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 

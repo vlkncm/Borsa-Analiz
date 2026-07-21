@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 
 OLUMLU_KAP_KELIMELER = {
@@ -110,7 +111,7 @@ def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:
     try:
         # KAP'ın arama/sorgu sayfası sembolün geçtiği içerikleri döndürebilirse metinden puanlanır.
         # Bu ücretsiz yöntem resmi API değildir.
-        url = f"https://www.kap.org.tr/tr/ara/{kod}"
+        url = f"https://www.kap.org.tr/tr/search/{kod}/1"
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -127,8 +128,18 @@ def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:
             }
 
         html = r.text
-        temiz = re.sub(r"<[^>]+>", " ", html)
+        soup = BeautifulSoup(html, "html.parser")
+        temiz = soup.get_text(" ", strip=True)
         temiz = re.sub(r"\s+", " ", temiz)
+
+        if kod.lower() not in temiz.lower():
+            return {
+                "kap_skor": 0,
+                "kap_etiket": "Veri Yok",
+                "kap_notu": "KAP aramasında sembole ait içerik bulunamadı",
+                "kap_basliklari": "",
+                "kap_url": url,
+            }
 
         # Sembol geçen kısa parçaları çıkar
         parcalar = []
@@ -137,18 +148,31 @@ def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:
             end = min(len(temiz), match.end() + 260)
             parcalar.append(temiz[start:end])
 
-        metin = " ".join(parcalar[:8]) if parcalar else temiz[:3000]
-        puan = metin_puanla(metin)
+        # Arama sayfasındaki menü, fon ve genel şirket metinleri yanlış pozitif
+        # üretmemeli. Yalnızca gerçek bildirim işaretleri taşıyan sembol bağlamı
+        # otomatik puana katılır.
+        bildirim_parcalari = [
+            p for p in parcalar
+            if "gönderim tarihi" in p.lower() and "bildirim" in p.lower()
+        ]
+        metin = " ".join(bildirim_parcalari[:8])
+        puan = metin_puanla(metin) if metin else {
+            "kap_skor": 0,
+            "kap_etiket": "Nötr",
+            "kap_notu": "Doğrulanabilir güncel bildirim metni bulunamadı; otomatik puan verilmedi",
+        }
 
         basliklar = []
-        for p in parcalar[:5]:
+        for p in bildirim_parcalari[:5]:
             basliklar.append(p[:180].strip())
 
         return {
             "kap_skor": puan["kap_skor"],
             "kap_etiket": puan["kap_etiket"],
             "kap_notu": puan["kap_notu"],
-            "kap_basliklari": " || ".join(basliklar)
+            "kap_basliklari": " || ".join(basliklar),
+            "kap_url": url,
+            "kap_kaynak": "KAP herkese açık arama sayfası",
         }
 
     except Exception as e:
@@ -156,7 +180,8 @@ def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:
             "kap_skor": 0,
             "kap_etiket": "Hata",
             "kap_notu": f"KAP kontrol hatası: {e}",
-            "kap_basliklari": ""
+            "kap_basliklari": "",
+            "kap_url": f"https://www.kap.org.tr/tr/search/{kod}/1",
         }
 
 

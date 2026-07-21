@@ -35,6 +35,7 @@ def calistir() -> tuple[bool, list[str]]:
         "pro_moduller.py",
         "kap_modulu.py",
         "backtest.py",
+        "veri_saglayici.py",
         "mtf_grafik.py",
         "olasilik_temettu.py",
         "faaliyet_raporu.py",

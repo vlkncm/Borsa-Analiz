@@ -5,7 +5,7 @@ import time
 from typing import Dict, List, Any
 
 import pandas as pd
-import yfinance as yf
+from veri_saglayici import veri as yf
 
 
 OLUMLU_KELIMELER = {
@@ -237,29 +237,43 @@ def makro_analiz_yfinance() -> Dict[str, Any]:
     puan = 50
     notlar = []
 
+    piyasa_rejimi = "YATAY / BELİRSİZ"
     for isim, sembol in semboller.items():
         try:
-            df = yf.download(sembol, period="3mo", interval="1d", progress=False, auto_adjust=False, threads=False)
+            period = "2y" if isim == "bist100" else "3mo"
+            df = yf.download(sembol, period=period, interval="1d", progress=False, auto_adjust=False, threads=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             if df.empty or len(df) < 25:
                 continue
 
-            close = df["Close"]
+            close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+            close = close[close > 0]
+            if len(close) < 25:
+                continue
             son = guvenli_float(close.iloc[-1])
             ema20 = guvenli_float(close.ewm(span=20, adjust=False).mean().iloc[-1])
+            ema50 = guvenli_float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+            ema200 = guvenli_float(close.ewm(span=200, adjust=False).mean().iloc[-1])
             ret20 = guvenli_float(close.pct_change(20).iloc[-1] * 100)
 
             sonuc[f"{isim}_son"] = son
             sonuc[f"{isim}_ret20"] = ret20
 
             if isim == "bist100":
-                if son > ema20 and ret20 > 0:
+                sonuc["bist100_ema20"] = ema20
+                sonuc["bist100_ema50"] = ema50
+                sonuc["bist100_ema200"] = ema200
+                if son > ema20 > ema50 > ema200 and ret20 > 0:
                     puan += 15
+                    piyasa_rejimi = "YÜKSELİŞ"
                     notlar.append("BIST100 trendi pozitif")
-                elif son < ema20 and ret20 < 0:
+                elif son < ema20 < ema50 and son < ema200 and ret20 < 0:
                     puan -= 15
+                    piyasa_rejimi = "DÜŞÜŞ"
                     notlar.append("BIST100 trendi zayıf")
+                else:
+                    piyasa_rejimi = "YATAY / GEÇİŞ"
 
             if isim == "usdtry":
                 if ret20 > 5:
@@ -285,6 +299,7 @@ def makro_analiz_yfinance() -> Dict[str, Any]:
     sonuc.update({
         "makro_puan": puan,
         "makro_etiket": etiket,
+        "piyasa_rejimi": piyasa_rejimi,
         "makro_notu": " | ".join(notlar) if notlar else "Makro görünüm nötr"
     })
 
@@ -359,40 +374,68 @@ def broker_karar_motoru(item: Dict[str, Any], makro: Dict[str, Any]) -> Dict[str
     }
 
 
-def portfoy_onerisi_uret(df: pd.DataFrame, sermaye: float = 100000) -> pd.DataFrame:
-    """
-    En iyi adaylardan basit risk dağılımlı portföy önerisi üretir.
-    """
+def portfoy_onerisi_uret(
+    df: pd.DataFrame,
+    sermaye: float = 100000,
+    islem_riski_yuzde: float = 1.0,
+    max_pozisyon_yuzde: float = 20.0,
+) -> pd.DataFrame:
+    """Stop mesafesine göre risk bütçeli örnek pozisyon planı üretir."""
     if df.empty or "Broker Aksiyon" not in df.columns:
         return pd.DataFrame()
 
     aday = df[df["Broker Aksiyon"].isin(["GÜÇLÜ AL", "AL"])].copy()
+    if "Yatırım Kararı" in aday.columns:
+        aday = aday[aday["Yatırım Kararı"].isin(["BUGÜN AL", "ALIM BÖLGESİNİ BEKLE"])]
+    if "Veri Güven Puanı" in aday.columns:
+        guven = pd.to_numeric(aday["Veri Güven Puanı"], errors="coerce").fillna(0)
+        aday = aday[guven >= 60]
     if aday.empty:
         return pd.DataFrame()
 
-    aday = aday.sort_values(["Broker Skor", "Güven"], ascending=False).head(8)
+    sort_columns = [c for c in ["Broker Skor", "v4 Güven Puanı", "Güven"] if c in aday.columns]
+    if sort_columns:
+        aday = aday.sort_values(sort_columns, ascending=False)
+    aday = aday.head(8)
 
-    toplam_skor = aday["Broker Skor"].sum()
-    if toplam_skor <= 0:
-        return pd.DataFrame()
+    sermaye = max(0.0, guvenli_float(sermaye))
+    islem_riski_yuzde = min(5.0, max(0.1, guvenli_float(islem_riski_yuzde, 1.0)))
+    max_pozisyon_yuzde = min(50.0, max(1.0, guvenli_float(max_pozisyon_yuzde, 20.0)))
+    risk_butcesi = sermaye * islem_riski_yuzde / 100.0
+    pozisyon_limiti = sermaye * max_pozisyon_yuzde / 100.0
 
     rows = []
     for _, row in aday.iterrows():
-        agirlik = float(row["Broker Skor"]) / float(toplam_skor)
-        # Tek hisse en fazla %20
-        agirlik = min(agirlik, 0.20)
-        tutar = sermaye * agirlik
+        fiyat = guvenli_float(row.get("Önerilen Alış Üst", row.get("Fiyat", 0)))
+        stop = guvenli_float(row.get("Önerilen Stop", row.get("Stop Loss", 0)))
+        hedef = guvenli_float(row.get("Önerilen Satış", row.get("Hedef 1", 0)))
+        hisse_basi_risk = fiyat - stop
+        if fiyat <= 0 or stop <= 0 or hisse_basi_risk <= 0:
+            continue
+        risk_lotu = int(risk_butcesi // hisse_basi_risk)
+        sermaye_lotu = int(pozisyon_limiti // fiyat)
+        lot = max(0, min(risk_lotu, sermaye_lotu))
+        if lot <= 0:
+            continue
+        tutar = lot * fiyat
+        maksimum_zarar = lot * hisse_basi_risk
+        potansiyel_kazanc = lot * max(0.0, hedef - fiyat)
+        rr = (hedef - fiyat) / hisse_basi_risk if hedef > fiyat else 0.0
 
         rows.append({
             "Hisse": row["Hisse"],
             "Broker Aksiyon": row["Broker Aksiyon"],
-            "Broker Skor": row["Broker Skor"],
-            "Önerilen Ağırlık %": round(agirlik * 100, 2),
-            "Örnek Tutar": round(tutar, 2),
-            "Fiyat": row["Fiyat"],
-            "Stop Loss": row["Stop Loss"],
-            "Hedef 1": row["Hedef 1"],
-            "Risk/Getiri 1": row["Risk/Getiri 1"]
+            "Broker Skor": guvenli_float(row.get("Broker Skor", 0)),
+            "Planlanan Giriş": round(fiyat, 2),
+            "Önerilen Lot": lot,
+            "Pozisyon Tutarı": round(tutar, 2),
+            "Pozisyon %": round((tutar / sermaye * 100) if sermaye else 0, 2),
+            "Stop": round(stop, 2),
+            "Hedef": round(hedef, 2),
+            "Maksimum Zarar": round(maksimum_zarar, 2),
+            "Portföy Risk %": round((maksimum_zarar / sermaye * 100) if sermaye else 0, 2),
+            "Potansiyel Kazanç": round(potansiyel_kazanc, 2),
+            "Risk/Getiri": round(rr, 2),
         })
 
     return pd.DataFrame(rows)

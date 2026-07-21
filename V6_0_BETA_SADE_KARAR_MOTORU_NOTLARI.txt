@@ -1,0 +1,44 @@
+BORSA ANALİZ PRO MAX v6.0 BETA — SADE YATIRIM KARAR MOTORU
+
+ANA EKRANLAR
+1. Kısa Vade: 5-20 iş günü için en güçlü 5 hisse
+2. Orta Vade: 1-3 ay için en güçlü 5 hisse
+3. Uzun Vade: 3-12 ay için en güçlü 5 hisse
+4. Tek Hisse Analizi
+5. Satış Kararı
+6. Takip Listem
+7. Seçili Hisse KAP Analizi
+8. Seçili Hisse Faaliyet Raporu Analizi
+
+SADELEŞTİRME
+- Temettü ekranı kaldırıldı.
+- Halka arz ekranı kaldırıldı.
+- Toplu KAP analizi kaldırıldı.
+- Toplu faaliyet raporu analizi kaldırıldı.
+- Toplu backtest ve toplu PNG grafik üretimi ana taramadan çıkarıldı.
+- Kullanıcıya onlarca teknik sütun yerine sadece karar için gerekli bilgiler gösteriliyor.
+
+ARKA PLANDA ÇALIŞANLAR
+- Mum/fiyat davranışı
+- RSI
+- EMA20 / EMA50 / EMA200
+- MACD
+- ADX
+- Hacim
+- Trend
+- Fibonacci
+- Grafik formasyonları
+- Destek / direnç
+- MTF
+- Risk / getiri
+- Hedef, stop, olasılık ve süre modeli
+
+ÖNEMLİ
+Program kesin sonuç veya kâr garantisi vermez. En güçlü 5 hisse, teknik modelin
+o tarihte ürettiği göreli sıralamadır. Model sonuçları yatırım tavsiyesi değildir.
+
+KURULUM
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+
+OLUŞACAK KURULUM
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v6.0.0_BETA.exe

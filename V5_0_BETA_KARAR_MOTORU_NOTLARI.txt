@@ -1,0 +1,42 @@
+BORSA ANALİZ PRO MAX v5.0 BETA — YATIRIM KARAR MOTORU
+
+ANA AMAÇ
+Program bütün doğrulanmış BIST hisselerini tarar ve teknik modele göre:
+- Model kararı
+- Tahmini alış aralığı
+- Tahmini hedef fiyat
+- Stop seviyesi
+- Tahmini getiri
+- Tahmini süre
+- Model olasılığı
+- Risk/getiri oranı
+üretir.
+
+YENİ MODÜLLER
+1. Fibonacci Motoru
+   %23,6, %38,2, %50, %61,8 ve %78,6 seviyeleri.
+2. Karar Motoru
+   BUGÜN AL / ALIM BÖLGESİNİ BEKLE / İZLE / ALMA.
+3. Tek Hisse Tam Analiz
+   Kullanıcının yazdığı herhangi bir BIST kodunu analiz eder.
+4. Bugünün Model Kararları
+   En yüksek modele sahip ilk 20 sonucu ayrı ekranda ve Excel sayfasında gösterir.
+
+HIZLANDIRMA
+Ana taramada varsayılan olarak:
+- KAP kapalı
+- Faaliyet raporu kapalı
+- Temettü toplu taraması kapalı
+Bu modüller kaldırılmamıştır; isteğe bağlı kullanım için korunmuştur.
+MTF, teknik analiz, formasyon, Fibonacci ve risk/getiri ana motorda kalır.
+
+ÇOK ÖNEMLİ
+Hedef fiyat, beklenen süre ve model olasılığı kesinlik veya getiri garantisi değildir.
+Bunlar geçmiş fiyat hareketleri, volatilite ve teknik göstergelerle üretilen
+istatistiksel/teknik senaryolardır. Yazılım yatırım tavsiyesi değildir.
+
+KURULUM
+EXE_VE_SETUP_OLUSTUR.bat dosyasına çift tıklayın.
+
+OLUŞACAK DOSYA
+SetupOutput\Setup_Borsa_Analiz_Pro_MAX_v5.0.0_BETA.exe

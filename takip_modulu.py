@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
-import yfinance as yf
+from veri_saglayici import veri as yf
 
 
 def takip_klasoru() -> Path:

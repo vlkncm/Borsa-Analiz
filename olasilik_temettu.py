@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 import math
 
 import pandas as pd
-import yfinance as yf
+from veri_saglayici import veri as yf
 
 
 def guvenli_float(value: Any, default: float = 0.0) -> float:
@@ -314,4 +314,3 @@ def temettu_toplu_tara(symbols: List[str], max_workers: int = 8) -> pd.DataFrame
 
     # Kullanıcıya gösterilmeyecek yardımcı kolonları kaldır.
     return df.drop(columns=["_yaklasan_tarih", "_tarih_grubu"], errors="ignore")
-
