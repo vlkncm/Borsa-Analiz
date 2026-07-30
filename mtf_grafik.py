@@ -234,8 +234,10 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         fiyat = guvenli_float(item.get("price", son["Close"].iloc[-1]))
         destek = guvenli_float(item.get("ana_destek", item.get("destek", 0)))
         direnc = guvenli_float(item.get("ana_direnc", item.get("direnc", 0)))
-        stop = guvenli_float(item.get("stop_loss", 0))
-        hedef1 = guvenli_float(item.get("hedef_1", 0))
+        alis_alt = guvenli_float(item.get("onerilen_alis_alt", 0))
+        alis_ust = guvenli_float(item.get("onerilen_alis_ust", 0))
+        stop = guvenli_float(item.get("onerilen_stop", item.get("stop_loss", 0)))
+        hedef1 = guvenli_float(item.get("onerilen_satis", item.get("hedef_1", 0)))
         hedef2 = guvenli_float(item.get("hedef_2", 0))
 
         plt.style.use("dark_background")
@@ -259,20 +261,75 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         ax.plot(x, son["EMA50"], label="EMA50", linewidth=1.2, color="#f59e0b")
         ax.plot(x, son["EMA200"], label="EMA200", linewidth=1.0, color="#a78bfa")
 
+        if fiyat > 0:
+            ax.axhline(
+                fiyat,
+                color="#f8fafc",
+                linewidth=1.0,
+                alpha=0.75,
+                label=f"Güncel {fiyat:.2f}",
+            )
+        if alis_alt > 0 and alis_ust > 0:
+            band_low, band_high = sorted((alis_alt, alis_ust))
+            ax.axhspan(
+                band_low,
+                band_high,
+                color="#22c55e",
+                alpha=0.13,
+                label=f"Alış {band_low:.2f}–{band_high:.2f}",
+            )
         if destek > 0:
-            ax.axhline(destek, linestyle="--", linewidth=1.2, label=f"Destek {destek:.2f}")
+            ax.axhline(
+                destek,
+                color="#38bdf8",
+                linestyle="--",
+                linewidth=1.0,
+                label=f"Destek {destek:.2f}",
+            )
         if direnc > 0:
-            ax.axhline(direnc, linestyle="--", linewidth=1.2, label=f"Direnç {direnc:.2f}")
+            ax.axhline(
+                direnc,
+                color="#f59e0b",
+                linestyle="--",
+                linewidth=1.0,
+                label=f"Direnç {direnc:.2f}",
+            )
         if stop > 0:
-            ax.axhline(stop, linestyle=":", linewidth=1.4, label=f"Stop {stop:.2f}")
+            ax.axhline(
+                stop,
+                color="#ef4444",
+                linestyle=":",
+                linewidth=1.6,
+                label=f"Stop {stop:.2f}",
+            )
         if hedef1 > 0:
-            ax.axhline(hedef1, linestyle=":", linewidth=1.4, label=f"Hedef 1 {hedef1:.2f}")
+            ax.axhline(
+                hedef1,
+                color="#22c55e",
+                linestyle=":",
+                linewidth=1.6,
+                label=f"Hedef {hedef1:.2f}",
+            )
         if hedef2 > 0:
-            ax.axhline(hedef2, linestyle=":", linewidth=1.4, label=f"Hedef 2 {hedef2:.2f}")
+            ax.axhline(
+                hedef2,
+                color="#a78bfa",
+                linestyle=":",
+                linewidth=1.2,
+                label=f"Teknik Hedef 2 {hedef2:.2f}",
+            )
 
+        karar = item.get(
+            "yatirim_karari",
+            item.get("broker_aksiyon", item.get("aksiyon", "")),
+        )
+        model_skor = item.get(
+            "model_olasiligi",
+            item.get("broker_skor", item.get("genel_skor", item.get("guven", 0))),
+        )
         baslik = (
-            f"{symbol} | {item.get('broker_aksiyon', item.get('aksiyon', ''))} | "
-            f"Broker Skor: {item.get('broker_skor', item.get('genel_skor', item.get('guven', 0)))} | "
+            f"{symbol} | {karar} | "
+            f"Model: %{model_skor} | "
             f"MTF: {item.get('mtf_karar', '')} {item.get('mtf_skor', '')}"
         )
 

@@ -6,12 +6,12 @@ from datetime import datetime
 
 import pandas as pd
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl
-from PySide6.QtGui import QIcon, QColor, QDesktopServices
+from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QTextEdit, QMessageBox, QFrame, QLineEdit, QAbstractItemView, QTabWidget,
-    QDialog, QGridLayout, QScrollArea, QDoubleSpinBox
+    QDialog, QGridLayout, QScrollArea, QSizePolicy
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
@@ -109,6 +109,58 @@ class SingleWorker(QObject):
                 result.update(satis_karari_uret(result, cost))
                 result["kullanici_maliyeti"] = cost
             self.finished.emit(True, result, "Tamamlandı.")
+        except Exception:
+            self.finished.emit(False, {}, traceback.format_exc())
+
+
+class ChartWorker(QObject):
+    finished = Signal(bool, object, str)
+
+    def __init__(self, symbol):
+        super().__init__()
+        self.symbol = symbol
+
+    def run(self):
+        try:
+            from borsa_tarayici import teknik_analiz
+            from v4_puanlama import v4_puanla
+            from karar_motoru import karar_uret
+            from mtf_grafik import grafik_olustur
+
+            result = teknik_analiz(self.symbol, "SONUÇ GRAFİĞİ")
+            if not result:
+                self.finished.emit(False, {}, "Yeterli fiyat verisi bulunamadı.")
+                return
+
+            result.update(v4_puanla(result, final=False))
+            result.update(karar_uret(result))
+
+            chart_item = dict(result)
+            chart_item.update({
+                "stop_loss": result.get("onerilen_stop", result.get("stop_loss", 0)),
+                "hedef_1": result.get("onerilen_satis", result.get("hedef_1", 0)),
+                "broker_aksiyon": result.get(
+                    "yatirim_karari",
+                    result.get("broker_aksiyon", result.get("aksiyon", "")),
+                ),
+                "broker_skor": result.get(
+                    "model_olasiligi",
+                    result.get("v4_guven_puani", result.get("guven", 0)),
+                ),
+            })
+
+            output = veri_klasoru() / "output" / "grafikler"
+            path = grafik_olustur(self.symbol, chart_item, str(output))
+            if not path:
+                self.finished.emit(
+                    False,
+                    result,
+                    "Grafik için yeterli güncel fiyat verisi alınamadı.",
+                )
+                return
+
+            result["grafik_dosyasi"] = path
+            self.finished.emit(True, result, "Grafik hazır.")
         except Exception:
             self.finished.emit(False, {}, traceback.format_exc())
 
@@ -424,64 +476,148 @@ class InvestmentTerminalPage(QWidget):
             self.metric_labels[key].setText(str(value))
 
 
-class PortfolioPage(QWidget):
+class ResponsiveChartLabel(QLabel):
+    def __init__(self):
+        super().__init__("Bir hisse kodu yazıp analiz başlatın.")
+        self._source_pixmap = QPixmap()
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumHeight(460)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setObjectName("chartCanvas")
+
+    def show_message(self, message):
+        self._source_pixmap = QPixmap()
+        self.clear()
+        self.setText(message)
+
+    def load_chart(self, path):
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            self.show_message("Grafik dosyası görüntülenemedi.")
+            return False
+        self._source_pixmap = pixmap
+        self.setText("")
+        self._refresh_pixmap()
+        return True
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_pixmap()
+
+    def _refresh_pixmap(self):
+        if self._source_pixmap.isNull() or self.width() < 10 or self.height() < 10:
+            return
+        scaled = self._source_pixmap.scaled(
+            self.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+
+
+class ChartPage(QWidget):
     def __init__(self):
         super().__init__()
-        self.results = pd.DataFrame()
+        self.thread = None
+        self.worker = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Risk Bazlı Portföy ve Lot Planı")
+        title = QLabel("Analiz Sonucu Grafiği")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         info = QLabel(
-            "Her işlemde kabul edilen azami zarara ve stop mesafesine göre lot hesaplar. "
-            "Bu ekran emir göndermez ve alarm üretmez."
+            "Hisseyi yeniden analiz eder; sonuçtaki alış aralığı, hedef ve stop seviyelerini "
+            "fiyat, EMA, hacim, RSI ve MACD ile aynı grafikte gösterir."
         )
         info.setObjectName("subText")
         info.setWordWrap(True)
         layout.addWidget(info)
+
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Sermaye (TL)"))
-        self.capital = QDoubleSpinBox()
-        self.capital.setRange(1000, 1000000000)
-        self.capital.setDecimals(0)
-        self.capital.setValue(100000)
-        self.capital.setSingleStep(10000)
-        controls.addWidget(self.capital)
-        controls.addWidget(QLabel("İşlem başı risk (%)"))
-        self.risk = QDoubleSpinBox()
-        self.risk.setRange(0.1, 5.0)
-        self.risk.setDecimals(1)
-        self.risk.setValue(1.0)
-        self.risk.setSingleStep(0.1)
-        controls.addWidget(self.risk)
-        controls.addWidget(QLabel("Hisse başı üst sınır (%)"))
-        self.position_limit = QDoubleSpinBox()
-        self.position_limit.setRange(1.0, 50.0)
-        self.position_limit.setDecimals(1)
-        self.position_limit.setValue(20.0)
-        controls.addWidget(self.position_limit)
-        calculate = QPushButton("LOT PLANINI HESAPLA")
-        calculate.setObjectName("primary")
-        calculate.clicked.connect(self.calculate)
-        controls.addWidget(calculate)
-        controls.addStretch()
+        self.symbol = QLineEdit()
+        self.symbol.setPlaceholderText("Örnek: ASELS")
+        self.symbol.returnPressed.connect(self.run)
+        controls.addWidget(self.symbol, 1)
+        self.button = QPushButton("ANALİZ ET VE GRAFİĞİ GÖSTER")
+        self.button.setObjectName("primary")
+        self.button.clicked.connect(self.run)
+        controls.addWidget(self.button)
         layout.addLayout(controls)
-        self.table = SimpleTable("Örnek Pozisyon Planı")
-        layout.addWidget(self.table, 1)
 
-    def set_results(self, df):
-        self.results = df.copy() if df is not None else pd.DataFrame()
+        self.status = QLabel("")
+        self.status.setObjectName("subText")
+        layout.addWidget(self.status)
 
-    def calculate(self):
-        from pro_moduller import portfoy_onerisi_uret
-        plan = portfoy_onerisi_uret(
-            self.results,
-            sermaye=self.capital.value(),
-            islem_riski_yuzde=self.risk.value(),
-            max_pozisyon_yuzde=self.position_limit.value(),
+        self.summary = QLabel(
+            "Grafik canlı fiyat akışı değildir; analiz sırasında alınan son geçerli veriyi gösterir."
         )
-        self.table.load(plan)
+        self.summary.setObjectName("chartSummary")
+        self.summary.setWordWrap(True)
+        self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.summary)
+
+        self.chart = ResponsiveChartLabel()
+        layout.addWidget(self.chart, 1)
+
+    def run(self):
+        symbol = normalize_symbol(self.symbol.text())
+        if not symbol:
+            QMessageBox.warning(self, "Hisse", "Bir hisse kodu yaz.")
+            return
+        if self.thread is not None and self.thread.isRunning():
+            return
+
+        self.button.setEnabled(False)
+        self.status.setText(f"{symbol.replace('.IS', '')} analiz ediliyor ve grafik hazırlanıyor...")
+        self.summary.setText("Teknik sonuç hesaplanıyor...")
+        self.chart.show_message("Grafik hazırlanıyor...")
+
+        self.thread = QThread()
+        self.worker = ChartWorker(symbol)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.done)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.start()
+
+    @staticmethod
+    def _number(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def done(self, ok, result, message):
+        self.button.setEnabled(True)
+        if not ok:
+            self.status.setText("Grafik oluşturulamadı.")
+            self.summary.setText(message)
+            self.chart.show_message("Grafik gösterilemiyor.")
+            return
+
+        path = Path(result.get("grafik_dosyasi", ""))
+        if not path.exists() or not self.chart.load_chart(path):
+            self.status.setText("Grafik dosyası görüntülenemedi.")
+            return
+
+        decision = result.get("yatirim_karari", result.get("aksiyon", "İZLE"))
+        price = self._number(result.get("price"))
+        buy_low = self._number(result.get("onerilen_alis_alt"))
+        buy_high = self._number(result.get("onerilen_alis_ust"))
+        target = self._number(result.get("onerilen_satis"))
+        stop = self._number(result.get("onerilen_stop"))
+        probability = self._number(result.get("model_olasiligi"))
+        self.summary.setText(
+            f"KARAR: {decision}   |   GÜNCEL: {price:.2f} TL   |   "
+            f"ALIŞ: {buy_low:.2f}–{buy_high:.2f} TL   |   "
+            f"HEDEF: {target:.2f} TL   |   STOP: {stop:.2f} TL   |   "
+            f"MODEL OLASILIĞI: %{probability:.0f}"
+        )
+        self.status.setText(
+            f"{self.symbol.text().strip().upper()} sonuç grafiği hazır. "
+            "Bu grafik yatırım garantisi değildir."
+        )
 
 
 class SingleAnalysisPage(QWidget):
@@ -761,14 +897,14 @@ class MainWindow(QMainWindow):
         self.tum = self.terminal.tum
         self.single = SingleAnalysisPage()
         self.sale = SalePage()
-        self.portfolio = PortfolioPage()
+        self.chart = ChartPage()
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.portfolio, self.track, self.kap, self.activity, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.chart, self.track, self.kap, self.activity, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -789,7 +925,7 @@ class MainWindow(QMainWindow):
             ("YATIRIM TERMİNALİ", 0),
             ("TEK HİSSE ANALİZİ", 1),
             ("SATIŞ KARARI", 2),
-            ("PORTFÖY / LOT PLANI", 3),
+            ("SONUÇ GRAFİĞİ", 3),
             ("TAKİP LİSTEM", 4),
             ("SEÇİLİ HİSSE KAP", 5),
             ("SEÇİLİ HİSSE FAALİYET", 6),
@@ -841,6 +977,8 @@ class MainWindow(QMainWindow):
             #metricCaption { color:#94a3b8; font-size:10px; font-weight:bold; }
             #metricValue { color:#f8fafc; font-size:22px; font-weight:bold; }
             #riskBanner { background:#422006; border:1px solid #a16207; color:#fde68a; padding:8px; border-radius:6px; }
+            #chartSummary { background:#0f172a; border:1px solid #0369a1; color:#bae6fd; padding:10px; border-radius:7px; }
+            #chartCanvas { background:#0f172a; border:1px solid #334155; border-radius:8px; color:#64748b; padding:8px; }
             QTabBar::tab { background:#1e293b; color:#cbd5e1; padding:10px 24px; margin-right:2px; }
             QTabBar::tab:selected { background:#0369a1; color:white; }
             QLineEdit, QTextEdit, QTableWidget { background:#0f172a; border:1px solid #334155; border-radius:6px; padding:7px; }
@@ -863,7 +1001,6 @@ class MainWindow(QMainWindow):
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
                 all_results = all_results[valid_price > 0].reset_index(drop=True)
-            self.portfolio.set_results(all_results)
             visible_columns = [
                 "Hisse", "Veri Tarihi", "Yatırım Kararı", "Fırsat Seviyesi",
                 "Veri Durumu", "Veri Gecikmesi (İş Günü)",

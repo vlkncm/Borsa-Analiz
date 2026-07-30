@@ -16,6 +16,7 @@ Sadeleştirilmiş BIST yatırım karar motoru.
 - Orta vade: 1–3 ay için en güçlü 5 hisse
 - Uzun vade: 3–12 ay için en güçlü 5 hisse
 - Tek hisse analizi
+- Analiz sonucuna göre uygulama içinde alış, hedef ve stop seviyeli teknik grafik
 - Satış kararı
 - Takip listesi
 - Seçili hisse için KAP ve faaliyet raporu analizi
