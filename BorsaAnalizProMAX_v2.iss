@@ -1,5 +1,5 @@
 #define MyAppName "Borsa Analiz Pro MAX"
-#define MyAppVersion "7.2.0-final"
+#define MyAppVersion "7.3.0"
 #define MyAppPublisher "V Software"
 #define MyAppExeName "BorsaAnalizProMAX.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=SetupOutput
-OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v7.2.0_FINAL
+OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v7.3.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

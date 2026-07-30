@@ -1,4 +1,4 @@
-BORSA ANALİZ PRO MAX v2.0 — TEK TIKLA KURULUM HAZIRLAMA
+BORSA ANALİZ PRO MAX v7.3 — TEK TIKLA KURULUM HAZIRLAMA
 
 1. Bu ZIP dosyasını bilgisayarında bir klasöre çıkar.
 2. Çıkan klasörü aç.
@@ -7,7 +7,7 @@ BORSA ANALİZ PRO MAX v2.0 — TEK TIKLA KURULUM HAZIRLAMA
 5. İşlem bitince SetupOutput klasörü otomatik açılır.
 6. Paylaşacağın tek dosya:
 
-   Setup_Borsa_Analiz_Pro_MAX_v2.0.1.exe
+   Setup_Borsa_Analiz_Pro_MAX_v7.3.0.exe
 
 Karşı bilgisayarda Python, PyCharm veya Inno Setup gerekmez.
 Sadece Setup dosyasını çalıştırması yeterlidir.
@@ -22,4 +22,5 @@ Program yatırım tavsiyesi değildir. Faaliyet raporu ve KAP verileri ücretsiz
 kaynaklarıyla alınır; bazı şirketlerde veri bulunamayabilir.
 
 
-Duzeltme v2.0.1: rapor_yazdir limit parametresi uyumsuzlugu giderildi.
+Yenilik v7.3: Portföy/lot planı kaldırıldı; alış, hedef ve stop seviyelerini
+uygulama içinde gösteren analiz sonucu grafiği eklendi.
