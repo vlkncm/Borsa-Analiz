@@ -2,6 +2,11 @@
 
 Sadeleştirilmiş BIST yatırım karar motoru.
 
+## Windows kurulumu
+
+- [Borsa Analiz Pro MAX v7.3.0 kurulum dosyasını indir](downloads/v7.3.0/Setup_Borsa_Analiz_Pro_MAX_v7.3.0.exe)
+- SHA-256: `575A6D2E5F3E05DB843F7F589D83A146057451105A054A988D9391050345B93F`
+
 ## v7.2 merkezi veri katmanı
 
 - Fiyat verileri tek bir sağlayıcı katmanından alınır.
