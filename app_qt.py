@@ -45,6 +45,202 @@ def normalize_symbol(text: str) -> str:
     return value if value.endswith(".IS") else value + ".IS"
 
 
+def guvenli_sayi(value, default=0.0):
+    try:
+        number = float(value)
+        return number if pd.notna(number) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def teknik_degerlendirme_uret(result, symbol=""):
+    """Grafikte kullanılan göstergeleri çelişkisiz, açıklanabilir metne dönüştürür."""
+    symbol = str(symbol or result.get("symbol", "")).replace(".IS", "").upper()
+    decision = str(result.get("yatirim_karari", "İZLE"))
+    price = guvenli_sayi(result.get("price"))
+    ema20 = guvenli_sayi(result.get("ema20"))
+    ema50 = guvenli_sayi(result.get("ema50"))
+    ema200 = guvenli_sayi(result.get("ema200"))
+    rsi = guvenli_sayi(result.get("rsi"), 50)
+    macd = guvenli_sayi(result.get("macd"))
+    macd_signal = guvenli_sayi(result.get("macd_signal"))
+    adx = guvenli_sayi(result.get("adx"))
+    volume_ratio = guvenli_sayi(result.get("volume_ratio"), 1)
+    buy_low = guvenli_sayi(result.get("onerilen_alis_alt"))
+    buy_high = guvenli_sayi(result.get("onerilen_alis_ust"))
+    target = guvenli_sayi(result.get("onerilen_satis"))
+    stop = guvenli_sayi(result.get("onerilen_stop"))
+    probability = guvenli_sayi(result.get("model_olasiligi"))
+    rr = guvenli_sayi(result.get("karar_risk_getiri"))
+    data_confidence = guvenli_sayi(
+        result.get("karar_veri_guveni", result.get("veri_guven_puani"))
+    )
+    evidence = guvenli_sayi(
+        result.get("karar_kanit_puani", result.get("profesyonel_kanit_puani"))
+    )
+    samples = int(guvenli_sayi(
+        result.get("karar_kanit_ornegi", result.get("kisa_ornek"))
+    ))
+    safe_probability = guvenli_sayi(result.get("kisa_guvenli_olasilik"))
+    data_status = str(result.get("veri_durumu", "BİLİNMİYOR"))
+    data_date = str(result.get("veri_tarihi", "-"))
+    market_regime = str(result.get("piyasa_rejimi", "YATAY / BELİRSİZ"))
+
+    if price > ema20 > ema50 and (ema200 <= 0 or price > ema200):
+        trend_text = "Pozitif: fiyat kısa ve orta vadeli ortalamaların üzerinde."
+    elif price < ema20 < ema50:
+        trend_text = "Negatif: fiyat EMA20 altında ve EMA20 de EMA50 altında."
+    else:
+        trend_text = "Karışık: hareketli ortalamalar aynı yönde ortak teyit vermiyor."
+    if ema200 > 0:
+        trend_text += (
+            " Uzun vadeli yapı EMA200 üzerinde korunuyor."
+            if price > ema200
+            else " Fiyat EMA200 altında; uzun vadeli trend baskılı."
+        )
+
+    if adx >= 25:
+        adx_text = f"ADX {adx:.1f}; mevcut yön belirgin güç taşıyor."
+    elif adx >= 20:
+        adx_text = f"ADX {adx:.1f}; trend oluşuyor ancak henüz güçlü değil."
+    else:
+        adx_text = f"ADX {adx:.1f}; piyasa yatay veya yön gücü zayıf olabilir."
+
+    if rsi >= 70:
+        rsi_text = f"RSI {rsi:.1f}; aşırı alım bölgesinde, geri çekilme riski arttı."
+    elif rsi >= 65:
+        rsi_text = f"RSI {rsi:.1f}; momentum güçlü fakat ısınmış durumda."
+    elif rsi >= 45:
+        rsi_text = f"RSI {rsi:.1f}; dengeli/sağlıklı momentum bölgesinde."
+    elif rsi >= 30:
+        rsi_text = f"RSI {rsi:.1f}; momentum zayıf, toparlanma teyidi gerekiyor."
+    else:
+        rsi_text = f"RSI {rsi:.1f}; aşırı satımda ancak bu tek başına alım sinyali değildir."
+    macd_text = (
+        f"MACD ({macd:.2f}) sinyalin ({macd_signal:.2f}) üzerinde; momentum pozitif."
+        if macd > macd_signal
+        else f"MACD ({macd:.2f}) sinyalin ({macd_signal:.2f}) altında; momentum teyidi zayıf."
+    )
+    if volume_ratio >= 1.2:
+        volume_text = f"Hacim 20 günlük ortalamanın {volume_ratio:.2f} katı; hareket hacimle destekleniyor."
+    elif volume_ratio < 0.8:
+        volume_text = f"Hacim ortalamanın yalnızca {volume_ratio:.2f} katı; fiyat hareketinin teyidi zayıf."
+    else:
+        volume_text = f"Hacim oranı {volume_ratio:.2f}; olağan bantta."
+
+    daily = str(result.get("gunluk_yon", "TUT"))
+    weekly = str(result.get("haftalik_yon", "TUT"))
+    mtf_fit = str(result.get("mtf_uyum", "Veri Yok"))
+    mtf_score = guvenli_sayi(result.get("mtf_skor"), 50)
+    mtf_text = (
+        f"Günlük yön {daily}, haftalık yön {weekly}; uyum “{mtf_fit}” ve birleşik skor {mtf_score:.0f}/100."
+    )
+
+    if buy_low > 0 and buy_high > 0 and price > 0:
+        if buy_low <= price <= buy_high:
+            entry_text = "Güncel fiyat hesaplanan alış bandının içinde."
+        elif price > buy_high:
+            distance = (price / buy_high - 1) * 100
+            entry_text = f"Güncel fiyat alış bandının %{distance:.2f} üzerinde; fiyatı kovalamak riski artırır."
+        else:
+            distance = (buy_low / price - 1) * 100
+            entry_text = f"Güncel fiyat alış bandının %{distance:.2f} altında; yeniden teyit beklenmeli."
+    else:
+        entry_text = "Geçerli alış bandı hesaplanamadı."
+
+    target_gain = ((target / price) - 1) * 100 if target > 0 and price > 0 else 0
+    stop_loss = (1 - stop / price) * 100 if 0 < stop < price else 0
+    level_text = (
+        f"Alış bandı {buy_low:.2f}–{buy_high:.2f} TL, hedef {target:.2f} TL "
+        f"(güncelden potansiyel %{target_gain:.2f}), stop {stop:.2f} TL "
+        f"(güncelden risk %{stop_loss:.2f}). Risk/getiri yaklaşık 1:{rr:.2f}."
+    )
+
+    evidence_text = (
+        f"Model olasılığı %{probability:.0f}; veri güveni %{data_confidence:.0f}, "
+        f"profesyonel kanıt puanı {evidence:.1f}/100."
+    )
+    if samples >= 20:
+        evidence_text += (
+            f" Benzer geçmiş rejimde {samples} örnek var; Wilson güvenli alt olasılığı "
+            f"%{safe_probability:.1f}."
+        )
+    else:
+        evidence_text += (
+            f" Benzer geçmiş rejimde yalnızca {samples} örnek var; olasılık düşük güvenle yorumlanmalı."
+        )
+
+    risks = []
+    if "ESKİ" in data_status.upper() or data_confidence < 60:
+        risks.append("Fiyat verisi güncel veya yeterince güvenilir değil; işlem kararı üretilmemeli.")
+    if samples < 20:
+        risks.append("Tarihsel benzer örnek sayısı 20'nin altında.")
+    if "DÜŞÜŞ" in market_regime.upper():
+        risks.append("BIST piyasa rejimi düşüş yönünde.")
+    if "NEGATİF" in mtf_fit.upper():
+        risks.append("Günlük ve haftalık zaman dilimleri negatif uyum gösteriyor.")
+    if rsi >= 70:
+        risks.append("RSI aşırı alım bölgesinde.")
+    if ema200 > 0 and price < ema200:
+        risks.append("Fiyat uzun vadeli EMA200 altında.")
+    if macd <= macd_signal:
+        risks.append("MACD pozitif teyit vermiyor.")
+    if volume_ratio < 0.8:
+        risks.append("Hacim hareketi yeterince desteklemiyor.")
+    if rr < 1.5:
+        risks.append("Risk/getiri 1:1,5 eşiğinin altında.")
+    risk_text = "\n".join(f"- {risk}" for risk in risks) if risks else (
+        "- Ana göstergelerde ek yüksek risk alarmı oluşmadı; yine de stop ve veri güncelliği kontrol edilmeli."
+    )
+
+    conclusion_map = {
+        "BUGÜN AL": "Ortak teyitler güçlü. Yalnızca alış bandı korunuyorsa ve stop disiplini kabul ediliyorsa değerlendirilebilir.",
+        "ALIM BÖLGESİNİ BEKLE": "Görünüm tamamen olumsuz değil fakat güncel seviyeden fiyatı kovalamak yerine hesaplanan alış bandı beklenmeli.",
+        "İZLE - KANIT YETERSİZ": "Teknik görünüm izlemeye değer olsa da tarihsel kanıt sayısı karar vermek için yetersiz.",
+        "İZLE": "Olumlu ve olumsuz göstergeler karışık; ortak teyit oluşana kadar izlemek daha tutarlı.",
+        "ALMA": "Trend, momentum veya risk/getiri koşulları yeni pozisyon için yeterli değil.",
+        "VERİ KONTROLÜ GEREKLİ": "Veri kalitesi karar üretmeye uygun değil; güncel veri gelmeden sonuç kullanılmamalı.",
+    }
+    conclusion = conclusion_map.get(
+        decision,
+        "Karar yalnızca hesaplanan teknik koşullar çerçevesinde ve risk sınırlarıyla değerlendirilmelidir.",
+    )
+
+    return "\n".join([
+        f"{symbol} — YAZILI TEKNİK DEĞERLENDİRME",
+        f"Veri tarihi: {data_date} | Veri durumu: {data_status} | Piyasa rejimi: {market_regime}",
+        "",
+        f"SONUÇ: {decision}",
+        evidence_text,
+        f"Karar gerekçesi: {result.get('karar_nedenleri', '-')}",
+        "",
+        "1) GRAFİK VE TREND OKUMASI",
+        trend_text,
+        adx_text,
+        "",
+        "2) MOMENTUM VE HACİM",
+        rsi_text,
+        macd_text,
+        volume_text,
+        "",
+        "3) ÇOKLU ZAMAN DİLİMİ",
+        mtf_text,
+        "",
+        "4) ALIŞ, HEDEF VE STOP",
+        entry_text,
+        level_text,
+        "",
+        "5) ÖNEMLİ RİSKLER",
+        risk_text,
+        "",
+        "NİHAİ YORUM",
+        conclusion,
+        "",
+        "Bu değerlendirme canlı fiyat akışı değildir ve yatırım garantisi vermez. "
+        "Karar öncesinde güncel fiyat, KAP açıklamaları ve kişisel risk sınırı ayrıca kontrol edilmelidir.",
+    ])
+
+
 class ScanWorker(QObject):
     log = Signal(str)
     finished = Signal(bool, str)
@@ -102,65 +298,34 @@ class SingleWorker(QObject):
             if not result:
                 self.finished.emit(False, {}, "Yeterli fiyat verisi bulunamadı.")
                 return
+
+            if self.mode == "analysis":
+                from mtf_grafik import coklu_zaman_dilimi_analizi
+                from pro_moduller import makro_analiz_yfinance
+
+                result.update(coklu_zaman_dilimi_analizi(self.symbol))
+                result.update(makro_analiz_yfinance())
+
             result.update(v4_puanla(result, final=False))
             result.update(karar_uret(result))
+
+            if self.mode == "analysis":
+                from mtf_grafik import grafik_olustur
+
+                output = veri_klasoru() / "output" / "grafikler"
+                path = grafik_olustur(self.symbol, result, str(output))
+                if path:
+                    result["grafik_dosyasi"] = path
+                else:
+                    result["grafik_hatasi"] = (
+                        "Grafik için yeterli güncel fiyat verisi alınamadı."
+                    )
+
             if self.mode.startswith("sale:"):
                 cost = float(self.mode.split(":", 1)[1])
                 result.update(satis_karari_uret(result, cost))
                 result["kullanici_maliyeti"] = cost
             self.finished.emit(True, result, "Tamamlandı.")
-        except Exception:
-            self.finished.emit(False, {}, traceback.format_exc())
-
-
-class ChartWorker(QObject):
-    finished = Signal(bool, object, str)
-
-    def __init__(self, symbol):
-        super().__init__()
-        self.symbol = symbol
-
-    def run(self):
-        try:
-            from borsa_tarayici import teknik_analiz
-            from v4_puanlama import v4_puanla
-            from karar_motoru import karar_uret
-            from mtf_grafik import grafik_olustur
-
-            result = teknik_analiz(self.symbol, "SONUÇ GRAFİĞİ")
-            if not result:
-                self.finished.emit(False, {}, "Yeterli fiyat verisi bulunamadı.")
-                return
-
-            result.update(v4_puanla(result, final=False))
-            result.update(karar_uret(result))
-
-            chart_item = dict(result)
-            chart_item.update({
-                "stop_loss": result.get("onerilen_stop", result.get("stop_loss", 0)),
-                "hedef_1": result.get("onerilen_satis", result.get("hedef_1", 0)),
-                "broker_aksiyon": result.get(
-                    "yatirim_karari",
-                    result.get("broker_aksiyon", result.get("aksiyon", "")),
-                ),
-                "broker_skor": result.get(
-                    "model_olasiligi",
-                    result.get("v4_guven_puani", result.get("guven", 0)),
-                ),
-            })
-
-            output = veri_klasoru() / "output" / "grafikler"
-            path = grafik_olustur(self.symbol, chart_item, str(output))
-            if not path:
-                self.finished.emit(
-                    False,
-                    result,
-                    "Grafik için yeterli güncel fiyat verisi alınamadı.",
-                )
-                return
-
-            result["grafik_dosyasi"] = path
-            self.finished.emit(True, result, "Grafik hazır.")
         except Exception:
             self.finished.emit(False, {}, traceback.format_exc())
 
@@ -515,49 +680,74 @@ class ResponsiveChartLabel(QLabel):
         self.setPixmap(scaled)
 
 
-class ChartPage(QWidget):
+class SingleAnalysisPage(QWidget):
     def __init__(self):
         super().__init__()
         self.thread = None
         self.worker = None
+        self.last_result = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Analiz Sonucu Grafiği")
+        title = QLabel("Tek Hisse Analizi")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
-        info = QLabel(
-            "Hisseyi yeniden analiz eder; sonuçtaki alış aralığı, hedef ve stop seviyelerini "
-            "fiyat, EMA, hacim, RSI ve MACD ile aynı grafikte gösterir."
+        sub = QLabel(
+            "Tek işlemde günlük ve haftalık trendi, piyasa rejimini, veri güvenini ve tarihsel "
+            "kanıtı inceler; sonuç grafiğini ve açıklamalı teknik değerlendirmeyi birlikte gösterir."
         )
-        info.setObjectName("subText")
-        info.setWordWrap(True)
-        layout.addWidget(info)
+        sub.setWordWrap(True)
+        sub.setObjectName("subText")
+        layout.addWidget(sub)
 
-        controls = QHBoxLayout()
+        top = QHBoxLayout()
         self.symbol = QLineEdit()
         self.symbol.setPlaceholderText("Örnek: ASELS")
         self.symbol.returnPressed.connect(self.run)
-        controls.addWidget(self.symbol, 1)
-        self.button = QPushButton("ANALİZ ET VE GRAFİĞİ GÖSTER")
+        top.addWidget(self.symbol, 1)
+        self.button = QPushButton("ANALİZ ET, GRAFİĞİ VE YORUMU GÖSTER")
         self.button.setObjectName("primary")
         self.button.clicked.connect(self.run)
-        controls.addWidget(self.button)
-        layout.addLayout(controls)
+        top.addWidget(self.button)
+        layout.addLayout(top)
 
         self.status = QLabel("")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
 
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 8, 0)
+
         self.summary = QLabel(
-            "Grafik canlı fiyat akışı değildir; analiz sırasında alınan son geçerli veriyi gösterir."
+            "Bir hisse kodu girildiğinde karar, alış bandı, hedef, stop ve model güveni burada gösterilir."
         )
         self.summary.setObjectName("chartSummary")
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.summary)
+        content_layout.addWidget(self.summary)
 
         self.chart = ResponsiveChartLabel()
-        layout.addWidget(self.chart, 1)
+        self.chart.setMinimumHeight(520)
+        content_layout.addWidget(self.chart)
+
+        analysis_title = QLabel("Grafiğin Yazılı Teknik Değerlendirmesi")
+        analysis_title.setObjectName("analysisTitle")
+        content_layout.addWidget(analysis_title)
+
+        self.result = QTextEdit()
+        self.result.setReadOnly(True)
+        self.result.setObjectName("analysisText")
+        self.result.setMinimumHeight(410)
+        self.result.setPlainText(
+            "Analiz tamamlandığında trend, momentum, hacim, çoklu zaman dilimi, "
+            "seviyeler, kanıt gücü ve riskler burada açıklanır."
+        )
+        content_layout.addWidget(self.result)
+        self.scroll.setWidget(content)
+        layout.addWidget(self.scroll, 1)
 
     def run(self):
         symbol = normalize_symbol(self.symbol.text())
@@ -568,95 +758,14 @@ class ChartPage(QWidget):
             return
 
         self.button.setEnabled(False)
-        self.status.setText(f"{symbol.replace('.IS', '')} analiz ediliyor ve grafik hazırlanıyor...")
-        self.summary.setText("Teknik sonuç hesaplanıyor...")
-        self.chart.show_message("Grafik hazırlanıyor...")
-
-        self.thread = QThread()
-        self.worker = ChartWorker(symbol)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
-
-    @staticmethod
-    def _number(value):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def done(self, ok, result, message):
-        self.button.setEnabled(True)
-        if not ok:
-            self.status.setText("Grafik oluşturulamadı.")
-            self.summary.setText(message)
-            self.chart.show_message("Grafik gösterilemiyor.")
-            return
-
-        path = Path(result.get("grafik_dosyasi", ""))
-        if not path.exists() or not self.chart.load_chart(path):
-            self.status.setText("Grafik dosyası görüntülenemedi.")
-            return
-
-        decision = result.get("yatirim_karari", result.get("aksiyon", "İZLE"))
-        price = self._number(result.get("price"))
-        buy_low = self._number(result.get("onerilen_alis_alt"))
-        buy_high = self._number(result.get("onerilen_alis_ust"))
-        target = self._number(result.get("onerilen_satis"))
-        stop = self._number(result.get("onerilen_stop"))
-        probability = self._number(result.get("model_olasiligi"))
-        self.summary.setText(
-            f"KARAR: {decision}   |   GÜNCEL: {price:.2f} TL   |   "
-            f"ALIŞ: {buy_low:.2f}–{buy_high:.2f} TL   |   "
-            f"HEDEF: {target:.2f} TL   |   STOP: {stop:.2f} TL   |   "
-            f"MODEL OLASILIĞI: %{probability:.0f}"
-        )
         self.status.setText(
-            f"{self.symbol.text().strip().upper()} sonuç grafiği hazır. "
-            "Bu grafik yatırım garantisi değildir."
+            f"{symbol.replace('.IS', '')} için günlük/haftalık analiz, piyasa kontrolü ve grafik hazırlanıyor..."
         )
-
-
-class SingleAnalysisPage(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.thread = None
-        self.worker = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Tek Hisse Analizi")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
-        sub = QLabel("İstediğin BIST hissesini yaz. Teknik ayrıntılar arka planda incelenir; sonuç sade gösterilir.")
-        sub.setWordWrap(True)
-        sub.setObjectName("subText")
-        layout.addWidget(sub)
-        top = QHBoxLayout()
-        self.symbol = QLineEdit()
-        self.symbol.setPlaceholderText("Örnek: ASELS")
-        self.symbol.returnPressed.connect(self.run)
-        top.addWidget(self.symbol, 1)
-        self.button = QPushButton("ANALİZ ET")
-        self.button.setObjectName("primary")
-        self.button.clicked.connect(self.run)
-        top.addWidget(self.button)
-        layout.addLayout(top)
-        self.status = QLabel("")
-        layout.addWidget(self.status)
-        self.result = QTextEdit()
-        self.result.setReadOnly(True)
-        layout.addWidget(self.result, 1)
-
-    def run(self):
-        symbol = normalize_symbol(self.symbol.text())
-        if not symbol:
-            QMessageBox.warning(self, "Hisse", "Bir hisse kodu yaz.")
-            return
-        self.button.setEnabled(False)
-        self.status.setText("Analiz yapılıyor...")
+        self.summary.setText("Teknik sonuç ve risk seviyeleri hesaplanıyor...")
+        self.chart.show_message("Grafik hazırlanıyor...")
+        self.result.setPlainText(
+            "Veri güncelliği, trend, momentum, hacim, tarihsel kanıt ve risk/getiri değerlendiriliyor..."
+        )
         self.thread = QThread()
         self.worker = SingleWorker(symbol, "analysis")
         self.worker.moveToThread(self.thread)
@@ -670,26 +779,40 @@ class SingleAnalysisPage(QWidget):
         self.button.setEnabled(True)
         if not ok:
             self.status.setText("Analiz yapılamadı.")
+            self.summary.setText("Sonuç üretilemedi.")
+            self.chart.show_message("Grafik gösterilemiyor.")
             self.result.setPlainText(message)
             return
-        self.status.setText("Analiz tamamlandı.")
+
+        self.last_result = dict(r)
         decision = r.get("yatirim_karari", "İZLE")
-        lines = [
-            f"HİSSE: {self.symbol.text().strip().upper()}",
-            f"KARAR: {decision}",
-            "",
-            f"ALIŞ ARALIĞI: {r.get('onerilen_alis_alt', 0):.2f} - {r.get('onerilen_alis_ust', 0):.2f} TL",
-            f"SATIŞ HEDEFİ: {r.get('onerilen_satis', 0):.2f} TL",
-            f"STOP: {r.get('onerilen_stop', 0):.2f} TL",
-            f"BEKLENEN GETİRİ: %{r.get('beklenen_getiri_yuzde', 0):.2f}",
-            f"TAHMİNİ SÜRE: {r.get('beklenen_sure', '-')}",
-            f"MODEL OLASILIĞI: %{r.get('model_olasiligi', 0)}",
-            "",
-            f"NEDEN: {r.get('karar_nedenleri', '-')}",
-            "",
-            "Bu sonuç teknik model senaryosudur; kesin getiri veya yatırım garantisi değildir.",
-        ]
-        self.result.setPlainText("\n".join(lines))
+        price = guvenli_sayi(r.get("price"))
+        buy_low = guvenli_sayi(r.get("onerilen_alis_alt"))
+        buy_high = guvenli_sayi(r.get("onerilen_alis_ust"))
+        target = guvenli_sayi(r.get("onerilen_satis"))
+        stop = guvenli_sayi(r.get("onerilen_stop"))
+        probability = guvenli_sayi(r.get("model_olasiligi"))
+        self.summary.setText(
+            f"KARAR: {decision}   |   GÜNCEL: {price:.2f} TL   |   "
+            f"ALIŞ: {buy_low:.2f}–{buy_high:.2f} TL   |   "
+            f"HEDEF: {target:.2f} TL   |   STOP: {stop:.2f} TL   |   "
+            f"MODEL OLASILIĞI: %{probability:.0f}"
+        )
+
+        path = Path(r.get("grafik_dosyasi", ""))
+        chart_ok = path.exists() and self.chart.load_chart(path)
+        if not chart_ok:
+            self.chart.show_message(
+                r.get("grafik_hatasi", "Grafik dosyası görüntülenemedi; yazılı analiz kullanılabilir.")
+            )
+
+        symbol = normalize_symbol(self.symbol.text())
+        self.result.setPlainText(teknik_degerlendirme_uret(r, symbol))
+        self.status.setText(
+            f"{symbol.replace('.IS', '')} birleşik analizi tamamlandı"
+            + ("." if chart_ok else "; grafik oluşturulamadı, yazılı değerlendirme hazır.")
+        )
+        self.scroll.verticalScrollBar().setValue(0)
 
 
 class SalePage(QWidget):
@@ -879,7 +1002,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v7.3")
+        self.setWindowTitle(APP_NAME + " v7.4")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -897,14 +1020,13 @@ class MainWindow(QMainWindow):
         self.tum = self.terminal.tum
         self.single = SingleAnalysisPage()
         self.sale = SalePage()
-        self.chart = ChartPage()
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.chart, self.track, self.kap, self.activity, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -916,7 +1038,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.3")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.4")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -925,11 +1047,10 @@ class MainWindow(QMainWindow):
             ("YATIRIM TERMİNALİ", 0),
             ("TEK HİSSE ANALİZİ", 1),
             ("SATIŞ KARARI", 2),
-            ("SONUÇ GRAFİĞİ", 3),
-            ("TAKİP LİSTEM", 4),
-            ("SEÇİLİ HİSSE KAP", 5),
-            ("SEÇİLİ HİSSE FAALİYET", 6),
-            ("CANLI LOG", 7),
+            ("TAKİP LİSTEM", 3),
+            ("SEÇİLİ HİSSE KAP", 4),
+            ("SEÇİLİ HİSSE FAALİYET", 5),
+            ("CANLI LOG", 6),
         ]
         for text, index in menu:
             button = QPushButton(text)
@@ -979,6 +1100,8 @@ class MainWindow(QMainWindow):
             #riskBanner { background:#422006; border:1px solid #a16207; color:#fde68a; padding:8px; border-radius:6px; }
             #chartSummary { background:#0f172a; border:1px solid #0369a1; color:#bae6fd; padding:10px; border-radius:7px; }
             #chartCanvas { background:#0f172a; border:1px solid #334155; border-radius:8px; color:#64748b; padding:8px; }
+            #analysisTitle { color:#38bdf8; font-size:18px; font-weight:bold; padding-top:10px; }
+            #analysisText { background:#0f172a; border:1px solid #334155; color:#e2e8f0; line-height:1.4; }
             QTabBar::tab { background:#1e293b; color:#cbd5e1; padding:10px 24px; margin-right:2px; }
             QTabBar::tab:selected { background:#0369a1; color:white; }
             QLineEdit, QTextEdit, QTableWidget { background:#0f172a; border:1px solid #334155; border-radius:6px; padding:7px; }
@@ -1064,7 +1187,7 @@ class MainWindow(QMainWindow):
         if self.thread is not None and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.pages.setCurrentIndex(7)
+        self.pages.setCurrentIndex(6)
         self.log.clear()
         self.thread = QThread()
         self.worker = ScanWorker()

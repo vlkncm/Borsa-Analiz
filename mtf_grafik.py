@@ -162,7 +162,8 @@ def coklu_zaman_dilimi_analizi(symbol: str) -> Dict[str, Any]:
     Ücretsiz ve hızlı olması için günlük + haftalık analiz yapar.
     İleride 1s/4s veri desteği de eklenebilir.
     """
-    gunluk = timeframe_analiz(symbol, period="18mo", interval="1d")
+    # Tek hisse analizindeki iki yıllık günlük veriyle aynı önbelleği kullanır.
+    gunluk = timeframe_analiz(symbol, period="2y", interval="1d")
     haftalik = timeframe_analiz(symbol, period="5y", interval="1wk")
 
     # Ağırlıklandırma: günlük %60, haftalık %40
@@ -207,7 +208,7 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
 
         df = yf.download(
             symbol,
-            period="9mo",
+            period="2y",
             interval="1d",
             progress=False,
             auto_adjust=False,
@@ -368,7 +369,13 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         plt.setp(ax.get_xticklabels(), visible=False)
         plt.setp(ax_volume.get_xticklabels(), visible=False)
         plt.setp(ax_rsi.get_xticklabels(), visible=False)
-        fig.tight_layout()
+        fig.subplots_adjust(
+            left=0.065,
+            right=0.985,
+            top=0.94,
+            bottom=0.08,
+            hspace=0.08,
+        )
 
         path = out_dir / f"{symbol.replace('.', '_')}_grafik.png"
         fig.savefig(path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())

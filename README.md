@@ -1,11 +1,19 @@
-# Borsa Analiz Pro MAX v7.3
+# Borsa Analiz Pro MAX v7.4
 
 Sadeleştirilmiş BIST yatırım karar motoru.
 
+## v7.4 birleşik tek hisse analizi
+
+- Tek Hisse Analizi ve Sonuç Grafiği aynı ekranda birleştirildi.
+- Günlük ve haftalık yön, BIST piyasa rejimi, veri güveni ve tarihsel kanıt birlikte değerlendirilir.
+- Karar, alış bandı, hedef ve stop grafikte gösterilir.
+- Grafiğin altında trend, momentum, hacim, çoklu zaman dilimi ve riskler yazılı olarak açıklanır.
+- Eski veya güvenilmez veriyle işlem kararı üretilmez.
+
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v7.3.0 kurulum dosyasını indir](downloads/v7.3.0/Setup_Borsa_Analiz_Pro_MAX_v7.3.0.exe)
-- SHA-256: `575A6D2E5F3E05DB843F7F589D83A146057451105A054A988D9391050345B93F`
+- [Borsa Analiz Pro MAX v7.4.0 kurulum dosyasını indir](downloads/v7.4.0/Setup_Borsa_Analiz_Pro_MAX_v7.4.0.exe)
+- SHA-256: `3D20FB33850D9306BC3081CA44DC73DA5899CC0DCFF5C5BD2057DC9C653BC11A`
 
 ## v7.2 merkezi veri katmanı
 
@@ -20,8 +28,7 @@ Sadeleştirilmiş BIST yatırım karar motoru.
 - Kısa vade: 5–20 iş günü için en güçlü 5 hisse
 - Orta vade: 1–3 ay için en güçlü 5 hisse
 - Uzun vade: 3–12 ay için en güçlü 5 hisse
-- Tek hisse analizi
-- Analiz sonucuna göre uygulama içinde alış, hedef ve stop seviyeli teknik grafik
+- Grafik ve gerekçeli yazılı yorum içeren birleşik tek hisse analizi
 - Satış kararı
 - Takip listesi
 - Seçili hisse için KAP ve faaliyet raporu analizi

@@ -17,7 +17,7 @@ def bist100_verisi():
         return _BENCHMARK_CACHE.copy()
     with _BENCHMARK_LOCK:
         if _BENCHMARK_CACHE is None:
-            data = guvenli_yf_download("^XU100", period="2y", interval="1d", retries=1)
+            data = guvenli_yf_download("XU100.IS", period="2y", interval="1d", retries=1)
             if data is not None and isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
             _BENCHMARK_CACHE = temiz_fiyat_verisi(data) if data is not None else pd.DataFrame()

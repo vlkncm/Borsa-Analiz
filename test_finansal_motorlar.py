@@ -14,6 +14,8 @@ from borsa_tarayici import temiz_fiyat_verisi, veri_islem_gunu_gecikmesi
 from pro_moduller import portfoy_onerisi_uret
 from profesyonel_analiz import profesyonel_analiz
 from gecelik_momentum import gecelik_aday_puanla, tek_gecelik_aday
+from app_qt import teknik_degerlendirme_uret
+import borsa_tarayici
 import veri_saglayici
 
 
@@ -81,6 +83,25 @@ class IndicatorTests(unittest.TestCase):
     def test_previous_session_is_current_before_market_close(self):
         delay = veri_islem_gunu_gecikmesi("2026-07-20", "2026-07-21 12:00:00")
         self.assertEqual(delay, 0)
+
+    def test_bist100_benchmark_uses_current_yahoo_symbol(self):
+        idx = pd.date_range("2025-01-01", periods=260, freq="B")
+        raw = pd.DataFrame({
+            "Open": np.linspace(9000, 10000, len(idx)),
+            "High": np.linspace(9050, 10050, len(idx)),
+            "Low": np.linspace(8950, 9950, len(idx)),
+            "Close": np.linspace(9020, 10020, len(idx)),
+            "Volume": np.full(len(idx), 1_000_000),
+        }, index=idx)
+        previous_cache = borsa_tarayici._BENCHMARK_CACHE
+        borsa_tarayici._BENCHMARK_CACHE = None
+        try:
+            with patch.object(borsa_tarayici, "guvenli_yf_download", return_value=raw) as mocked:
+                result = borsa_tarayici.bist100_verisi()
+            self.assertFalse(result.empty)
+            mocked.assert_called_once_with("XU100.IS", period="2y", interval="1d", retries=1)
+        finally:
+            borsa_tarayici._BENCHMARK_CACHE = previous_cache
 
     def test_professional_evidence_is_bounded_and_lookahead_safe(self):
         rng = np.random.default_rng(42)
@@ -221,6 +242,48 @@ class KapScoringTests(unittest.TestCase):
         negative = metin_puanla("Faaliyet durdurma ve zarar açıklaması")
         self.assertGreater(positive["kap_skor"], 0)
         self.assertLess(negative["kap_skor"], 0)
+
+
+class WrittenChartAnalysisTests(unittest.TestCase):
+    def _result(self, **overrides):
+        result = {
+            "symbol": "TEST.IS", "veri_tarihi": "2026-07-30",
+            "veri_durumu": "GÜVENİLİR", "veri_guven_puani": 88,
+            "price": 108, "ema20": 106, "ema50": 103, "ema200": 95,
+            "rsi": 58, "macd": 1.8, "macd_signal": 1.2, "adx": 29,
+            "volume_ratio": 1.35, "onerilen_alis_alt": 106,
+            "onerilen_alis_ust": 109, "onerilen_stop": 101,
+            "onerilen_satis": 118, "yatirim_karari": "BUGÜN AL",
+            "model_olasiligi": 72, "karar_risk_getiri": 2.1,
+            "karar_nedenleri": "Ortak teknik teyit güçlü",
+            "profesyonel_kanit_puani": 66, "kisa_ornek": 34,
+            "kisa_guvenli_olasilik": 57.5, "mtf_skor": 76,
+            "mtf_uyum": "Güçlü Uyum", "gunluk_yon": "AL",
+            "haftalik_yon": "AL", "piyasa_rejimi": "YÜKSELİŞ",
+        }
+        result.update(overrides)
+        return result
+
+    def test_written_analysis_uses_graph_levels_and_evidence(self):
+        text = teknik_degerlendirme_uret(self._result())
+        self.assertIn("GRAFİK VE TREND OKUMASI", text)
+        self.assertIn("Pozitif:", text)
+        self.assertIn("34 örnek", text)
+        self.assertIn("alış bandının içinde", text)
+        self.assertIn("Risk/getiri yaklaşık 1:2.10", text)
+
+    def test_written_analysis_warns_on_stale_weak_setup(self):
+        text = teknik_degerlendirme_uret(self._result(
+            veri_durumu="ESKİ VERİ - KARAR YOK", veri_guven_puani=45,
+            karar_veri_guveni=45, kisa_ornek=8, piyasa_rejimi="DÜŞÜŞ",
+            mtf_uyum="Negatif Uyum", rsi=74, macd=0.5,
+            macd_signal=0.8, volume_ratio=0.6, karar_risk_getiri=0.9,
+            yatirim_karari="VERİ KONTROLÜ GEREKLİ",
+        ))
+        self.assertIn("Fiyat verisi güncel veya yeterince güvenilir değil", text)
+        self.assertIn("BIST piyasa rejimi düşüş yönünde", text)
+        self.assertIn("RSI aşırı alım bölgesinde", text)
+        self.assertIn("Risk/getiri 1:1,5 eşiğinin altında", text)
 
 
 if __name__ == "__main__":
