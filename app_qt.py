@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -281,6 +281,7 @@ class ScanWorker(QObject):
 
 class SingleWorker(QObject):
     finished = Signal(bool, object, str)
+    progress = Signal(str)
 
     def __init__(self, symbol, mode):
         super().__init__()
@@ -294,6 +295,7 @@ class SingleWorker(QObject):
             from karar_motoru import karar_uret
             from satis_karar_motoru import satis_karari_uret
 
+            self.progress.emit("Günlük fiyat verisi ve teknik göstergeler kontrol ediliyor...")
             result = teknik_analiz(self.symbol, "TEK HİSSE")
             if not result:
                 self.finished.emit(False, {}, "Yeterli fiyat verisi bulunamadı.")
@@ -303,15 +305,19 @@ class SingleWorker(QObject):
                 from mtf_grafik import coklu_zaman_dilimi_analizi
                 from pro_moduller import makro_analiz_yfinance
 
+                self.progress.emit("Günlük ve haftalık trend uyumu hesaplanıyor...")
                 result.update(coklu_zaman_dilimi_analizi(self.symbol))
-                result.update(makro_analiz_yfinance())
+                self.progress.emit("BIST 100 piyasa rejimi kontrol ediliyor...")
+                result.update(makro_analiz_yfinance(yalniz_bist100=True))
 
+            self.progress.emit("Kanıt, veri güveni ve risk/getiri birleştiriliyor...")
             result.update(v4_puanla(result, final=False))
             result.update(karar_uret(result))
 
             if self.mode == "analysis":
                 from mtf_grafik import grafik_olustur
 
+                self.progress.emit("Sonuç grafiği hazırlanıyor; lütfen bekleyin...")
                 output = veri_klasoru() / "output" / "grafikler"
                 path = grafik_olustur(self.symbol, result, str(output))
                 if path:
@@ -392,6 +398,7 @@ class SimpleTable(QWidget):
         if df is None:
             df = pd.DataFrame()
         self._data = df.reset_index(drop=True).copy()
+        self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         self.table.clear()
         self.table.setRowCount(len(df))
@@ -423,10 +430,26 @@ class SimpleTable(QWidget):
                         item.setForeground(QColor("#38bdf8"))
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
-        self.table.resizeColumnsToContents()
-        for column in range(self.table.columnCount()):
-            self.table.setColumnWidth(column, min(260, max(95, self.table.columnWidth(column) + 16)))
-        self.table.resizeRowsToContents()
+        if len(df) <= 100:
+            self.table.resizeColumnsToContents()
+            for column in range(self.table.columnCount()):
+                self.table.setColumnWidth(
+                    column,
+                    min(260, max(95, self.table.columnWidth(column) + 16)),
+                )
+        else:
+            sample = df.head(80)
+            for column, name in enumerate(df.columns):
+                lengths = [len(str(name))]
+                for value in sample.iloc[:, column]:
+                    lengths.append(len("-" if pd.isna(value) else str(value)))
+                self.table.setColumnWidth(
+                    column,
+                    min(260, max(95, max(lengths) * 7 + 32)),
+                )
+        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.setUpdatesEnabled(True)
+        self.table.viewport().update()
         self.info.setText(f"Gösterilen hisse: {len(df)}")
 
 
@@ -645,13 +668,20 @@ class ResponsiveChartLabel(QLabel):
     def __init__(self):
         super().__init__("Bir hisse kodu yazıp analiz başlatın.")
         self._source_pixmap = QPixmap()
+        self._last_scaled_size = None
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(140)
+        self._resize_timer.timeout.connect(self._refresh_pixmap)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumHeight(460)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setObjectName("chartCanvas")
 
     def show_message(self, message):
+        self._resize_timer.stop()
         self._source_pixmap = QPixmap()
+        self._last_scaled_size = None
         self.clear()
         self.setText(message)
 
@@ -661,22 +691,28 @@ class ResponsiveChartLabel(QLabel):
             self.show_message("Grafik dosyası görüntülenemedi.")
             return False
         self._source_pixmap = pixmap
+        self._last_scaled_size = None
         self.setText("")
         self._refresh_pixmap()
         return True
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._refresh_pixmap()
+        if not self._source_pixmap.isNull():
+            self._resize_timer.start()
 
     def _refresh_pixmap(self):
         if self._source_pixmap.isNull() or self.width() < 10 or self.height() < 10:
             return
+        target_size = self.size()
+        if self._last_scaled_size == target_size:
+            return
         scaled = self._source_pixmap.scaled(
-            self.size(),
+            target_size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        self._last_scaled_size = target_size
         self.setPixmap(scaled)
 
 
@@ -770,6 +806,7 @@ class SingleAnalysisPage(QWidget):
         self.worker = SingleWorker(symbol, "analysis")
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.done)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
@@ -858,6 +895,7 @@ class SalePage(QWidget):
         self.worker = SingleWorker(symbol, f"sale:{cost}")
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.done)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
@@ -1002,7 +1040,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v7.4")
+        self.setWindowTitle(APP_NAME + " v7.4.1")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1038,7 +1076,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.4")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.4.1")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)

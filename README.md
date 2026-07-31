@@ -1,6 +1,14 @@
-# Borsa Analiz Pro MAX v7.4
+# Borsa Analiz Pro MAX v7.4.1
 
 Sadeleştirilmiş BIST yatırım karar motoru.
+
+## v7.4.1 donma ve tepki süresi düzeltmesi
+
+- Tek hisse analizi sırasında gereksiz döviz, altın ve petrol sorguları kaldırıldı.
+- Analizin hangi aşamada olduğu ekranda canlı olarak gösterilir.
+- Büyük sonuç grafiği yalnızca pencere boyutu sabitlendikten sonra yeniden ölçeklenir.
+- Büyük Excel rapor tablolarının açılış ve sütun boyutlandırma maliyeti azaltıldı.
+- Etkileşimli veri isteğinin uzun ağ tekrarları sınırlandı.
 
 ## v7.4 birleşik tek hisse analizi
 
@@ -12,8 +20,8 @@ Sadeleştirilmiş BIST yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v7.4.0 kurulum dosyasını indir](downloads/v7.4.0/Setup_Borsa_Analiz_Pro_MAX_v7.4.0.exe)
-- SHA-256: `3D20FB33850D9306BC3081CA44DC73DA5899CC0DCFF5C5BD2057DC9C653BC11A`
+- [Borsa Analiz Pro MAX v7.4.1 kurulum dosyasını indir](downloads/v7.4.1/Setup_Borsa_Analiz_Pro_MAX_v7.4.1.exe)
+- SHA-256: `ECF4EB6E89BE9463FC8EADB37E3E597B4192F17E9AED554C6AED82C614885AFE`
 
 ## v7.2 merkezi veri katmanı
 

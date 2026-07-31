@@ -267,7 +267,7 @@ def teknik_analiz(symbol, kategori):
             symbol,
             period="2y",
             interval="1d",
-            retries=3
+            retries=2 if kategori == "TEK HİSSE" else 3
         )
         if df is None:
             return None

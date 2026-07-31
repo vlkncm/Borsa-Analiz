@@ -221,17 +221,20 @@ def haber_analizi_yfinance(symbol: str) -> Dict[str, Any]:
         }
 
 
-def makro_analiz_yfinance() -> Dict[str, Any]:
+def makro_analiz_yfinance(yalniz_bist100: bool = False) -> Dict[str, Any]:
     """
     BIST100, USD/TRY ve global risk göstergeleriyle genel piyasa filtresi.
     Tüm hisselere aynı makro puan uygulanır.
+    Etkileşimli tek hisse analizinde yalnızca karar motorunun kullandığı BIST100
+    rejimi alınarak gereksiz ağ beklemeleri önlenebilir.
     """
-    semboller = {
-        "bist100": "XU100.IS",
-        "usdtry": "USDTRY=X",
-        "altin": "GC=F",
-        "petrol": "CL=F"
-    }
+    semboller = {"bist100": "XU100.IS"}
+    if not yalniz_bist100:
+        semboller.update({
+            "usdtry": "USDTRY=X",
+            "altin": "GC=F",
+            "petrol": "CL=F",
+        })
 
     sonuc = {}
     puan = 50

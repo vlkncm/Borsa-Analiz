@@ -16,6 +16,7 @@ from profesyonel_analiz import profesyonel_analiz
 from gecelik_momentum import gecelik_aday_puanla, tek_gecelik_aday
 from app_qt import teknik_degerlendirme_uret
 import borsa_tarayici
+import pro_moduller
 import veri_saglayici
 
 
@@ -38,6 +39,19 @@ class VeriSaglayiciTests(unittest.TestCase):
                 second = veri_saglayici.download("TEST.IS", period="1mo", interval="1d")
             self.assertEqual(mocked.call_count, 1)
             pd.testing.assert_frame_equal(first, second)
+
+    def test_interactive_macro_check_downloads_only_bist100(self):
+        idx = pd.date_range("2025-01-01", periods=260, freq="B")
+        close = np.linspace(9000, 11000, len(idx))
+        raw = pd.DataFrame({
+            "Open": close - 10, "High": close + 20, "Low": close - 20,
+            "Close": close, "Volume": np.full(len(idx), 1_000_000),
+        }, index=idx)
+        with patch.object(pro_moduller.yf, "download", return_value=raw) as mocked:
+            result = pro_moduller.makro_analiz_yfinance(yalniz_bist100=True)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(mocked.call_args.args[0], "XU100.IS")
+        self.assertIn("piyasa_rejimi", result)
 
 
 class IndicatorTests(unittest.TestCase):
