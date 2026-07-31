@@ -1,6 +1,13 @@
-# Borsa Analiz Pro MAX v7.4.1
+# Borsa Analiz Pro MAX v7.4.2
 
 Sadeleştirilmiş BIST yatırım karar motoru.
+
+## v7.4.2 grafik boyutu düzeltmesi
+
+- Sonuç grafiğinin her yeniden çizimde büyümesine yol açan yerleşim geri besleme döngüsü kaldırıldı.
+- Grafik alanı 460 piksel sabit yükseklikte tutulur ve sayfadaki yazılı analizi kapatmaz.
+- Grafik görüntüsü kendi alanının kullanılabilir iç ölçülerine göre ölçeklenir.
+- Tekrarlanan yeniden boyutlandırmaları denetleyen otomatik arayüz testi eklendi.
 
 ## v7.4.1 donma ve tepki süresi düzeltmesi
 
@@ -20,8 +27,8 @@ Sadeleştirilmiş BIST yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v7.4.1 kurulum dosyasını indir](downloads/v7.4.1/Setup_Borsa_Analiz_Pro_MAX_v7.4.1.exe)
-- SHA-256: `ECF4EB6E89BE9463FC8EADB37E3E597B4192F17E9AED554C6AED82C614885AFE`
+- [Borsa Analiz Pro MAX v7.4.2 kurulum dosyasını indir](downloads/v7.4.2/Setup_Borsa_Analiz_Pro_MAX_v7.4.2.exe)
+- SHA-256: `7B4A28E1FF5C99D0622312047C5AA5A62AEA527795D41FC938FF68815B5483DF`
 
 ## v7.2 merkezi veri katmanı
 

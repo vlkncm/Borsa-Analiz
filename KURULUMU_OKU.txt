@@ -1,4 +1,4 @@
-BORSA ANALİZ PRO MAX v7.4.1 — TEK TIKLA KURULUM HAZIRLAMA
+BORSA ANALİZ PRO MAX v7.4.2 — TEK TIKLA KURULUM HAZIRLAMA
 
 1. Bu ZIP dosyasını bilgisayarında bir klasöre çıkar.
 2. Çıkan klasörü aç.
@@ -7,7 +7,7 @@ BORSA ANALİZ PRO MAX v7.4.1 — TEK TIKLA KURULUM HAZIRLAMA
 5. İşlem bitince SetupOutput klasörü otomatik açılır.
 6. Paylaşacağın tek dosya:
 
-   Setup_Borsa_Analiz_Pro_MAX_v7.4.1.exe
+   Setup_Borsa_Analiz_Pro_MAX_v7.4.2.exe
 
 Karşı bilgisayarda Python, PyCharm veya Inno Setup gerekmez.
 Sadece Setup dosyasını çalıştırması yeterlidir.
@@ -22,6 +22,6 @@ Program yatırım tavsiyesi değildir. Faaliyet raporu ve KAP verileri ücretsiz
 kaynaklarıyla alınır; bazı şirketlerde veri bulunamayabilir.
 
 
-Düzeltme v7.4.1: Grafik yorumlama sırasında görülen donma azaltıldı. Gereksiz
-ağ sorguları kaldırıldı, analiz aşama göstergeleri eklendi, büyük grafik yeniden
-ölçekleme ve rapor tablosu çizimi hızlandırıldı.
+Düzeltme v7.4.2: Sonuç grafiğinin yeniden çizildikçe büyümesine neden olan
+yerleşim döngüsü kaldırıldı. Grafik alanı sabit ve kontrollü boyutta tutulur;
+yazılı teknik değerlendirme grafiğin altında erişilebilir kalır.

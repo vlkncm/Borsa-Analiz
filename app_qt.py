@@ -665,6 +665,8 @@ class InvestmentTerminalPage(QWidget):
 
 
 class ResponsiveChartLabel(QLabel):
+    CHART_HEIGHT = 460
+
     def __init__(self):
         super().__init__("Bir hisse kodu yazıp analiz başlatın.")
         self._source_pixmap = QPixmap()
@@ -674,8 +676,12 @@ class ResponsiveChartLabel(QLabel):
         self._resize_timer.setInterval(140)
         self._resize_timer.timeout.connect(self._refresh_pixmap)
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumHeight(460)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # QLabel'in sizeHint değeri gösterilen pixmap boyutuna göre değişir. Bu
+        # değer kaydırma alanına geri beslendiğinde grafik her yenilemede biraz
+        # daha büyüyebiliyordu. Pixmap boyutunu yerleşim hesabından çıkarıp
+        # grafik alanını sabit yükseklikte tutuyoruz.
+        self.setFixedHeight(self.CHART_HEIGHT)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.setObjectName("chartCanvas")
 
     def show_message(self, message):
@@ -704,7 +710,7 @@ class ResponsiveChartLabel(QLabel):
     def _refresh_pixmap(self):
         if self._source_pixmap.isNull() or self.width() < 10 or self.height() < 10:
             return
-        target_size = self.size()
+        target_size = self.contentsRect().size()
         if self._last_scaled_size == target_size:
             return
         scaled = self._source_pixmap.scaled(
@@ -766,7 +772,6 @@ class SingleAnalysisPage(QWidget):
         content_layout.addWidget(self.summary)
 
         self.chart = ResponsiveChartLabel()
-        self.chart.setMinimumHeight(520)
         content_layout.addWidget(self.chart)
 
         analysis_title = QLabel("Grafiğin Yazılı Teknik Değerlendirmesi")
@@ -1040,7 +1045,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v7.4.1")
+        self.setWindowTitle(APP_NAME + " v7.4.2")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1076,7 +1081,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.4.1")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v7.4.2")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
