@@ -276,6 +276,8 @@ def teknik_analiz(symbol, kategori):
             df.columns = df.columns.get_level_values(0)
 
         ham_satir = len(df)
+        veri_kaynagi = df.attrs.get("veri_kaynagi", "Yahoo Finance")
+        veri_uyusmazligi = df.attrs.get("veri_uyusmazligi", "")
         df = temiz_fiyat_verisi(df)
         temizlenen_satir = ham_satir - len(df)
 
@@ -316,7 +318,8 @@ def teknik_analiz(symbol, kategori):
         ret252 = guvenli_sayi(last.get("RET252"), 0)
         veri_yasi = max(0, (pd.Timestamp.now().normalize() - pd.Timestamp(df.index[-1]).tz_localize(None).normalize()).days)
         islem_gunu_gecikmesi = veri_islem_gunu_gecikmesi(df.index[-1])
-        veri_guven = 90  # Tek kaynak kullanıldığı için 100 verilmez.
+        resmi_bist = "Borsa İstanbul" in veri_kaynagi
+        veri_guven = 95 if resmi_bist else 90
         veri_guven -= min(20, temizlenen_satir * 5)
         veri_guven -= max(0, veri_yasi - 1) * 5
         if len(df) < 300:
@@ -457,7 +460,8 @@ def teknik_analiz(symbol, kategori):
             "veri_tarihi": pd.Timestamp(df.index[-1]).strftime("%Y-%m-%d"),
             "veri_yasi_gun": veri_yasi,
             "veri_islem_gunu_gecikmesi": islem_gunu_gecikmesi,
-            "veri_kaynagi": "Yahoo Finance (tek kaynak)",
+            "veri_kaynagi": veri_kaynagi,
+            "veri_uyusmazligi": veri_uyusmazligi,
             "veri_guven_puani": veri_guven,
             "veri_durumu": veri_durumu,
             "veri_satir_sayisi": len(df),

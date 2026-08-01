@@ -1,6 +1,14 @@
-# Borsa Analiz Pro MAX v7.4.2
+# Borsa Analiz Pro MAX v7.5.0
 
 Sadeleştirilmiş BIST yatırım karar motoru.
+
+## v7.5.0 resmî Borsa İstanbul kapanış entegrasyonu
+
+- Yahoo Finance tarihsel serisi, Borsa İstanbul Pay Piyasası günlük bülteniyle doğrulanır.
+- Son resmî OHLCV satırı eksikse seriye eklenir; farklıysa resmî bülten değeri kullanılır.
+- Bülten çevrimdışı kullanım için yerel olarak önbelleğe alınır.
+- MEGMT için 31 Temmuz 2026 resmî kapanışı 68,15 TL olarak doğrulanır.
+- Veri kaynağı analiz ve raporlarda `Yahoo tarihsel + Borsa İstanbul resmî kapanış` olarak gösterilir.
 
 ## v7.4.2 grafik boyutu düzeltmesi
 
@@ -27,8 +35,8 @@ Sadeleştirilmiş BIST yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v7.4.2 kurulum dosyasını indir](downloads/v7.4.2/Setup_Borsa_Analiz_Pro_MAX_v7.4.2.exe)
-- SHA-256: `7B4A28E1FF5C99D0622312047C5AA5A62AEA527795D41FC938FF68815B5483DF`
+- [Borsa Analiz Pro MAX v7.5.0 kurulum dosyasını indir](downloads/v7.5.0/Setup_Borsa_Analiz_Pro_MAX_v7.5.0.exe)
+- SHA-256: `278C9E09594826627E2F662743CEA767C127BD7C0A860C9A5CCDFCB4D74839C7`
 
 ## v7.2 merkezi veri katmanı
 

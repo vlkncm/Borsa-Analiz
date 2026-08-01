@@ -13,6 +13,8 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from bist_bulteni import resmi_gunluk_satir
+
 _LOCK = threading.RLock()
 
 
@@ -62,19 +64,21 @@ def _ttl(interval: str) -> int:
 
 def _oku(key: str, max_age: int | None) -> pd.DataFrame:
     with _LOCK, closing(_baglanti()) as db:
-        row = db.execute("SELECT alis_zamani, veri_json FROM fiyat_cache WHERE cache_key=?", (key,)).fetchone()
+        row = db.execute("SELECT alis_zamani, veri_json, kaynak FROM fiyat_cache WHERE cache_key=?", (key,)).fetchone()
     if not row or (max_age is not None and time.time() - row[0] > max_age):
         return pd.DataFrame()
     try:
-        return _normalize(pd.read_json(io.StringIO(row[1]), orient="table"))
+        df = _normalize(pd.read_json(io.StringIO(row[1]), orient="table"))
+        df.attrs["veri_kaynagi"] = row[2]
+        return df
     except Exception:
         return pd.DataFrame()
 
 
-def _kaydet(key: str, symbol: str, period: str, interval: str, df: pd.DataFrame) -> None:
+def _kaydet(key: str, symbol: str, period: str, interval: str, df: pd.DataFrame, kaynak: str) -> None:
     with _LOCK, closing(_baglanti()) as db:
         db.execute("INSERT OR REPLACE INTO fiyat_cache VALUES (?,?,?,?,?,?,?,?)", (
-            key, symbol, period, interval, "yahoo", int(time.time()),
+            key, symbol, period, interval, kaynak, int(time.time()),
             str(df.index[-1]), df.to_json(orient="table", date_format="iso")))
         db.commit()
 
@@ -89,12 +93,46 @@ def _olay(symbol: str, durum: str, detay: str = "") -> None:
         pass
 
 
+def _bist_ile_birlestir(symbol: str, interval: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Günlük Yahoo serisini son resmî BIST bülteniyle tamamlar veya düzeltir."""
+    if interval != "1d" or not symbol.upper().endswith(".IS") or df.empty:
+        return df
+    try:
+        resmi = resmi_gunluk_satir(symbol, uygulama_klasoru())
+        if resmi.empty:
+            return df
+        sonuc = df.copy()
+        tarih = resmi.index[-1]
+        onceki = None
+        yeni_tarih = tarih not in sonuc.index
+        if tarih in sonuc.index:
+            onceki = float(sonuc.loc[tarih, "Close"])
+        for sutun in resmi.columns:
+            sonuc.loc[tarih, sutun] = resmi.iloc[-1][sutun]
+        sonuc = _normalize(sonuc)
+        sonuc.attrs["veri_kaynagi"] = "Yahoo tarihsel + Borsa İstanbul resmî kapanış"
+        sonuc.attrs["bist_bulten_tarihi"] = tarih.strftime("%Y-%m-%d")
+        uyusmazlik = onceki is not None and abs(onceki - float(resmi.iloc[-1]["Close"])) > 0.001
+        if uyusmazlik:
+            sonuc.attrs["veri_uyusmazligi"] = f"Yahoo {onceki:.2f} / BIST {float(resmi.iloc[-1]['Close']):.2f}"
+        if yeni_tarih or uyusmazlik:
+            _olay(symbol, "BIST_DOGRULANDI", f"{tarih:%Y-%m-%d} kapanış={float(resmi.iloc[-1]['Close']):.2f}")
+        return sonuc
+    except Exception as exc:
+        df.attrs["veri_kaynagi"] = df.attrs.get("veri_kaynagi", "Yahoo Finance (BIST bülteni alınamadı)")
+        _olay(symbol, "BIST_BULTEN_HATA", str(exc))
+        return df
+
+
 def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -> pd.DataFrame:
     """yfinance.download uyumlu, kalite kontrollu ve onbellekli indirme."""
     key = json.dumps([symbol, period, interval], ensure_ascii=False)
     cached = _oku(key, _ttl(interval))
     if not cached.empty:
-        return cached.copy()
+        birlesik = _bist_ile_birlestir(symbol, interval, cached)
+        if len(birlesik) != len(cached) or birlesik.attrs.get("veri_kaynagi") != cached.attrs.get("veri_kaynagi"):
+            _kaydet(key, symbol, period, interval, birlesik, birlesik.attrs.get("veri_kaynagi", "yahoo+bist"))
+        return birlesik.copy()
     try:
         raw = yf.download(symbol, period=period, interval=interval,
                           progress=kwargs.get("progress", False),
@@ -104,7 +142,9 @@ def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -
         df = _normalize(raw)
         if df.empty:
             raise ValueError("Saglayici bos veya gecersiz OHLC verisi dondurdu")
-        _kaydet(key, symbol, period, interval, df)
+        df.attrs["veri_kaynagi"] = "Yahoo Finance"
+        df = _bist_ile_birlestir(symbol, interval, df)
+        _kaydet(key, symbol, period, interval, df, df.attrs.get("veri_kaynagi", "yahoo"))
         _olay(symbol, "BASARILI", f"{len(df)} satir")
         return df.copy()
     except Exception as exc:
@@ -126,4 +166,4 @@ veri = _YahooUyumlu()
 def cache_bilgisi() -> dict:
     with _LOCK, closing(_baglanti()) as db:
         adet, son = db.execute("SELECT COUNT(*), MAX(alis_zamani) FROM fiyat_cache").fetchone()
-    return {"kaynak": "Yahoo (gecici/yedek)", "kayit": adet, "son_guncelleme": son}
+    return {"kaynak": "Yahoo tarihsel + Borsa İstanbul resmî kapanış", "kayit": adet, "son_guncelleme": son}
