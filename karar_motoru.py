@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict
 
+from canli_dogrulama import canli_sinyal_dogrula
+
 
 def _f(value: Any, default: float = 0.0) -> float:
     try:
@@ -64,6 +66,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
     possible_loss = max(0.1, (1 - stop / max(buy_low, 0.01)) * 100)
     calculated_rr = expected_return / possible_loss if possible_loss > 0 else 0
     rr = max(rr, calculated_rr)
+    validation = canli_sinyal_dogrula(item, expected_return, possible_loss, rr)
 
     # Olasılık ifadesi yalnızca tarihsel/teknik model tahminidir; garanti değildir.
     probability = (
@@ -118,6 +121,8 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         decision = "VERİ KONTROLÜ GEREKLİ"
     if evidence_samples < 20 and decision in ("BUGÜN AL", "ALIM BÖLGESİNİ BEKLE"):
         decision = "İZLE - KANIT YETERSİZ"
+    if not validation["onayli"] and decision in ("BUGÜN AL", "ALIM BÖLGESİNİ BEKLE"):
+        decision = "İZLE - DOĞRULAMA YETERSİZ"
 
     reason_parts = []
     if score >= 70:
@@ -150,6 +155,9 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         "karar_veri_guveni": int(data_confidence),
         "karar_kanit_puani": round(evidence, 1),
         "karar_kanit_ornegi": evidence_samples,
+        "dogrulanmis_olasilik": validation["dogrulanmis_olasilik"],
+        "dogrulama_ornek_sayisi": validation["dogrulama_ornek_sayisi"],
+        "dogrulama_notu": validation["dogrulama_notu"],
         "karar_uyarisi": "Tahmini teknik senaryodur; hedef, süre ve olasılık garanti değildir.",
     }
 
