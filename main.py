@@ -25,6 +25,7 @@ from canli_kanit_kilidi import strateji_kilidi_uygula
 from denetim_raporu import denetim_tablosu, gunluk_ozet_yaz
 from strateji_kalibrasyon import olasilik_kalibrasyonu
 from gunluk_islem_plani import gun_sonu_plani
+from faktor_model_portfoy import faktor_model_portfoyu
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -976,6 +977,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     denetim_df = denetim_tablosu(results)
     kalibrasyon_df = olasilik_kalibrasyonu(sinyal_gecmisi_df)
     gun_sonu_df = gun_sonu_plani(results)
+    faktor_portfoy_df = faktor_model_portfoyu(results, adet=10)
     gunluk_ozet_yaz(output_dir, results, sinyal_gecmisi_df)
 
     excel_path_fallback = None
@@ -1034,6 +1036,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         denetim_df.to_excel(writer, index=False, sheet_name="Denetim")
         kalibrasyon_df.to_excel(writer, index=False, sheet_name="Kalibrasyon")
         gun_sonu_df.to_excel(writer, index=False, sheet_name="Gun Sonu Plani")
+        faktor_portfoy_df.to_excel(writer, index=False, sheet_name="Faktor Model Portfoyu")
 
         # Bütün Excel sayfalarında boş hücreleri anlaşılır metinle göster.
         # Birleştirilmiş hücrelerin MergedCell nesneleri salt okunurdur.

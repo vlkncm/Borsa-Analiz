@@ -59,6 +59,9 @@ def temel_analiz_yfinance(symbol: str) -> Dict[str, Any]:
         revenue_growth = guvenli_float(info.get("revenueGrowth"))
         earnings_growth = guvenli_float(info.get("earningsGrowth"))
         dividend_yield = guvenli_float(info.get("dividendYield"))
+        market_cap = guvenli_float(info.get("marketCap"))
+        enterprise_value = guvenli_float(info.get("enterpriseValue"))
+        sector = str(info.get("sector") or "Bilinmiyor")
 
         puan = 50
         notlar = []
@@ -139,6 +142,9 @@ def temel_analiz_yfinance(symbol: str) -> Dict[str, Any]:
             "ciro_buyume": revenue_growth,
             "kar_buyume": earnings_growth,
             "temettu_verimi": dividend_yield,
+            "piyasa_degeri": market_cap,
+            "isletme_degeri": enterprise_value,
+            "sector": sector,
             "temel_not": " | ".join(notlar),
             "temel_risk": " | ".join(riskler)
         }
@@ -155,6 +161,9 @@ def temel_analiz_yfinance(symbol: str) -> Dict[str, Any]:
             "ciro_buyume": 0,
             "kar_buyume": 0,
             "temettu_verimi": 0,
+            "piyasa_degeri": 0,
+            "isletme_degeri": 0,
+            "sector": "Bilinmiyor",
             "temel_not": "Temel analiz verisi alınamadı",
             "temel_risk": str(e)
         }
