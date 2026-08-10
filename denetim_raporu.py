@@ -11,7 +11,7 @@ from strateji_kalibrasyon import olasilik_kalibrasyonu
 def denetim_tablosu(results: Iterable[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for item in results:
-        rows.append({"Hisse": item.get("symbol", ""), "Karar": item.get("yatirim_karari", ""), "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0), "Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0), "Strateji": item.get("strateji", ""), "Likidite": item.get("likidite_seviyesi", ""), "Temel Risk": item.get("temel_risk_notu", ""), "Uyarılar": item.get("canli_uyarilar", ""), "Neden": item.get("karar_nedenleri", "")})
+        rows.append({"Hisse": item.get("symbol", ""), "Karar": item.get("yatirim_karari", ""), "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0), "Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0), "Strateji": item.get("strateji", ""), "Canlı Kanıt": item.get("canli_kanit_durumu", ""), "Canlı Kanıt İşlem": item.get("canli_kanit_islem", 0), "Net Canlı Getiri %": item.get("canli_kanit_net_getiri", 0), "Kilit Nedeni": item.get("canli_kanit_kilit_nedeni", ""), "Likidite": item.get("likidite_seviyesi", ""), "Temel Risk": item.get("temel_risk_notu", ""), "Uyarılar": item.get("canli_uyarilar", ""), "Neden": item.get("karar_nedenleri", "")})
     return pd.DataFrame(rows)
 
 

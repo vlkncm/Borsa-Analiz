@@ -313,6 +313,11 @@ class SingleWorker(QObject):
             self.progress.emit("Kanıt, veri güveni ve risk/getiri birleştiriliyor...")
             result.update(v4_puanla(result, final=False))
             result.update(karar_uret(result))
+            # Tek hisse ekranı da terminalle aynı canlı kanıt kilidini uygular.
+            from sinyal_gecmisi import sinyal_gecmisi_oku
+            from canli_kanit_kilidi import strateji_kilidi_uygula
+            locked, _ = strateji_kilidi_uygula([result], sinyal_gecmisi_oku())
+            result = locked[0]
 
             if self.mode == "analysis":
                 from mtf_grafik import grafik_olustur

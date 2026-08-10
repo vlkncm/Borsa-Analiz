@@ -11,6 +11,7 @@ COLUMNS = [
     "Tarama Zamanı", "Hisse", "Karar", "Giriş Fiyatı", "Alış Alt", "Alış Üst",
     "Hedef", "Stop", "Model Olasılığı %", "V4 Güven", "Piyasa Rejimi",
     "Veri Güveni", "Durum", "Son Kontrol", "Son Fiyat", "Gerçekleşen Getiri %",
+    "Strateji", "Doğrulanmış Olasılık %", "Canlı Kanıt Durumu", "Stres Çıkış Fiyatı",
 ]
 
 
@@ -26,6 +27,17 @@ def _num(value: Any) -> float:
         return result if pd.notna(result) else 0.0
     except Exception:
         return 0.0
+
+
+def sinyal_gecmisi_oku() -> pd.DataFrame:
+    """Geçmişi değiştirmeden canlı kanıt kilidi için okunur."""
+    path = _path()
+    if not path.exists():
+        return pd.DataFrame(columns=COLUMNS)
+    try:
+        return pd.read_csv(path, encoding="utf-8-sig").reindex(columns=COLUMNS)
+    except Exception:
+        return pd.DataFrame(columns=COLUMNS)
 
 
 def sinyal_gecmisini_guncelle(results: Iterable[Dict[str, Any]]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -82,6 +94,10 @@ def sinyal_gecmisini_guncelle(results: Iterable[Dict[str, Any]]) -> tuple[pd.Dat
             "V4 Güven": _num(item.get("v4_guven_puani")),
             "Piyasa Rejimi": item.get("piyasa_rejimi", ""),
             "Veri Güveni": _num(item.get("veri_guven_puani")),
+            "Strateji": item.get("strateji", "GENEL"),
+            "Doğrulanmış Olasılık %": _num(item.get("dogrulanmis_olasilik")),
+            "Canlı Kanıt Durumu": item.get("canli_kanit_durumu", "KANIT TOPLANIYOR"),
+            "Stres Çıkış Fiyatı": _num(item.get("stres_cikis_fiyati")),
             "Durum": "AÇIK", "Son Kontrol": now.isoformat(timespec="minutes"),
             "Son Fiyat": round(_num(item.get("price")), 2), "Gerçekleşen Getiri %": 0.0,
         })

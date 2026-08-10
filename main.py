@@ -20,7 +20,8 @@ from v4_puanlama import v4_toplu_puanla
 from karar_motoru import karar_uret
 from vade_motoru import vade_listeleri_uret
 from veri_kalitesi import karantinadaki_semboller, tarama_sagligini_kaydet
-from sinyal_gecmisi import sinyal_gecmisini_guncelle
+from sinyal_gecmisi import sinyal_gecmisini_guncelle, sinyal_gecmisi_oku
+from canli_kanit_kilidi import strateji_kilidi_uygula
 from denetim_raporu import denetim_tablosu, gunluk_ozet_yaz
 from strateji_kalibrasyon import olasilik_kalibrasyonu
 
@@ -1153,6 +1154,8 @@ def main():
     results = v4_toplu_puanla(results, final=True)
     for item in results:
         item.update(karar_uret(item))
+    # Geçmiş canlı sonuçlar yeterli değilse, alım sinyali yerine izleme üretilir.
+    results, canli_kanit_df = strateji_kilidi_uygula(results, sinyal_gecmisi_oku())
     results = sorted(
         results,
         key=lambda x: (
