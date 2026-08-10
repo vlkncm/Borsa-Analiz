@@ -1098,7 +1098,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.2.0")
+        self.setWindowTitle(APP_NAME + " v8.2.1")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.0")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.1")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
