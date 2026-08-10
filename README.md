@@ -1,4 +1,4 @@
-# Borsa Analiz Pro MAX v7.5.0
+# Borsa Analiz Pro MAX v8.0.0
 
 Sadeleştirilmiş BIST yatırım karar motoru.
 

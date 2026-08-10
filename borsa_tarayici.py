@@ -6,6 +6,7 @@ import time
 import threading
 from datetime import datetime
 from profesyonel_analiz import profesyonel_analiz
+from uluslararasi_faktorler import faktorleri_hesapla
 
 _BENCHMARK_LOCK = threading.Lock()
 _BENCHMARK_CACHE = None
@@ -436,6 +437,7 @@ def teknik_analiz(symbol, kategori):
         formasyon = formasyonlari_tespit_et(df)
         fibonacci = fibonacci_analizi(df)
         profesyonel = profesyonel_analiz(df, bist100_verisi())
+        uluslararasi_faktorler = faktorleri_hesapla(df)
 
         # ==========================
         # Mevcut karar sistemi
@@ -521,6 +523,7 @@ def teknik_analiz(symbol, kategori):
             "reasons": reasons or ["Belirgin teknik üstünlük bulunamadı"],
             "risk_notes": risk_notes or ["Belirgin ek teknik risk notu bulunamadı"]
             ,**profesyonel
+            ,**uluslararasi_faktorler
         }
 
     except Exception as e:

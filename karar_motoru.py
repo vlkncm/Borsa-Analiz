@@ -7,6 +7,7 @@ from canli_dogrulama import canli_sinyal_dogrula
 from gelismis_analiz import gelismis_sinyal_degerlendir
 from strateji_kalibrasyon import strateji_sec
 from olaganustu_hareket import olaganustu_hareket_degerlendir
+from veri_kalite_kapisi import veri_kalite_kapisi
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -75,6 +76,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         **strateji_sec(item),
     }
     extraordinary = olaganustu_hareket_degerlendir({**item, **advanced})
+    quality = veri_kalite_kapisi(item)
 
     # Olasılık ifadesi yalnızca tarihsel/teknik model tahminidir; garanti değildir.
     probability = (
@@ -135,6 +137,10 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         decision = "İZLE - RİSK FİLTRESİ"
     if extraordinary["kovalama_engeli"] and decision in ("BUGÜN AL", "ALIM BÖLGESİNİ BEKLE"):
         decision = "İZLE - OLAĞANDIŞI HAREKET RİSKİ"
+    if not quality["veri_kalite_onayli"]:
+        decision = "VERİ KALİTESİ YETERSİZ"
+    if _f(item.get("uluslararasi_faktor_puani")) < 60 and decision == "BUGÜN AL":
+        decision = "İZLE - FAKTÖR UYUMU YETERSİZ"
 
     reason_parts = []
     if score >= 70:
@@ -172,6 +178,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         "dogrulama_notu": validation["dogrulama_notu"],
         **advanced,
         **extraordinary,
+        **quality,
         "karar_uyarisi": "Tahmini teknik senaryodur; hedef, süre ve olasılık garanti değildir.",
     }
 
