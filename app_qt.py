@@ -7,7 +7,6 @@ from datetime import datetime
 import pandas as pd
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
-from zamanlayici import aksam_taramasi_planla
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
@@ -1099,7 +1098,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.1.0")
+        self.setWindowTitle(APP_NAME + " v8.1.1")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1135,7 +1134,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.1.0")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.1.1")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -1164,9 +1163,6 @@ class MainWindow(QMainWindow):
         self.reload_button.clicked.connect(self.load_report)
         side_layout.addWidget(self.reload_button)
 
-        self.schedule_button = QPushButton("18:35 AKŞAM TARAMASINI OTOMATİKLEŞTİR")
-        self.schedule_button.clicked.connect(self.schedule_evening_scan)
-        side_layout.addWidget(self.schedule_button)
 
         self.open_report_button = QPushButton("EXCEL RAPORUNU AÇ")
         self.open_report_button.clicked.connect(self.open_report)
@@ -1300,13 +1296,6 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.start()
 
-    def schedule_evening_scan(self):
-        ok, message = aksam_taramasi_planla()
-        if ok:
-            QMessageBox.information(self, "Otomatik tarama", message)
-        else:
-            QMessageBox.warning(self, "Otomatik tarama", message)
-
     def scan_done(self, ok, message):
         self.scan_button.setEnabled(True)
         if ok:
@@ -1327,10 +1316,6 @@ def exception_hook(exc_type, exc_value, exc_tb):
 
 
 if __name__ == "__main__":
-    if "--gunsonu-tarama" in sys.argv:
-        import main as analiz_main
-        analiz_main.main()
-        raise SystemExit(0)
     sys.excepthook = exception_hook
     app = QApplication(sys.argv)
     win = MainWindow()
