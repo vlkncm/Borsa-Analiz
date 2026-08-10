@@ -1,5 +1,18 @@
 # Borsa Analiz Pro MAX v8.0.0
 
+## iPhone PWA sürümü
+
+Grafiksiz, iPhone ana ekranına eklenebilen mobil sürüm:
+
+- [Borsa Analiz PWA'yı aç](https://borsa-analiz-pwa.volkan-borsa-analiz.workers.dev)
+- Tek hisse teknik analizi
+- 50 TL altı likit hisseler için fırsat taraması
+- Yerel takip listesi
+- Manuel adet ve alış fiyatıyla portföy kâr/zarar takibi
+- Cloudflare Workers üzerinde telefondan bağımsız çalışma
+
+Kaynaklar `ios_pwa/`, `worker.js` ve `wrangler.jsonc` dosyalarındadır. Yayımlama adımları `PWA_YAYINLAMA.md` belgesinde açıklanmıştır.
+
 Sadeleştirilmiş BIST yatırım karar motoru.
 
 ## v7.5.0 resmî Borsa İstanbul kapanış entegrasyonu

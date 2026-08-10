@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#07140e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Borsa Analiz">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/scanner.css">
+  <link rel="stylesheet" href="/portfolio.css">
+  <title>Borsa Analiz</title>
+</head>
+<body>
+  <main id="home">
+    <header><div class="brand"><span>BA</span><div><b>Borsa Analiz</b><small>Mobil karar desteği</small></div></div><button id="install" class="ghost" hidden>Ana ekrana ekle</button></header>
+
+    <section class="intro"><span class="label">BIST HİSSE ANALİZİ</span><h1>Rakamları sadeleştir.<br><em>Kararını bilinçli ver.</em></h1><p>Grafiksiz, hızlı ve açıklanabilir teknik değerlendirme.</p></section>
+
+    <form id="search"><label for="symbol">Hisse kodu</label><div class="search-row"><input id="symbol" maxlength="6" inputmode="text" autocapitalize="characters" placeholder="Örn. THYAO" required><button type="submit">Analiz et</button></div></form>
+    <div id="error" class="error" hidden></div>
+    <section id="loader" class="loader" hidden><i></i><p>Fiyat geçmişi inceleniyor…</p></section>
+
+    <section id="result" hidden>
+      <article class="decision"><div><span id="date" class="label"></span><h2 id="decision"></h2><p id="decisionText"></p></div><div id="score" class="score"></div></article>
+      <div class="grid metrics">
+        <article><small>SON FİYAT</small><strong id="price"></strong><span id="change"></span></article>
+        <article><small>RSI (14)</small><strong id="rsi"></strong><span id="rsiText"></span></article>
+        <article><small>TREND</small><strong id="trend"></strong><span>EMA 20 / 50</span></article>
+        <article><small>VERİ GÜVENİ</small><strong id="confidence"></strong><span id="dataAge"></span></article>
+      </div>
+      <article class="card levels"><h3>İşlem seviyeleri</h3><div class="level-grid"><p><small>ALIŞ ARALIĞI</small><b id="buy"></b></p><p><small>HEDEF</small><b id="target"></b></p><p><small>STOP</small><b id="stop"></b></p><p><small>RİSK / GETİRİ</small><b id="rr"></b></p></div></article>
+      <div class="grid notes"><article class="card"><h3>Olumlu göstergeler</h3><ul id="positive"></ul></article><article class="card risk"><h3>Dikkat edilmesi gerekenler</h3><ul id="negative"></ul></article></div>
+      <button id="favorite" class="favorite">☆ Takip listeme ekle</button>
+    </section>
+
+    <section class="watch"><div class="section-head"><div><span class="label">YEREL KAYIT</span><h2>Takip listem</h2></div><small>Bu iPhone’da saklanır</small></div><div id="watchlist" class="chips"></div></section>
+    <section class="scanner" id="scanner">
+      <div class="section-head"><div><span class="label">FIRSAT TARAMA</span><h2>50 TL altı adaylar</h2></div><small>Likidite + teknik güç</small></div>
+      <p class="scanner-info">Likiditesi yüksek 120 hisselik piyasa evrenini küçük gruplarla inceler ve koşulları geçen en güçlü 30 adayı sıralar.</p>
+      <button id="scan" class="scan-button">Taramayı başlat</button>
+      <div id="scanProgress" class="progress" hidden><div><i id="progressBar"></i></div><span id="progressText"></span></div>
+      <div id="scanError" class="error" hidden></div>
+      <div id="scanResults" class="scan-results"></div>
+    </section>
+    <section class="portfolio" id="portfolio">
+      <div class="section-head"><div><span class="label">KİŞİSEL KAYIT</span><h2>Portföyüm</h2></div><small>Yalnızca bu iPhone’da</small></div>
+      <p class="scanner-info">Hisse adedi ve ortalama alış fiyatınızı girin. Güncel değer ile TL ve yüzde kâr/zarar otomatik hesaplanır.</p>
+      <form id="portfolioForm" class="portfolio-form">
+        <label>Hisse kodu<input id="portfolioSymbol" maxlength="6" autocapitalize="characters" placeholder="THYAO" required></label>
+        <label>Hisse adedi<input id="portfolioQuantity" inputmode="decimal" placeholder="100" required></label>
+        <label>Ortalama alış fiyatı<input id="portfolioBuyPrice" inputmode="decimal" placeholder="25,50" required></label>
+        <button type="submit">Portföye ekle</button>
+      </form>
+      <div id="portfolioError" class="error" hidden></div>
+      <div class="portfolio-summary" id="portfolioSummary" hidden><p><small>TOPLAM MALİYET</small><b id="totalCost"></b></p><p><small>SON FİYATA GÖRE DEĞER</small><b id="currentValue"></b></p><p><small>TOPLAM KÂR / ZARAR</small><b id="totalProfit"></b></p></div>
+      <button id="refreshPortfolio" class="favorite">Portföy fiyatlarını güncelle</button>
+      <div id="portfolioList" class="portfolio-list"></div>
+    </section>
+    <p class="disclaimer">Yatırım tavsiyesi değildir. Veriler gecikmeli veya eksik olabilir. İşlem öncesinde güncel fiyatı ve KAP açıklamalarını kontrol edin.</p>
+  </main>
+  <nav class="bottom-nav"><a href="#home" id="homeNav">⌂<span>Ana Sayfa</span></a><a href="#scanner">⌕<span>Tarama</span></a><a href="#portfolio">₺<span>Portföy</span></a></nav>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
