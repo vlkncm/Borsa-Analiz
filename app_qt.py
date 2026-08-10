@@ -1098,7 +1098,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.2.1")
+        self.setWindowTitle(APP_NAME + " v8.2.2")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.1")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.2")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -1183,31 +1183,31 @@ class MainWindow(QMainWindow):
 
         bg_path = (uygulama_klasoru() / "assets" / "terminal-background-v1.png").as_posix()
         style_sheet = """
-            QMainWindow {{ background:#020617; color:#e5e7eb; font-family:Segoe UI, Arial; font-size:13px; }}
+            QMainWindow {{ background:#050505; color:#f8fafc; font-family:Segoe UI, Arial; font-size:13px; }}
             #appRoot {{ border-image:url('__BACKGROUND__') 0 0 0 0 stretch stretch; }}
-            #sidebar {{ background:rgba(5,15,33,235); border-right:1px solid rgba(56,189,248,100); }}
-            QStackedWidget {{ background:rgba(2,6,23,222); border-left:1px solid rgba(148,163,184,45); }}
-            #brand {{ font-size:20px; font-weight:800; letter-spacing:1px; color:#67e8f9; padding:22px 14px; }}
-            QPushButton {{ background:rgba(15,35,62,235); border:1px solid rgba(100,160,200,95); padding:11px; border-radius:8px; text-align:left; font-weight:600; }}
-            QPushButton:hover {{ background:rgba(14,116,144,210); border-color:#67e8f9; }}
-            #primary {{ background:#0369a1; border:1px solid #38bdf8; font-weight:800; text-align:center; }}
-            #pageTitle { font-size:24px; font-weight:bold; color:#f8fafc; }
-            #subText { color:#94a3b8; }
-            #pathText { color:#64748b; font-size:10px; padding:4px; }
-            #terminalSummary {{ background:rgba(8,29,52,235); border:1px solid #0ea5e9; color:#bae6fd; padding:12px; border-radius:9px; }}
-            #metricCard {{ background:rgba(10,25,45,235); border:1px solid rgba(56,189,248,110); border-radius:10px; }}
-            #metricCaption { color:#94a3b8; font-size:10px; font-weight:bold; }
+            #sidebar {{ background:rgba(8,8,9,250); border-right:2px solid #991b1b; }}
+            QStackedWidget {{ background:rgba(5,5,6,248); border-left:1px solid #3f0b0b; }}
+            #brand {{ font-size:20px; font-weight:800; letter-spacing:1px; color:#fca5a5; padding:22px 14px; }}
+            QPushButton {{ background:#151515; color:#f8fafc; border:1px solid #4b1515; padding:11px; border-radius:7px; text-align:left; font-weight:700; }}
+            QPushButton:hover {{ background:#3f0b0b; border-color:#ef4444; color:#ffffff; }}
+            #primary {{ background:#b91c1c; border:1px solid #f87171; color:#ffffff; font-weight:800; text-align:center; }}
+            #pageTitle { font-size:24px; font-weight:bold; color:#ffffff; }
+            #subText { color:#d1d5db; }
+            #pathText { color:#d1d5db; font-size:10px; padding:4px; }
+            #terminalSummary {{ background:#101010; border:1px solid #dc2626; color:#ffffff; padding:12px; border-radius:8px; }}
+            #metricCard {{ background:#121212; border:1px solid #5f1d1d; border-radius:9px; }}
+            #metricCaption { color:#fecaca; font-size:10px; font-weight:bold; }
             #metricValue { color:#f8fafc; font-size:22px; font-weight:bold; }
-            #riskBanner { background:#422006; border:1px solid #a16207; color:#fde68a; padding:8px; border-radius:6px; }
-            #chartSummary { background:#0f172a; border:1px solid #0369a1; color:#bae6fd; padding:10px; border-radius:7px; }
-            #chartCanvas { background:#0f172a; border:1px solid #334155; border-radius:8px; color:#64748b; padding:8px; }
-            #analysisTitle { color:#38bdf8; font-size:18px; font-weight:bold; padding-top:10px; }
-            #analysisText { background:#0f172a; border:1px solid #334155; color:#e2e8f0; line-height:1.4; }
-            QTabBar::tab { background:#1e293b; color:#cbd5e1; padding:10px 24px; margin-right:2px; }
-            QTabBar::tab:selected { background:#0369a1; color:white; }
-            QLineEdit, QTextEdit, QTableWidget {{ background:rgba(4,15,31,238); border:1px solid rgba(100,160,200,110); border-radius:7px; padding:7px; }}
-            QHeaderView::section {{ background:rgba(15,43,73,245); color:#dbeafe; padding:9px; border:0; font-weight:700; }}
-            QTableWidget {{ gridline-color:rgba(71,85,105,120); selection-background-color:#075985; }}
+            #riskBanner { background:#3f0b0b; border:1px solid #ef4444; color:#ffffff; padding:8px; border-radius:6px; }
+            #chartSummary { background:#101010; border:1px solid #991b1b; color:#ffffff; padding:10px; border-radius:7px; }
+            #chartCanvas { background:#0b0b0b; border:1px solid #4b1515; border-radius:8px; color:#e5e7eb; padding:8px; }
+            #analysisTitle { color:#fca5a5; font-size:18px; font-weight:bold; padding-top:10px; }
+            #analysisText { background:#0b0b0b; border:1px solid #4b1515; color:#ffffff; line-height:1.4; }
+            QTabBar::tab { background:#171717; color:#f3f4f6; padding:10px 24px; margin-right:2px; border:1px solid #3f0b0b; }
+            QTabBar::tab:selected { background:#991b1b; color:#ffffff; }
+            QLineEdit, QTextEdit, QTableWidget {{ background:#0c0c0c; color:#ffffff; border:1px solid #5f1d1d; border-radius:7px; padding:7px; }}
+            QHeaderView::section {{ background:#450a0a; color:#ffffff; padding:9px; border:0; font-weight:700; }}
+            QTableWidget {{ gridline-color:#3f3f46; selection-background-color:#991b1b; selection-color:#ffffff; }}
         """
         self.setStyleSheet(
             style_sheet.replace("__BACKGROUND__", bg_path).replace("{{", "{").replace("}}", "}")
