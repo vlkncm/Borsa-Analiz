@@ -24,6 +24,7 @@ from sinyal_gecmisi import sinyal_gecmisini_guncelle, sinyal_gecmisi_oku
 from canli_kanit_kilidi import strateji_kilidi_uygula
 from denetim_raporu import denetim_tablosu, gunluk_ozet_yaz
 from strateji_kalibrasyon import olasilik_kalibrasyonu
+from gunluk_islem_plani import gun_sonu_plani
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -974,6 +975,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     sinyal_gecmisi_df, sinyal_performans_df = sinyal_gecmisini_guncelle(results)
     denetim_df = denetim_tablosu(results)
     kalibrasyon_df = olasilik_kalibrasyonu(sinyal_gecmisi_df)
+    gun_sonu_df = gun_sonu_plani(results)
     gunluk_ozet_yaz(output_dir, results, sinyal_gecmisi_df)
 
     excel_path_fallback = None
@@ -1031,6 +1033,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         sinyal_gecmisi_df.tail(1000).to_excel(writer, index=False, sheet_name="Sinyal Gecmisi")
         denetim_df.to_excel(writer, index=False, sheet_name="Denetim")
         kalibrasyon_df.to_excel(writer, index=False, sheet_name="Kalibrasyon")
+        gun_sonu_df.to_excel(writer, index=False, sheet_name="Gun Sonu Plani")
 
         # Bütün Excel sayfalarında boş hücreleri anlaşılır metinle göster.
         # Birleştirilmiş hücrelerin MergedCell nesneleri salt okunurdur.

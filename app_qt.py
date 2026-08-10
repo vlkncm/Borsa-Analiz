@@ -5,6 +5,9 @@ from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
+from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
+from sosyal_medya_risk import sosyal_medya_risk_analizi
+from zamanlayici import aksam_taramasi_planla
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
@@ -757,6 +760,24 @@ class SingleAnalysisPage(QWidget):
         top.addWidget(self.button)
         layout.addLayout(top)
 
+        control = QHBoxLayout()
+        self.open_price = QLineEdit()
+        self.open_price.setPlaceholderText("Sabah aracı kurum son fiyatı (örn. 71,05)")
+        compare = QPushButton("SABAH FİYATINI KONTROL ET")
+        compare.clicked.connect(self.check_open_price)
+        control.addWidget(self.open_price, 1)
+        control.addWidget(compare)
+        layout.addLayout(control)
+
+        social = QHBoxLayout()
+        self.social_text = QLineEdit()
+        self.social_text.setPlaceholderText("X / Telegram reklam metnini yapıştır: risk kontrolü")
+        social_check = QPushButton("REKLAM RİSKİNİ KONTROL ET")
+        social_check.clicked.connect(self.check_social_text)
+        social.addWidget(self.social_text, 1)
+        social.addWidget(social_check)
+        layout.addLayout(social)
+
         self.status = QLabel("")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
@@ -860,6 +881,34 @@ class SingleAnalysisPage(QWidget):
             + ("." if chart_ok else "; grafik oluşturulamadı, yazılı değerlendirme hazır.")
         )
         self.scroll.verticalScrollBar().setValue(0)
+
+    def check_open_price(self):
+        if not self.last_result:
+            QMessageBox.information(self, "Sabah kontrolü", "Önce tek hisse analizini tamamla.")
+            return
+        try:
+            price = float(self.open_price.text().replace(",", "."))
+        except ValueError:
+            QMessageBox.warning(self, "Sabah kontrolü", "Aracı kurumda gördüğün son fiyatı sayı olarak yaz.")
+            return
+        plan = gun_sonu_plani([self.last_result])
+        if plan.empty:
+            QMessageBox.information(self, "Sabah kontrolü", "Bu sonuç işlem planına uygun bir aday değil; yeni alım için izleme modunda kal.")
+            return
+        check = sabah_fiyat_kontrolu(plan, {str(plan.iloc[0]["Hisse"]): price})
+        result = check.iloc[0]
+        QMessageBox.information(
+            self, "Sabah fiyat kontrolü",
+            f"Kapanış: {result['Kapanış Fiyatı']:.2f} TL\nSon fiyat: {result['Sabah Son Fiyat']:.2f} TL\n\n{result['Sabah Kararı']}"
+        )
+
+    def check_social_text(self):
+        result = sosyal_medya_risk_analizi(self.social_text.text())
+        QMessageBox.information(
+            self, "Reklam / sosyal medya risk kontrolü",
+            f"Risk puanı: {result['sosyal_medya_risk_puani']}/100\n"
+            f"İşaretler: {result['sosyal_medya_bayraklari']}\n\n{result['sosyal_medya_sonuc']}"
+        )
 
 
 class SalePage(QWidget):
@@ -1050,7 +1099,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.0.0")
+        self.setWindowTitle(APP_NAME + " v8.1.0")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1086,7 +1135,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.0.0")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.1.0")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -1114,6 +1163,10 @@ class MainWindow(QMainWindow):
         self.reload_button = QPushButton("SON RAPORU YÜKLE")
         self.reload_button.clicked.connect(self.load_report)
         side_layout.addWidget(self.reload_button)
+
+        self.schedule_button = QPushButton("18:35 AKŞAM TARAMASINI OTOMATİKLEŞTİR")
+        self.schedule_button.clicked.connect(self.schedule_evening_scan)
+        side_layout.addWidget(self.schedule_button)
 
         self.open_report_button = QPushButton("EXCEL RAPORUNU AÇ")
         self.open_report_button.clicked.connect(self.open_report)
@@ -1247,6 +1300,13 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.start()
 
+    def schedule_evening_scan(self):
+        ok, message = aksam_taramasi_planla()
+        if ok:
+            QMessageBox.information(self, "Otomatik tarama", message)
+        else:
+            QMessageBox.warning(self, "Otomatik tarama", message)
+
     def scan_done(self, ok, message):
         self.scan_button.setEnabled(True)
         if ok:
@@ -1267,6 +1327,10 @@ def exception_hook(exc_type, exc_value, exc_tb):
 
 
 if __name__ == "__main__":
+    if "--gunsonu-tarama" in sys.argv:
+        import main as analiz_main
+        analiz_main.main()
+        raise SystemExit(0)
     sys.excepthook = exception_hook
     app = QApplication(sys.argv)
     win = MainWindow()
