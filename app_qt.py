@@ -1098,7 +1098,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.2.2")
+        self.setWindowTitle(APP_NAME + " v8.2.3")
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.2")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.3")
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -1205,7 +1205,11 @@ class MainWindow(QMainWindow):
             #analysisText { background:#0b0b0b; border:1px solid #4b1515; color:#ffffff; line-height:1.4; }
             QTabBar::tab { background:#171717; color:#f3f4f6; padding:10px 24px; margin-right:2px; border:1px solid #3f0b0b; }
             QTabBar::tab:selected { background:#991b1b; color:#ffffff; }
-            QLineEdit, QTextEdit, QTableWidget {{ background:#0c0c0c; color:#ffffff; border:1px solid #5f1d1d; border-radius:7px; padding:7px; }}
+            QLineEdit, QTextEdit {{ background:#0c0c0c; color:#ffffff; border:1px solid #5f1d1d; border-radius:7px; padding:7px; }}
+            QTableWidget {{ background:#050505; color:#f87171; border:1px solid #7f1d1d; border-radius:7px; padding:7px; alternate-background-color:#101010; }}
+            QTableWidget::item {{ background:#050505; color:#f87171; padding:5px; }}
+            QTableWidget::item:alternate {{ background:#101010; color:#fca5a5; }}
+            QTableWidget::item:selected {{ background:#991b1b; color:#ffffff; }}
             QHeaderView::section {{ background:#450a0a; color:#ffffff; padding:9px; border:0; font-weight:700; }}
             QTableWidget {{ gridline-color:#3f3f46; selection-background-color:#991b1b; selection-color:#ffffff; }}
         """
