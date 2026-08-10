@@ -1182,9 +1182,9 @@ class MainWindow(QMainWindow):
         root.addWidget(self.pages, 1)
 
         bg_path = (uygulama_klasoru() / "assets" / "terminal-background-v1.png").as_posix()
-        self.setStyleSheet(f"""
+        style_sheet = """
             QMainWindow {{ background:#020617; color:#e5e7eb; font-family:Segoe UI, Arial; font-size:13px; }}
-            #appRoot {{ border-image:url('{bg_path}') 0 0 0 0 stretch stretch; }}
+            #appRoot {{ border-image:url('__BACKGROUND__') 0 0 0 0 stretch stretch; }}
             #sidebar {{ background:rgba(5,15,33,235); border-right:1px solid rgba(56,189,248,100); }}
             QStackedWidget {{ background:rgba(2,6,23,222); border-left:1px solid rgba(148,163,184,45); }}
             #brand {{ font-size:20px; font-weight:800; letter-spacing:1px; color:#67e8f9; padding:22px 14px; }}
@@ -1208,7 +1208,10 @@ class MainWindow(QMainWindow):
             QLineEdit, QTextEdit, QTableWidget {{ background:rgba(4,15,31,238); border:1px solid rgba(100,160,200,110); border-radius:7px; padding:7px; }}
             QHeaderView::section {{ background:rgba(15,43,73,245); color:#dbeafe; padding:9px; border:0; font-weight:700; }}
             QTableWidget {{ gridline-color:rgba(71,85,105,120); selection-background-color:#075985; }}
-        """)
+        """
+        self.setStyleSheet(
+            style_sheet.replace("__BACKGROUND__", bg_path).replace("{{", "{").replace("}}", "}")
+        )
 
         self.load_report()
 
