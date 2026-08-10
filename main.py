@@ -21,6 +21,8 @@ from karar_motoru import karar_uret
 from vade_motoru import vade_listeleri_uret
 from veri_kalitesi import karantinadaki_semboller, tarama_sagligini_kaydet
 from sinyal_gecmisi import sinyal_gecmisini_guncelle
+from denetim_raporu import denetim_tablosu, gunluk_ozet_yaz
+from strateji_kalibrasyon import olasilik_kalibrasyonu
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -961,6 +963,9 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     portfoy = portfoy_onerisi_uret(df, sermaye=100000)
     faaliyet_df = faaliyet_dataframe(results)
     sinyal_gecmisi_df, sinyal_performans_df = sinyal_gecmisini_guncelle(results)
+    denetim_df = denetim_tablosu(results)
+    kalibrasyon_df = olasilik_kalibrasyonu(sinyal_gecmisi_df)
+    gunluk_ozet_yaz(output_dir, results, sinyal_gecmisi_df)
 
     excel_path_fallback = None
     try:
@@ -1015,6 +1020,8 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
             faaliyet_df.to_excel(writer, index=False, sheet_name="Faaliyet Raporlari")
         sinyal_performans_df.to_excel(writer, index=False, sheet_name="Sinyal Performansi")
         sinyal_gecmisi_df.tail(1000).to_excel(writer, index=False, sheet_name="Sinyal Gecmisi")
+        denetim_df.to_excel(writer, index=False, sheet_name="Denetim")
+        kalibrasyon_df.to_excel(writer, index=False, sheet_name="Kalibrasyon")
 
         # Bütün Excel sayfalarında boş hücreleri anlaşılır metinle göster.
         # Birleştirilmiş hücrelerin MergedCell nesneleri salt okunurdur.

@@ -96,8 +96,27 @@ def metin_puanla(metin: str) -> Dict[str, Any]:
     return {
         "kap_skor": skor,
         "kap_etiket": etiket,
+        "kap_olaylari": kap_olayi_sinifla(metin),
         "kap_notu": " | ".join(bulunan) if bulunan else "Önemli KAP anahtar kelimesi bulunmadı"
     }
+
+
+def kap_olayi_sinifla(metin: str) -> str:
+    """KAP metnini puandan bağımsız, denetlenebilir olay etiketlerine ayırır."""
+    text = (metin or "").lower()
+    events = []
+    categories = {
+        "BILANCO/KARLILIK": ("finansal", "kâr", "kar", "zarar", "hasılat"),
+        "SERMAYE ISLEMI": ("bedelsiz", "sermaye artır", "sermaye azalt"),
+        "TEMETTU": ("temettü", "temettu", "kâr payı", "kar payi"),
+        "SOZLESME/IHALE": ("sözleşme", "sozlesme", "ihale", "sipariş", "siparis"),
+        "HUKUKI/RISK": ("dava", "soruşturma", "sorusturma", "ceza", "iflas", "konkordato"),
+        "FAALIYET": ("faaliyet durdur", "üretim durdu", "uretim durdu", "kapasite"),
+    }
+    for label, terms in categories.items():
+        if any(term in text for term in terms):
+            events.append(label)
+    return " | ".join(events) if events else "SINIFLANDIRILACAK OLAY YOK"
 
 
 def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:
