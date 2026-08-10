@@ -516,6 +516,8 @@ def teknik_analiz(symbol, kategori):
             "tahmin_ust": gelecek["tahmin_ust"],
             "risk_seviyesi": gelecek["risk_seviyesi"],
             "volume_ratio": volume_ratio,
+            "ortalama_hacim_20": volume_ma20,
+            "ortalama_gunluk_islem_tutari": price * volume_ma20,
             "reasons": reasons or ["Belirgin teknik üstünlük bulunamadı"],
             "risk_notes": risk_notes or ["Belirgin ek teknik risk notu bulunamadı"]
             ,**profesyonel
