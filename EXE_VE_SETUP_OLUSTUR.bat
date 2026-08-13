@@ -37,9 +37,8 @@ if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 --add-data "logo.png;." ^
 --add-data "logo.ico;." ^
 --add-data "assets;assets" ^
---add-data "bist_hisseleri_613_aktif.txt;." ^
---add-data "bist_hisseleri_dogrulanmis.txt;." ^
 --hidden-import main ^
+--hidden-import bist30 ^
 --hidden-import veri_saglayici ^
 --hidden-import bist_bulteni ^
 --hidden-import borsa_tarayici ^
