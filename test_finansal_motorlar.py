@@ -98,7 +98,7 @@ class IndicatorTests(unittest.TestCase):
         delay = veri_islem_gunu_gecikmesi("2026-07-20", "2026-07-21 12:00:00")
         self.assertEqual(delay, 0)
 
-    def test_bist100_benchmark_uses_current_yahoo_symbol(self):
+    def test_bist30_benchmark_uses_current_yahoo_symbol(self):
         idx = pd.date_range("2025-01-01", periods=260, freq="B")
         raw = pd.DataFrame({
             "Open": np.linspace(9000, 10000, len(idx)),
@@ -113,7 +113,7 @@ class IndicatorTests(unittest.TestCase):
             with patch.object(borsa_tarayici, "guvenli_yf_download", return_value=raw) as mocked:
                 result = borsa_tarayici.bist100_verisi()
             self.assertFalse(result.empty)
-            mocked.assert_called_once_with("XU100.IS", period="2y", interval="1d", retries=1)
+            mocked.assert_called_once_with("XU030.IS", period="2y", interval="1d", retries=1)
         finally:
             borsa_tarayici._BENCHMARK_CACHE = previous_cache
 

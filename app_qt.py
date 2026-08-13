@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
+from bist30 import normalize_bist30_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
@@ -41,10 +42,7 @@ def rapor_yolu() -> Path:
 
 
 def normalize_symbol(text: str) -> str:
-    value = str(text or "").strip().upper()
-    if not value:
-        return ""
-    return value if value.endswith(".IS") else value + ".IS"
+    return normalize_bist30_sembolu(text)
 
 
 def guvenli_sayi(value, default=0.0):

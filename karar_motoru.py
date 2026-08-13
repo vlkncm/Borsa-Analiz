@@ -138,7 +138,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
     if extraordinary["kovalama_engeli"] and decision in ("BUGÜN AL", "ALIM BÖLGESİNİ BEKLE"):
         decision = "İZLE - OLAĞANDIŞI HAREKET RİSKİ"
     if not quality["veri_kalite_onayli"]:
-        decision = "VERİ KALİTESİ YETERSİZ"
+        decision = "VERİ KONTROLÜ GEREKLİ"
     if _f(item.get("uluslararasi_faktor_puani")) < 60 and decision == "BUGÜN AL":
         decision = "İZLE - FAKTÖR UYUMU YETERSİZ"
 

@@ -15,7 +15,6 @@ from kap_modulu import kap_toplu_analiz
 from mtf_grafik import coklu_zaman_dilimi_analizi, grafik_toplu_olustur
 from olasilik_temettu import olasilik_toplu_ekle, temettu_toplu_tara
 from faaliyet_raporu import faaliyet_toplu_analiz, faaliyet_dataframe
-from piyasa_guncelleme import guncel_hisse_dosyasi
 from v4_puanlama import v4_toplu_puanla
 from karar_motoru import karar_uret
 from vade_motoru import vade_listeleri_uret
@@ -27,6 +26,7 @@ from strateji_kalibrasyon import olasilik_kalibrasyonu
 from gunluk_islem_plani import gun_sonu_plani
 from faktor_model_portfoy import faktor_model_portfoyu
 from usta_yatirimci_modeli import usta_model_portfoyu
+from bist30 import BIST30_DONEMI, BIST30_KUMESI, bist30_hisseleri
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -85,41 +85,15 @@ def dogrulanmis_hisse_dosyasi():
     return path
 
 
-def hisseleri_txt_oku(dosya_adi="bist_hisseleri_613_aktif.txt"):
-    """
-    v4 öncelik sırası:
-    1) Son başarılı taramada doğrulanmış gerçek fiyat verisi olan hisseler
-    2) Paketle gelen doğrulanmış başlangıç listesi
-    3) Güncel KAP listesi
-    4) Eski gömülü liste
-    """
-    sources = [
-        ("Son doğrulanmış", dogrulanmis_hisse_dosyasi()),
-        ("Paket doğrulanmış", resource_path("bist_hisseleri_dogrulanmis.txt")),
-        ("Güncel piyasa", guncel_hisse_dosyasi()),
-        ("Paket aktif", resource_path(dosya_adi)),
-    ]
-    combined = set()
-    for label, path in sources:
-        if not path.exists():
-            continue
-        try:
-            symbols = {
-                x.strip().upper() for x in path.read_text(encoding="utf-8").splitlines()
-                if x.strip().upper().endswith(".IS")
-            }
-            combined.update(symbols)
-            print(f"{label} liste: {len(symbols)} | Birleşik: {len(combined)}")
-        except Exception as exc:
-            print(f"{label} liste okunamadı: {exc}")
-    if not combined:
-        raise FileNotFoundError("Kullanılabilir BIST sembol listesi bulunamadı")
-    quarantined = karantinadaki_semboller()
+def hisseleri_txt_oku(dosya_adi=None):
+    """Yalnizca resmi donemsel BIST 30 analiz evrenini dondurur."""
+    symbols = bist30_hisseleri()
+    quarantined = set(karantinadaki_semboller())
     if quarantined:
-        combined.difference_update(quarantined)
-        print(f"Tekrarlayan veri hatası nedeniyle karantinada: {len(quarantined)} sembol")
-    print(f"Birleşik BIST aday evreni: {len(combined)} sembol")
-    return sorted(combined)
+        symbols = [symbol for symbol in symbols if symbol not in quarantined]
+        print(f"Veri hatasi nedeniyle karantinada: {len(BIST30_KUMESI & quarantined)} BIST 30 hissesi")
+    print(f"BIST 30 analiz evreni: {len(symbols)} sembol | Donem: {BIST30_DONEMI}")
+    return symbols
 
 
 def dogrulanmis_listeyi_kaydet(results):
@@ -128,7 +102,7 @@ def dogrulanmis_listeyi_kaydet(results):
         for item in results
         if str(item.get("symbol", "")).strip().endswith(".IS")
     })
-    if len(symbols) < 450:
+    if not symbols or not set(symbols).issubset(BIST30_KUMESI):
         print(f"Doğrulanmış liste kaydedilmedi; sayı yetersiz: {len(symbols)}")
         return
     hedef = dogrulanmis_hisse_dosyasi()
@@ -139,7 +113,9 @@ def dogrulanmis_listeyi_kaydet(results):
 
 
 def hisse_tara(symbol):
-    return teknik_analiz(symbol, "BIST GENEL")
+    if symbol not in BIST30_KUMESI:
+        return None
+    return teknik_analiz(symbol, "BIST 30")
 
 
 def sonuclari_sirala(results):

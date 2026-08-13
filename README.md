@@ -13,7 +13,15 @@ Grafiksiz, iPhone ana ekranına eklenebilen mobil sürüm:
 
 Kaynaklar `ios_pwa/`, `worker.js` ve `wrangler.jsonc` dosyalarındadır. Yayımlama adımları `PWA_YAYINLAMA.md` belgesinde açıklanmıştır.
 
-Sadeleştirilmiş BIST yatırım karar motoru.
+Sadeleştirilmiş BIST 30 yatırım karar motoru.
+
+## BIST 30 odaklı analiz
+
+- Tarama ve tek hisse analizi yalnızca BIST 30 bileşenlerinde çalışır.
+- Güncel kod listesi tek bir denetlenebilir modülde tutulur.
+- Mevcut liste 01.07.2026-30.09.2026 endeks dönemine aittir.
+- Göreceli güç karşılaştırması BIST 100 yerine BIST 30 endeksiyle yapılır.
+- Eski 613 hisselik dosyalar arşiv olarak kalır, analiz evrenine alınmaz.
 
 ## v7.5.0 resmî Borsa İstanbul kapanış entegrasyonu
 

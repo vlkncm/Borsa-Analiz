@@ -37,7 +37,7 @@ class CanliDogrulamaTests(unittest.TestCase):
             "kisa_tarihsel_olasilik": 52, "kisa_guvenli_olasilik": 70,
             "piyasa_rejimi": "YÜKSELİŞ",
         })
-        self.assertIn(result["yatirim_karari"], {"İZLE - DOĞRULAMA YETERSİZ", "VERİ KALİTESİ YETERSİZ"})
+        self.assertIn(result["yatirim_karari"], {"İZLE - DOĞRULAMA YETERSİZ", "VERİ KONTROLÜ GEREKLİ"})
         self.assertIn("güven alt sınır", result["dogrulama_notu"])
 
 
