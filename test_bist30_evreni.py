@@ -4,7 +4,7 @@ from unittest.mock import patch
 import borsa_tarayici
 import main
 from app_qt import normalize_symbol
-from bist30 import BIST30_DONEMI, BIST30_KUMESI, BIST30_SEMBOLLERI
+from bist30 import BIST30_DONEMI, BIST30_KUMESI, BIST30_SEMBOLLERI, normalize_bist_sembolu
 
 
 class Bist30EvreniTests(unittest.TestCase):
@@ -18,9 +18,10 @@ class Bist30EvreniTests(unittest.TestCase):
         with patch("main.karantinadaki_semboller", return_value=set()):
             self.assertEqual(main.hisseleri_txt_oku("bist_hisseleri_613_aktif.txt"), list(BIST30_SEMBOLLERI))
 
-    def test_bist30_disi_tek_hisse_reddedilir(self):
-        self.assertEqual(normalize_symbol("MEGMT"), "")
+    def test_bist30_disi_tek_hisse_kabul_edilir(self):
+        self.assertEqual(normalize_symbol("MEGMT"), "MEGMT.IS")
         self.assertEqual(normalize_symbol("ASELS"), "ASELS.IS")
+        self.assertEqual(normalize_bist_sembolu("../bad"), "")
 
     def test_tarama_listesi_ve_benchmark_bist30dur(self):
         self.assertEqual(tuple(borsa_tarayici.WATCHLIST), BIST30_SEMBOLLERI)

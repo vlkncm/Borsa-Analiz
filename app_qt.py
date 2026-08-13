@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
-from bist30 import normalize_bist30_sembolu
+from bist30 import normalize_bist_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
@@ -42,7 +42,7 @@ def rapor_yolu() -> Path:
 
 
 def normalize_symbol(text: str) -> str:
-    return normalize_bist30_sembolu(text)
+    return normalize_bist_sembolu(text)
 
 
 def guvenli_sayi(value, default=0.0):
@@ -72,6 +72,8 @@ def teknik_degerlendirme_uret(result, symbol=""):
     stop = guvenli_sayi(result.get("onerilen_stop"))
     probability = guvenli_sayi(result.get("model_olasiligi"))
     rr = guvenli_sayi(result.get("karar_risk_getiri"))
+    expected_time = str(result.get("beklenen_sure", "Hesaplanamadı"))
+    time_confidence = str(result.get("sure_tahmin_guveni", "DÜŞÜK"))
     data_confidence = guvenli_sayi(
         result.get("karar_veri_guveni", result.get("veri_guven_puani"))
     )
@@ -155,6 +157,10 @@ def teknik_degerlendirme_uret(result, symbol=""):
         f"(güncelden potansiyel %{target_gain:.2f}), stop {stop:.2f} TL "
         f"(güncelden risk %{stop_loss:.2f}). Risk/getiri yaklaşık 1:{rr:.2f}."
     )
+    time_text = (
+        f"Hedefe tahmini erişim süresi: {expected_time}. Süre tahmini güveni: {time_confidence}. "
+        "Bu bir son tarih değildir; hedefe bu aralıkta ulaşılmayabilir veya önce stop çalışabilir."
+    )
 
     evidence_text = (
         f"Model olasılığı %{probability:.0f}; veri güveni %{data_confidence:.0f}, "
@@ -229,6 +235,7 @@ def teknik_degerlendirme_uret(result, symbol=""):
         "4) ALIŞ, HEDEF VE STOP",
         entry_text,
         level_text,
+        time_text,
         "",
         "5) ÖNEMLİ RİSKLER",
         risk_text,
@@ -787,7 +794,7 @@ class SingleAnalysisPage(QWidget):
         content_layout.setContentsMargins(0, 0, 8, 0)
 
         self.summary = QLabel(
-            "Bir hisse kodu girildiğinde karar, alış bandı, hedef, stop ve model güveni burada gösterilir."
+            "BIST 30 dışı dahil geçerli bir BIST hisse kodu girildiğinde karar, alış bandı, hedef, stop, tahmini süre ve model güveni burada gösterilir."
         )
         self.summary.setObjectName("chartSummary")
         self.summary.setWordWrap(True)
@@ -857,11 +864,12 @@ class SingleAnalysisPage(QWidget):
         target = guvenli_sayi(r.get("onerilen_satis"))
         stop = guvenli_sayi(r.get("onerilen_stop"))
         probability = guvenli_sayi(r.get("model_olasiligi"))
+        expected_time = str(r.get("beklenen_sure", "Hesaplanamadı"))
         self.summary.setText(
             f"KARAR: {decision}   |   GÜNCEL: {price:.2f} TL   |   "
             f"ALIŞ: {buy_low:.2f}–{buy_high:.2f} TL   |   "
             f"HEDEF: {target:.2f} TL   |   STOP: {stop:.2f} TL   |   "
-            f"MODEL OLASILIĞI: %{probability:.0f}"
+            f"TAHMİNİ SÜRE: {expected_time}   |   MODEL OLASILIĞI: %{probability:.0f}"
         )
 
         path = Path(r.get("grafik_dosyasi", ""))

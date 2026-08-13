@@ -18,6 +18,55 @@ def _f(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _hedef_suresi_hesapla(item: Dict[str, Any], price: float, target: float, atr: float,
+                          market_regime: str) -> Dict[str, Any]:
+    """Hedefe erişim için yönlü hız ve oynaklıktan temkinli bir zaman aralığı üretir."""
+    required_move = max(1.0, (target / price - 1) * 100)
+    atr_pct = max(0.1, atr / price * 100)
+    ret20 = _f(item.get("ret_20"))
+    ret60 = _f(item.get("ret_60"))
+    adx = _f(item.get("adx"))
+
+    # ATR'nin tamamı hedef yönünde ilerleme değildir. Geçmiş net momentum ile
+    # günlük hareket kapasitesini birleştirerek daha gerçekçi yönlü hız kullan.
+    momentum_speed = max(0.0, ret20 / 20) * 0.60 + max(0.0, ret60 / 60) * 0.40
+    volatility_speed = atr_pct * 0.22
+    daily_speed = max(0.12, momentum_speed * 0.65 + volatility_speed * 0.35)
+
+    if adx >= 25 and ret20 > 0:
+        daily_speed *= 1.12
+    elif adx < 18:
+        daily_speed *= 0.82
+    if "DÜŞÜŞ" in market_regime:
+        daily_speed *= 0.72
+    elif "YÜKSELİŞ" in market_regime:
+        daily_speed *= 1.08
+
+    center_days = int(max(5, min(90, round(required_move / max(daily_speed, 0.08)))))
+    uncertainty = 0.30 if adx >= 25 and ret20 > 0 and ret60 > 0 else 0.45
+    day_low = max(3, int(round(center_days * (1 - uncertainty))))
+    day_high = min(120, max(day_low + 5, int(round(center_days * (1 + uncertainty)))))
+    week_low = day_low / 5
+    week_high = day_high / 5
+
+    if ret20 > 0 and ret60 > 0 and adx >= 20:
+        confidence = "ORTA"
+    elif ret20 <= 0 or "DÜŞÜŞ" in market_regime:
+        confidence = "DÜŞÜK"
+    else:
+        confidence = "ORTA-DÜŞÜK"
+
+    return {
+        "beklenen_sure": f"{day_low}-{day_high} iş günü (yaklaşık {week_low:.1f}-{week_high:.1f} hafta)",
+        "beklenen_sure_alt": day_low,
+        "beklenen_sure_ust": day_high,
+        "beklenen_hafta_alt": round(week_low, 1),
+        "beklenen_hafta_ust": round(week_high, 1),
+        "sure_tahmin_guveni": confidence,
+        "sure_tahmin_yontemi": "20/60 günlük momentum, ATR, ADX ve piyasa rejimi",
+    }
+
+
 def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
     price = _f(item.get("price"))
     atr = max(_f(item.get("atr"), price * 0.025), price * 0.008)
@@ -100,13 +149,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
     if data_confidence < 60:
         probability = min(probability, 50)
 
-    # ATR ile hedefe ulaşma süresi: fiyat hareket hızına dayalı kaba aralık.
-    atr_pct = atr / price * 100
-    required_move = max(1.0, (target / price - 1) * 100)
-    daily_capacity = max(0.45, atr_pct * 0.55)
-    center_days = int(max(3, min(35, round(required_move / daily_capacity))))
-    day_low = max(2, int(center_days * 0.75))
-    day_high = min(45, max(day_low + 2, int(center_days * 1.35)))
+    time_estimate = _hedef_suresi_hesapla(item, price, target, atr, market_regime)
 
     form_down = (
         str(item.get("formasyon_yonu", "")).upper() == "AŞAĞI"
@@ -163,9 +206,7 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         "onerilen_satis": round(target, 2),
         "onerilen_stop": round(stop, 2),
         "beklenen_getiri_yuzde": round(expected_return, 2),
-        "beklenen_sure": f"{day_low}-{day_high} iş günü",
-        "beklenen_sure_alt": day_low,
-        "beklenen_sure_ust": day_high,
+        **time_estimate,
         "model_olasiligi": probability,
         "karar_risk_getiri": round(rr, 2),
         "karar_nedenleri": " | ".join(reason_parts),
@@ -194,6 +235,10 @@ def _empty() -> Dict[str, Any]:
         "beklenen_sure": "Veri yok",
         "beklenen_sure_alt": 0,
         "beklenen_sure_ust": 0,
+        "beklenen_hafta_alt": 0.0,
+        "beklenen_hafta_ust": 0.0,
+        "sure_tahmin_guveni": "YOK",
+        "sure_tahmin_yontemi": "Veri yok",
         "model_olasiligi": 0,
         "karar_risk_getiri": 0.0,
         "karar_nedenleri": "Fiyat verisi bulunamadı.",

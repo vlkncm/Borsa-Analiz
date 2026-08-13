@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from bist30 import BIST30_KUMESI
+
 
 GORUNEN_KOLONLAR = [
     "Hisse",
@@ -39,6 +41,11 @@ def vade_listeleri_uret(df: pd.DataFrame):
         return bos, bos.copy(), bos.copy()
 
     work = df.copy()
+    # Kısa/orta/uzun toplu listeler yalnızca resmi dönemsel BIST 30 evrenidir.
+    if "Hisse" in work.columns:
+        symbols = work["Hisse"].astype(str).str.strip().str.upper()
+        symbols = symbols.where(symbols.str.endswith(".IS"), symbols + ".IS")
+        work = work[symbols.isin(BIST30_KUMESI)].copy()
 
     guven = _num(work, "v4 Güven Puanı", 50)
     olasilik = _num(work, "Model Olasılığı %", 50)

@@ -178,6 +178,18 @@ class DecisionTests(unittest.TestCase):
         self.assertLess(result["onerilen_alis_ust"], result["onerilen_satis"])
         self.assertLessEqual(result["model_olasiligi"], 88)
 
+    def test_target_time_contains_business_days_weeks_and_confidence(self):
+        result = karar_uret({
+            "price": 200, "atr": 4, "hedef_2": 226,
+            "ret_20": 6, "ret_60": 12, "adx": 24,
+            "piyasa_rejimi": "YATAY", "veri_guven_puani": 90,
+        })
+        self.assertGreater(result["beklenen_sure_alt"], 0)
+        self.assertGreater(result["beklenen_sure_ust"], result["beklenen_sure_alt"])
+        self.assertIn("iş günü", result["beklenen_sure"])
+        self.assertIn("hafta", result["beklenen_sure"])
+        self.assertIn(result["sure_tahmin_guveni"], {"ORTA", "ORTA-DÜŞÜK", "DÜŞÜK"})
+
     def test_profitable_position_never_moves_trailing_stop_below_cost(self):
         result = satis_karari_uret({"price": 110, "atr": 2, "onerilen_satis": 125}, 100)
         self.assertGreaterEqual(result["yeni_stop"], 100)
@@ -220,7 +232,7 @@ class PortfolioRiskTests(unittest.TestCase):
 class HorizonSelectionTests(unittest.TestCase):
     def _candidate(self, **overrides):
         item = {
-            "Hisse": "TEST.IS", "Veri Tarihi": "2026-07-20", "Veri Yaşı (Gün)": 0,
+            "Hisse": "ASELS.IS", "Veri Tarihi": "2026-07-20", "Veri Yaşı (Gün)": 0,
             "Yatırım Kararı": "BUGÜN AL", "Fiyat": 100,
             "Önerilen Alış Alt": 98, "Önerilen Alış Üst": 101,
             "Önerilen Satış": 120, "Önerilen Stop": 94,
@@ -247,6 +259,10 @@ class HorizonSelectionTests(unittest.TestCase):
         stale = self._candidate(**{"Veri Yaşı (Gün)": 8})
         bad_rr = self._candidate(Hisse="BAD.IS", **{"Karar Risk/Getiri": 0.7})
         result = vade_listeleri_uret(pd.DataFrame([stale, bad_rr]))
+        self.assertTrue(all(frame.empty for frame in result))
+
+    def test_non_bist30_candidate_is_excluded_from_horizon_lists(self):
+        result = vade_listeleri_uret(pd.DataFrame([self._candidate(Hisse="MEGMT.IS")]))
         self.assertTrue(all(frame.empty for frame in result))
 
 
