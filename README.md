@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v8.0.0
+# Borsa Analiz Pro MAX v8.3.0
+
+## v8.3.0 doğrulanmış şirket araştırması
+
+- Seçilen hisse için finansal tablo eğilimleri, değerleme ve kalite oranları tek raporda gösterilir.
+- Güçlü yönler, riskler ve boğa/temel/ayı senaryoları doğrulanabilen verilerden üretilir.
+- Eksik finansal alanlar tahmin edilmez; `Veri yok` olarak işaretlenir.
+- Araştırma raporu mevcut teknik al-sat kararını veya puanını değiştirmez.
+- KAP ve faaliyet raporu ekranları kaynak doğrulaması için ayrı tutulur.
 
 ## iPhone PWA sürümü
 
@@ -56,8 +64,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v7.5.0 kurulum dosyasını indir](downloads/v7.5.0/Setup_Borsa_Analiz_Pro_MAX_v7.5.0.exe)
-- SHA-256: `278C9E09594826627E2F662743CEA767C127BD7C0A860C9A5CCDFCB4D74839C7`
+- [Borsa Analiz Pro MAX v8.3.0 kurulum dosyasını indir](downloads/v8.3.0/Setup_Borsa_Analiz_Pro_MAX_v8.3.0.exe)
+- SHA-256: `DC31620725CB042816C7BD0451620CDB361D0234837E9DCA693B8AC81768CAD8`
 
 ## v7.2 merkezi veri katmanı
 

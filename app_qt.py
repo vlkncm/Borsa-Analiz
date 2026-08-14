@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
+APP_VERSION = "8.3.0"
 
 
 def uygulama_klasoru() -> Path:
@@ -361,6 +362,9 @@ class InfoWorker(QObject):
             if self.kind == "kap":
                 from kap_modulu import kap_web_deneme
                 result = kap_web_deneme(self.symbol, gun=30)
+            elif self.kind == "research":
+                from sirket_arastirmasi import sirket_arastirmasi
+                result = sirket_arastirmasi(self.symbol)
             else:
                 from faaliyet_raporu import faaliyet_raporu_analiz
                 result = faaliyet_raporu_analiz(self.symbol)
@@ -993,7 +997,12 @@ class SelectedInfoPage(QWidget):
         self.kind = kind
         self.thread = None
         self.worker = None
-        label = "KAP Analizi" if kind == "kap" else "Faaliyet Raporu Analizi"
+        labels = {
+            "kap": "KAP Analizi",
+            "activity": "Faaliyet Raporu Analizi",
+            "research": "Doğrulanmış Şirket Araştırması",
+        }
+        label = labels.get(kind, "Şirket Araştırması")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         title = QLabel(label)
@@ -1001,6 +1010,12 @@ class SelectedInfoPage(QWidget):
         layout.addWidget(title)
         sub = QLabel("Yalnızca seçtiğin hisse incelenir; toplu taramayı yavaşlatmaz.")
         sub.setObjectName("subText")
+        if kind == "research":
+            sub.setText(
+                "Beş yıllık finansal eğilim, değerleme, güçlü yön, risk ve senaryoları tek raporda gösterir. "
+                "Eksik veri uydurulmaz ve bu rapor teknik işlem kararını değiştirmez."
+            )
+            sub.setWordWrap(True)
         layout.addWidget(sub)
         top = QHBoxLayout()
         self.symbol = QLineEdit()
@@ -1036,6 +1051,10 @@ class SelectedInfoPage(QWidget):
         self.button.setEnabled(True)
         if not ok:
             self.result.setPlainText(message)
+            return
+        if self.kind == "research" and result.get("report"):
+            self.result.setPlainText(result["report"])
+            self.status.setText(f"Tamamlandı. Veri kapsamı: %{result.get('data_completeness', 0)}")
             return
         lines = []
         for key, value in result.items():
@@ -1104,7 +1123,7 @@ class TrackPage(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_NAME + " v8.2.3")
+        self.setWindowTitle(APP_NAME + " v" + APP_VERSION)
         self.resize(1380, 820)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
@@ -1125,10 +1144,11 @@ class MainWindow(QMainWindow):
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
+        self.research = SelectedInfoPage("research")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.research, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1141,7 +1161,7 @@ class MainWindow(QMainWindow):
         side.setObjectName("sidebar")
         side.setFixedWidth(270)
         side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v8.2.3")
+        brand = QLabel("BORSA ANALİZ\nPRO MAX v" + APP_VERSION)
         brand.setObjectName("brand")
         brand.setAlignment(Qt.AlignCenter)
         side_layout.addWidget(brand)
@@ -1153,7 +1173,8 @@ class MainWindow(QMainWindow):
             ("TAKİP LİSTEM", 3),
             ("SEÇİLİ HİSSE KAP", 4),
             ("SEÇİLİ HİSSE FAALİYET", 5),
-            ("CANLI LOG", 6),
+            ("ŞİRKET ARAŞTIRMASI", 6),
+            ("CANLI LOG", 7),
         ]
         for text, index in menu:
             button = QPushButton(text)
@@ -1301,7 +1322,7 @@ class MainWindow(QMainWindow):
         if self.thread is not None and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.pages.setCurrentIndex(6)
+        self.pages.setCurrentIndex(7)
         self.log.clear()
         self.thread = QThread()
         self.worker = ScanWorker()

@@ -48,6 +48,7 @@ if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 --hidden-import mtf_grafik ^
 --hidden-import olasilik_temettu ^
 --hidden-import faaliyet_raporu ^
+--hidden-import sirket_arastirmasi ^
 --hidden-import piyasa_guncelleme ^
 --hidden-import sistem_kontrol ^
 --hidden-import v4_puanlama ^
