@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.4.0"
+APP_VERSION = "8.5.0"
 
 
 def uygulama_klasoru() -> Path:
@@ -493,7 +493,7 @@ class StockDetailDialog(QDialog):
         "Beklenen Süre", "Karar Nedenleri",
     ]
 
-    def __init__(self, data, parent=None):
+    def __init__(self, data, parent=None, show_chart=True):
         super().__init__(parent)
         self.data = dict(data)
         self.setWindowTitle(f"{data.get('Hisse', 'Hisse')} — Profesyonel Detay")
@@ -541,9 +541,10 @@ class StockDetailDialog(QDialog):
         scroll.setWidget(body)
         root.addWidget(scroll, 1)
         buttons = QHBoxLayout()
-        chart = QPushButton("TEKNİK GRAFİĞİ AÇ")
-        chart.clicked.connect(self.open_chart)
-        buttons.addWidget(chart)
+        if show_chart:
+            chart = QPushButton("TEKNİK GRAFİĞİ AÇ")
+            chart.clicked.connect(self.open_chart)
+            buttons.addWidget(chart)
         buttons.addStretch()
         close = QPushButton("KAPAT")
         close.clicked.connect(self.accept)
@@ -1178,6 +1179,96 @@ class TrackPage(QWidget):
                 self.table.setItem(r, c, QTableWidgetItem(str(value)))
 
 
+class FundWorker(QObject):
+    finished = Signal(bool, object, str)
+
+    def __init__(self, max_risk=7):
+        super().__init__()
+        self.max_risk = max_risk
+
+    def run(self):
+        try:
+            from fon_analizi import fon_taramasi
+            frame, source = fon_taramasi(self.max_risk)
+            self.finished.emit(True, frame, source)
+        except Exception:
+            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+
+
+class FundAnalysisPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.thread = None
+        self.worker = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        title = QLabel("Fon Karar Merkezi")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        warning = QLabel(
+            "TEFAS'ta işlem gören fonları aynı kategori, çok dönemli momentum ve riskle karşılaştırır. "
+            "%20–30 aylık getiri garanti edilmez; yalnızca yüksek getiri potansiyeli taşıyan riskli adaylar işaretlenir."
+        )
+        warning.setObjectName("riskBanner")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        controls = QHBoxLayout()
+        self.max_risk = QLineEdit("7")
+        self.max_risk.setPlaceholderText("Azami risk: 1–7")
+        self.max_risk.setMaximumWidth(170)
+        self.button = QPushButton("TEFAS FONLARINI TARA")
+        self.button.setObjectName("primary")
+        self.button.clicked.connect(self.run)
+        controls.addWidget(self.max_risk)
+        controls.addWidget(self.button)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.status = QLabel("Tarama başlatılmadı. Risk 7 tüm uygun fonları kapsar; daha düşük değer daha temkinlidir.")
+        self.status.setObjectName("subText")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.table = SearchableTable(
+            "Yüksek Getiri ve Fon Karar Adayları",
+            "Tablo puana göre sıralanır. Bir aylık yükselişi aşırı hızlanan fonlarda 'kovalama' uyarısı verilir.",
+        )
+        self.table.row_selected.connect(self.show_detail)
+        layout.addWidget(self.table, 1)
+
+    def run(self):
+        if self.thread is not None and self.thread.isRunning():
+            return
+        try:
+            max_risk = int(self.max_risk.text().strip())
+            if not 1 <= max_risk <= 7:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "Risk", "Azami risk değerini 1 ile 7 arasında yazın.")
+            return
+        self.button.setEnabled(False)
+        self.status.setText("TEFAS fonları alınıyor ve aynı kategoride karşılaştırılıyor...")
+        self.thread = QThread()
+        self.worker = FundWorker(max_risk)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.done)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.start()
+
+    def done(self, ok, frame, message):
+        self.button.setEnabled(True)
+        if not ok:
+            self.status.setText("Fon taraması yapılamadı. Eski sonuç karar olarak kullanılmadı.")
+            QMessageBox.warning(self, "Fon taraması", message)
+            return
+        self.table.load(frame)
+        strong = 0 if frame.empty else int(frame["20%+ Uç Senaryo"].astype(str).eq("VAR").sum())
+        self.status.setText(f"Kaynak: {message} | Uygun fon: {len(frame)} | 20%+ uç senaryo adayı: {strong}")
+
+    def show_detail(self, data):
+        StockDetailDialog(data, self, show_chart=False).exec()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1202,10 +1293,11 @@ class MainWindow(QMainWindow):
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
+        self.funds = FundAnalysisPage()
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.funds, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1230,7 +1322,8 @@ class MainWindow(QMainWindow):
             ("TAKİP LİSTEM", 3),
             ("SEÇİLİ HİSSE KAP", 4),
             ("SEÇİLİ HİSSE FAALİYET", 5),
-            ("CANLI LOG", 6),
+            ("FON KARAR MERKEZİ", 6),
+            ("CANLI LOG", 7),
         ]
         for text, index in menu:
             button = QPushButton(text)
@@ -1386,7 +1479,7 @@ class MainWindow(QMainWindow):
         if self.thread is not None and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.pages.setCurrentIndex(6)
+        self.pages.setCurrentIndex(7)
         self.log.clear()
         self.thread = QThread()
         self.worker = ScanWorker()

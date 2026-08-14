@@ -1,4 +1,13 @@
-# Borsa Analiz Pro MAX v8.4.0
+# Borsa Analiz Pro MAX v8.5.0
+
+## v8.5.0 Fon Karar Merkezi
+
+- Resmî TEFAS sayfasındaki halka açık fon listesi ve dönemsel getiriler taranır.
+- Yalnızca TEFAS'ta işlem gören, risk değeri ve yeterli 1/3/6 aylık geçmişi bulunan fonlar değerlendirilir.
+- Fonlar kendi kategorilerindeki getiri, çok dönemli momentum, hızlanma ve risk değerine göre sıralanır.
+- `%20+ Uç Senaryo` alanı garanti değil, yüksek riskli bir momentum işaretidir.
+- Aşırı hızlanan fonlarda `Yükselişi Kovalama` uyarısı, diğerlerinde kademeli al/izle/bekle/alma kararları gösterilir.
+- Önerilen asgari süre ve ölçülebilir çıkış koşulu her satırda bulunur.
 
 ## v8.4.0 karar odaklı arayüz
 
@@ -71,8 +80,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.4.0 kurulum dosyasını indir](downloads/v8.4.0/Setup_Borsa_Analiz_Pro_MAX_v8.4.0.exe)
-- SHA-256: `85476DD44E76C2A7B96258FFE86C7FEF9BE17E9CEA7AD9A4C7F3C2CDD5D38AAD`
+- [Borsa Analiz Pro MAX v8.5.0 kurulum dosyasını indir](downloads/v8.5.0/Setup_Borsa_Analiz_Pro_MAX_v8.5.0.exe)
+- SHA-256: `2C3FE17675CC9B4085ED9EA44E8B92CE17731B14705A8939CEF45E95CFE42DF4`
 
 ## v7.2 merkezi veri katmanı
 
