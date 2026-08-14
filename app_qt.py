@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.3.0"
+APP_VERSION = "8.4.0"
 
 
 def uygulama_klasoru() -> Path:
@@ -52,6 +52,18 @@ def guvenli_sayi(value, default=0.0):
         return number if pd.notna(number) else default
     except (TypeError, ValueError):
         return default
+
+
+def karar_gruplarina_ayir(df):
+    """BIST sonuçlarını vade yerine uygulanabilir alış kararına göre ayırır."""
+    if df is None or df.empty:
+        empty = pd.DataFrame(columns=[] if df is None else df.columns)
+        return empty.copy(), empty.copy(), empty.copy()
+    decision = df.get("Yatırım Kararı", pd.Series("", index=df.index)).astype(str).str.upper()
+    buy_mask = decision.eq("BUGÜN AL")
+    wait_mask = decision.str.contains("BEKLE|İZLE", regex=True, na=False)
+    avoid_mask = ~(buy_mask | wait_mask)
+    return df.loc[buy_mask].copy(), df.loc[wait_mask].copy(), df.loc[avoid_mask].copy()
 
 
 def teknik_degerlendirme_uret(result, symbol=""):
@@ -610,7 +622,7 @@ class InvestmentTerminalPage(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
-        title = QLabel("Profesyonel Yatırım Terminali")
+        title = QLabel("BIST 30 Alış–Satış Fırsatları")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         self.summary = QLabel("Son rapor yükleniyor...")
@@ -620,8 +632,8 @@ class InvestmentTerminalPage(QWidget):
         cards = QHBoxLayout()
         self.metric_labels = {}
         for key, caption in [
-            ("total", "TARANAN"), ("short", "KISA VADE"),
-            ("medium", "ORTA VADE"), ("long", "UZUN VADE"),
+            ("total", "TARANAN"), ("buy", "BUGÜN ALINABİLİR"),
+            ("wait", "ALIM İÇİN BEKLE"), ("avoid", "RİSKLİ / UZAK DUR"),
             ("conviction", "YÜKSEK ONAY"),
         ]:
             card = QFrame()
@@ -643,9 +655,18 @@ class InvestmentTerminalPage(QWidget):
         warning.setWordWrap(True)
         layout.addWidget(warning)
         self.tabs = QTabWidget()
-        self.kisa = SimpleTable("Kısa Vade Adayları", "5–20 iş günü · momentum ve hacim öncelikli")
-        self.orta = SimpleTable("Orta Vade Adayları", "1–3 ay · trend ve risk/getiri dengeli")
-        self.uzun = SimpleTable("Uzun Vade Adayları", "3–12 ay · faaliyet ve yıllık momentum öncelikli")
+        self.buy = SimpleTable(
+            "Bugün Alınabilir Adaylar",
+            "Yalnızca güncel veri, uygun alış bandı ve yeterli risk/getiri koşullarını geçen hisseler.",
+        )
+        self.wait = SimpleTable(
+            "Alım İçin Beklenecek Hisseler",
+            "Fiyat alış bandına gelmediği veya teknik teyit tamamlanmadığı için hemen alınmaması gerekenler.",
+        )
+        self.avoid = SimpleTable(
+            "Riskli / Uzak Dur",
+            "ALMA, veri kontrolü gerekli veya kanıtı yetersiz sonuçlar. Veri sorunu satış sinyali anlamına gelmez.",
+        )
         self.onay = SimpleTable(
             "Yüksek Onaylı Adaylar — Garanti Değildir",
             "Yalnızca güncel veri, güçlü ortak teyit ve en az 1:1,8 risk/getiri koşullarını geçen en fazla 5 aday",
@@ -654,12 +675,12 @@ class InvestmentTerminalPage(QWidget):
             "Tüm BIST Sonuçları",
             "Herhangi bir hisseyi ara; kolon başlığına tıklayarak sırala.",
         )
-        self.tabs.addTab(self.kisa, "KISA VADE")
-        self.tabs.addTab(self.orta, "ORTA VADE")
-        self.tabs.addTab(self.uzun, "UZUN VADE")
+        self.tabs.addTab(self.buy, "BUGÜN ALINABİLİR")
+        self.tabs.addTab(self.wait, "ALIM İÇİN BEKLE")
+        self.tabs.addTab(self.avoid, "RİSKLİ / UZAK DUR")
         self.tabs.addTab(self.onay, "YÜKSEK ONAY")
         self.tabs.addTab(self.tum, "TÜM BİST / ARAMA")
-        for table in (self.kisa, self.orta, self.uzun, self.onay, self.tum):
+        for table in (self.buy, self.wait, self.avoid, self.onay, self.tum):
             table.row_selected.connect(self.show_stock_detail)
         layout.addWidget(self.tabs, 1)
 
@@ -669,12 +690,12 @@ class InvestmentTerminalPage(QWidget):
     def update_summary(self, path: Path, counts, total=0, conviction=0):
         when = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d.%m.%Y %H:%M") if path.exists() else "-"
         self.summary.setText(
-            f"Son analiz: {when}   |   Kısa: {counts[0]}   Orta: {counts[1]}   Uzun: {counts[2]}   |   "
-            "Liste boşsa kalite eşiğini geçen aday yoktur."
+            f"Son analiz: {when}   |   Bugün alınabilir: {counts[0]}   Bekle: {counts[1]}   "
+            f"Riskli/uzak dur: {counts[2]}   |   Bir listenin boş olması normaldir; sistem zorla AL üretmez."
         )
         values = {
-            "total": total, "short": counts[0], "medium": counts[1],
-            "long": counts[2], "conviction": conviction,
+            "total": total, "buy": counts[0], "wait": counts[1],
+            "avoid": counts[2], "conviction": conviction,
         }
         for key, value in values.items():
             self.metric_labels[key].setText(str(value))
@@ -743,15 +764,17 @@ class SingleAnalysisPage(QWidget):
         super().__init__()
         self.thread = None
         self.worker = None
+        self.research_thread = None
+        self.research_worker = None
         self.last_result = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Tek Hisse Analizi")
+        title = QLabel("Hisse Karar Merkezi")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
         sub = QLabel(
-            "Tek işlemde günlük ve haftalık trendi, piyasa rejimini, veri güvenini ve tarihsel "
-            "kanıtı inceler; sonuç grafiğini ve açıklamalı teknik değerlendirmeyi birlikte gösterir."
+            "Bir hissenin ne zaman alınabileceğini, hangi durumda beklenmesi gerektiğini, hedef/stop seviyelerini "
+            "ve şirketin temel araştırmasını tek ekranda birleştirir."
         )
         sub.setWordWrap(True)
         sub.setObjectName("subText")
@@ -762,7 +785,7 @@ class SingleAnalysisPage(QWidget):
         self.symbol.setPlaceholderText("Örnek: ASELS")
         self.symbol.returnPressed.connect(self.run)
         top.addWidget(self.symbol, 1)
-        self.button = QPushButton("ANALİZ ET, GRAFİĞİ VE YORUMU GÖSTER")
+        self.button = QPushButton("ALIŞ–SATIŞ KARARI VE ŞİRKETİ İNCELE")
         self.button.setObjectName("primary")
         self.button.clicked.connect(self.run)
         top.addWidget(self.button)
@@ -821,6 +844,19 @@ class SingleAnalysisPage(QWidget):
             "seviyeler, kanıt gücü ve riskler burada açıklanır."
         )
         content_layout.addWidget(self.result)
+
+        research_title = QLabel("Şirket Araştırması ve Temel Görünüm")
+        research_title.setObjectName("analysisTitle")
+        content_layout.addWidget(research_title)
+
+        self.research_result = QTextEdit()
+        self.research_result.setReadOnly(True)
+        self.research_result.setObjectName("analysisText")
+        self.research_result.setMinimumHeight(480)
+        self.research_result.setPlainText(
+            "Teknik karar tamamlandıktan sonra finansal eğilimler, değerleme, güçlü yönler, riskler ve senaryolar burada gösterilir."
+        )
+        content_layout.addWidget(self.research_result)
         self.scroll.setWidget(content)
         layout.addWidget(self.scroll, 1)
 
@@ -841,6 +877,7 @@ class SingleAnalysisPage(QWidget):
         self.result.setPlainText(
             "Veri güncelliği, trend, momentum, hacim, tarihsel kanıt ve risk/getiri değerlendiriliyor..."
         )
+        self.research_result.setPlainText("Şirketin doğrulanabilir temel verileri hazırlanıyor...")
         self.thread = QThread()
         self.worker = SingleWorker(symbol, "analysis")
         self.worker.moveToThread(self.thread)
@@ -889,7 +926,28 @@ class SingleAnalysisPage(QWidget):
             f"{symbol.replace('.IS', '')} birleşik analizi tamamlandı"
             + ("." if chart_ok else "; grafik oluşturulamadı, yazılı değerlendirme hazır.")
         )
+        self._load_research(symbol)
         self.scroll.verticalScrollBar().setValue(0)
+
+    def _load_research(self, symbol):
+        if self.research_thread is not None and self.research_thread.isRunning():
+            return
+        self.research_thread = QThread()
+        self.research_worker = InfoWorker(symbol, "research")
+        self.research_worker.moveToThread(self.research_thread)
+        self.research_thread.started.connect(self.research_worker.run)
+        self.research_worker.finished.connect(self._research_done)
+        self.research_worker.finished.connect(self.research_thread.quit)
+        self.research_thread.finished.connect(self.research_worker.deleteLater)
+        self.research_thread.start()
+
+    def _research_done(self, ok, result, message):
+        if not ok:
+            self.research_result.setPlainText("Şirket araştırması alınamadı:\n" + message)
+            return
+        self.research_result.setPlainText(result.get("report", "Araştırma verisi bulunamadı."))
+        coverage = result.get("data_completeness", 0)
+        self.status.setText(self.status.text() + f" Şirket verisi kapsamı: %{coverage}.")
 
     def check_open_price(self):
         if not self.last_result:
@@ -1134,9 +1192,9 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
 
         self.terminal = InvestmentTerminalPage()
-        self.kisa = self.terminal.kisa
-        self.orta = self.terminal.orta
-        self.uzun = self.terminal.uzun
+        self.buy = self.terminal.buy
+        self.wait = self.terminal.wait
+        self.avoid = self.terminal.avoid
         self.onay = self.terminal.onay
         self.tum = self.terminal.tum
         self.single = SingleAnalysisPage()
@@ -1144,11 +1202,10 @@ class MainWindow(QMainWindow):
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
-        self.research = SelectedInfoPage("research")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.research, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1168,13 +1225,12 @@ class MainWindow(QMainWindow):
 
         menu = [
             ("YATIRIM TERMİNALİ", 0),
-            ("TEK HİSSE ANALİZİ", 1),
+            ("HİSSE KARAR MERKEZİ", 1),
             ("SATIŞ KARARI", 2),
             ("TAKİP LİSTEM", 3),
             ("SEÇİLİ HİSSE KAP", 4),
             ("SEÇİLİ HİSSE FAALİYET", 5),
-            ("ŞİRKET ARAŞTIRMASI", 6),
-            ("CANLI LOG", 7),
+            ("CANLI LOG", 6),
         ]
         for text, index in menu:
             button = QPushButton(text)
@@ -1252,9 +1308,6 @@ class MainWindow(QMainWindow):
             return
         try:
             sheets = pd.read_excel(path, sheet_name=None)
-            self.kisa.load(sheets.get("Kisa Vade", pd.DataFrame()))
-            self.orta.load(sheets.get("Orta Vade", pd.DataFrame()))
-            self.uzun.load(sheets.get("Uzun Vade", pd.DataFrame()))
             all_results = sheets.get("Tum Sonuclar", pd.DataFrame()).copy()
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
@@ -1277,6 +1330,17 @@ class MainWindow(QMainWindow):
                 return pd.to_numeric(all_results[name], errors="coerce").fillna(default)
 
             decision = all_results.get("Yatırım Kararı", pd.Series("", index=all_results.index)).astype(str)
+            buy_results, wait_results, avoid_results = karar_gruplarina_ayir(all_results)
+
+            decision_columns = [
+                "Hisse", "Yatırım Kararı", "Fiyat", "Önerilen Alış Alt", "Önerilen Alış Üst",
+                "Önerilen Satış", "Önerilen Stop", "Beklenen Getiri %", "Karar Risk/Getiri",
+                "Model Olasılığı %", "Veri Durumu", "Karar Nedenleri",
+            ]
+            decision_columns = [c for c in decision_columns if c in all_results.columns]
+            self.buy.load(buy_results[decision_columns].copy())
+            self.wait.load(wait_results[decision_columns].copy())
+            self.avoid.load(avoid_results[decision_columns].copy())
             mtf = all_results.get("MTF Uyum", pd.Series("", index=all_results.index)).astype(str)
             strict = (
                 decision.eq("BUGÜN AL") & (numeric("Veri Yaşı (Gün)", 999) <= 4) &
@@ -1298,7 +1362,7 @@ class MainWindow(QMainWindow):
             self.onay.load(high_conviction[[c for c in conviction_columns if c in high_conviction.columns]])
             self.terminal.update_summary(
                 path,
-                (self.kisa.table.rowCount(), self.orta.table.rowCount(), self.uzun.table.rowCount()),
+                (self.buy.table.rowCount(), self.wait.table.rowCount(), self.avoid.table.rowCount()),
                 total=len(all_results),
                 conviction=len(high_conviction),
             )
@@ -1322,7 +1386,7 @@ class MainWindow(QMainWindow):
         if self.thread is not None and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.pages.setCurrentIndex(7)
+        self.pages.setCurrentIndex(6)
         self.log.clear()
         self.thread = QThread()
         self.worker = ScanWorker()

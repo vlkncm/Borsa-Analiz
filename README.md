@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v8.3.0
+# Borsa Analiz Pro MAX v8.4.0
+
+## v8.4.0 karar odaklı arayüz
+
+- Kısa/orta/uzun vade sekmeleri yerine `Bugün Alınabilir`, `Alım İçin Bekle` ve `Riskli / Uzak Dur` grupları kullanılır.
+- Tek hisse teknik analizi ile doğrulanmış şirket araştırması aynı `Hisse Karar Merkezi` ekranında birleştirilmiştir.
+- Alış bandı, hedef, stop, tahmini süre, teknik gerekçeler ve temel görünüm aynı incelemede gösterilir.
+- Maliyet girilerek kullanılan ayrı satış kararı ekranı korunmuştur.
 
 ## v8.3.0 doğrulanmış şirket araştırması
 
@@ -64,8 +71,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.3.0 kurulum dosyasını indir](downloads/v8.3.0/Setup_Borsa_Analiz_Pro_MAX_v8.3.0.exe)
-- SHA-256: `DC31620725CB042816C7BD0451620CDB361D0234837E9DCA693B8AC81768CAD8`
+- [Borsa Analiz Pro MAX v8.4.0 kurulum dosyasını indir](downloads/v8.4.0/Setup_Borsa_Analiz_Pro_MAX_v8.4.0.exe)
+- SHA-256: `85476DD44E76C2A7B96258FFE86C7FEF9BE17E9CEA7AD9A4C7F3C2CDD5D38AAD`
 
 ## v7.2 merkezi veri katmanı
 
