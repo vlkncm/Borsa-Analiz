@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from fon_analizi import fonlari_puanla, tefas_liste_verisini_ayikla
+from fon_analizi import _embedded_object, fonlari_puanla, tefas_liste_verisini_ayikla
 
 
 class FonAnaliziTest(unittest.TestCase):
@@ -22,6 +22,12 @@ class FonAnaliziTest(unittest.TestCase):
         result = fonlari_puanla(records)
         self.assertEqual(result["Fon Kodu"].tolist(), ["AAA"])
         self.assertIn("garanti değildir", result.iloc[0]["Uyarı"])
+
+    def test_detay_json_nesnesini_ayiklar(self):
+        html = 'x bilgiData\\":{\\"fonKodu\\":\\"AAA\\",\\"sonFiyat\\":1.25},\\"next\\":1'
+        result = _embedded_object(html, 'bilgiData\\":')
+        self.assertEqual(result["fonKodu"], "AAA")
+        self.assertEqual(result["sonFiyat"], 1.25)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v8.5.0
+# Borsa Analiz Pro MAX v8.6.0
+
+## v8.6.0 tek fon seçimi ve alım planı
+
+- Fon taraması uygun koşulları geçenler arasından yalnızca bir risk-ayarlı model adayı seçer.
+- Kullanıcının yazdığı sermaye `%40 + %30 + %30` şeklinde koşullu kademelere ayrılır.
+- Güncel TEFAS pay fiyatı, üç aylık olumsuz/temel/iyimser fiyat senaryosu ve yaklaşık parasal risk gösterilir.
+- Fonun önerilen asgari tutma süresi, alış/satış valörü ve ölçülebilir azaltma koşulu aynı kartta bulunur.
+- Ortak teyit yoksa sistem fon seçmez ve `zorla alım önerilmedi` sonucunu verir.
 
 ## v8.5.0 Fon Karar Merkezi
 
@@ -80,8 +88,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.5.0 kurulum dosyasını indir](downloads/v8.5.0/Setup_Borsa_Analiz_Pro_MAX_v8.5.0.exe)
-- SHA-256: `2C3FE17675CC9B4085ED9EA44E8B92CE17731B14705A8939CEF45E95CFE42DF4`
+- [Borsa Analiz Pro MAX v8.6.0 kurulum dosyasını indir](downloads/v8.6.0/Setup_Borsa_Analiz_Pro_MAX_v8.6.0.exe)
+- SHA-256: `D628ADF7056133349D27210A9A5751E2B965411A5FF2CF434CF35BBDF9290BF9`
 
 ## v7.2 merkezi veri katmanı
 

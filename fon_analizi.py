@@ -12,6 +12,7 @@ import requests
 
 
 TEFAS_URL = "https://www.tefas.gov.tr/tr/fon-getirileri?fundType=YAT"
+TEFAS_DETAIL_URL = "https://www.tefas.gov.tr/tr/fon-detayli-analiz/{code}"
 
 
 def _cache_path() -> Path:
@@ -36,6 +37,31 @@ def tefas_liste_verisini_ayikla(content: str) -> list[dict[str, Any]]:
     if not isinstance(data, list) or not data:
         raise ValueError("TEFAS boş fon listesi döndürdü")
     return data
+
+
+def _embedded_object(content: str, marker: str) -> dict[str, Any]:
+    start = content.find(marker)
+    if start < 0:
+        raise ValueError(f"TEFAS {marker} alanı bulunamadı")
+    start += len(marker)
+    raw = content[start:].replace('\\"', '"')
+    data, _end = json.JSONDecoder().raw_decode(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"TEFAS {marker} alanı beklenen biçimde değil")
+    return data
+
+
+def tefas_fon_detayi(code: str, timeout: int = 30) -> dict[str, Any]:
+    code = re.sub(r"[^A-Z0-9]", "", str(code).upper())
+    response = requests.get(
+        TEFAS_DETAIL_URL.format(code=code), timeout=timeout,
+        headers={"User-Agent": "Mozilla/5.0 BorsaAnalizProMAX/8.6"},
+    )
+    response.raise_for_status()
+    content = response.text
+    bilgi = _embedded_object(content, 'bilgiData\\":')
+    profil = _embedded_object(content, 'profilData\\":')
+    return {**bilgi, **profil}
 
 
 def tefas_fonlarini_getir(timeout: int = 30) -> tuple[list[dict[str, Any]], str]:
@@ -172,3 +198,75 @@ def fonlari_puanla(records: list[dict[str, Any]], max_risk: int = 7) -> pd.DataF
 def fon_taramasi(max_risk: int = 7) -> tuple[pd.DataFrame, str]:
     records, source = tefas_fonlarini_getir()
     return fonlari_puanla(records, max_risk=max_risk), source
+
+
+def tek_fon_secimi(max_risk: int = 7, sermaye: float = 0) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+    frame, source = fon_taramasi(max_risk=max_risk)
+    if frame.empty:
+        return frame, source, {"uygun": False, "rapor": "ALIMA UYGUN FON BULUNAMADI."}
+    eligible = frame[
+        frame["Karar"].isin([
+            "20%+ POTANSİYEL ADAYI – ÇOK YÜKSEK RİSK",
+            "KATEGORİ LİDERİ – KADEMELİ AL",
+        ])
+        & (frame["Momentum Puanı"] >= 82)
+        & (frame["1 Ay %"] > 0) & (frame["3 Ay %"] > 0) & (frame["6 Ay %"] > 0)
+    ].copy()
+    if eligible.empty:
+        return frame, source, {
+            "uygun": False,
+            "rapor": "BU TARAMADA TEK FON İÇİN YETERLİ ORTAK TEYİT YOK. ZORLA ALIM ÖNERİLMEDİ.",
+        }
+    eligible["Risk Ayarlı Puan"] = eligible["Momentum Puanı"] - eligible["Risk"] * 1.5
+    winner = eligible.sort_values(["Risk Ayarlı Puan", "3 Ay %"], ascending=False).iloc[0]
+    detail_error = ""
+    try:
+        detail = tefas_fon_detayi(winner["Fon Kodu"])
+    except Exception as exc:
+        detail, detail_error = {}, str(exc)
+    price = _number(detail.get("sonFiyat"))
+    m1 = float(winner["1 Ay %"])
+    m3 = _monthly(float(winner["3 Ay %"]), 3)
+    m6 = _monthly(float(winner["6 Ay %"]), 6)
+    base_monthly = max(0.0, min(12.0, m1 * 0.25 + m3 * 0.45 + m6 * 0.30))
+    horizon = 3
+    downside_pct = min(20.0, max(4.0, float(winner["Risk"]) * 2.5))
+    base_price = price * ((1 + base_monthly / 100) ** horizon) if math.isfinite(price) else float("nan")
+    optimistic_monthly = min(18.0, max(base_monthly * 1.25, max(m1, m3, m6) * 0.80))
+    optimistic_price = price * ((1 + optimistic_monthly / 100) ** horizon) if math.isfinite(price) else float("nan")
+    downside_price = price * (1 - downside_pct / 100) if math.isfinite(price) else float("nan")
+    capital = max(0.0, _number(sermaye))
+    tranches = (capital * 0.40, capital * 0.30, capital * 0.30)
+    money_risk = capital * downside_pct / 100
+    price_text = f"{price:.6f} TL" if math.isfinite(price) else "TEFAS detayından alınamadı"
+    scenario_text = (
+        f"Olumsuz: {downside_price:.6f} TL | 3 aylık temel: {base_price:.6f} TL | "
+        f"iyimser: {optimistic_price:.6f} TL"
+        if math.isfinite(price) else "Fiyat verisi olmadığı için fiyat senaryosu üretilmedi"
+    )
+    report = "\n".join([
+        "MODELİN TEK FON ADAYI",
+        f"Fon: {winner['Fon Kodu']} — {winner['Fon Adı']}",
+        f"Karar: {winner['Karar']}",
+        f"Risk ayarlı puan: {winner['Risk Ayarlı Puan']:.1f}/100 | Resmî risk değeri: {winner['Risk']}/7",
+        f"Güncel TEFAS pay fiyatı: {price_text}",
+        f"Geçmiş getiri: 1 ay %{m1:.2f} | 3 ay %{winner['3 Ay %']:.2f} | 6 ay %{winner['6 Ay %']:.2f}",
+        f"Önerilen asgari tutma süresi: {winner['Önerilen Asgari Süre']}",
+        f"Model değerlendirme ufku: {horizon} ay",
+        f"Fiyat senaryosu: {scenario_text}",
+        f"Olumsuz senaryo kaybı: yaklaşık %{downside_pct:.1f}",
+        "",
+        "KADEMELİ ALIM PLANI",
+        f"1. kademe şimdi: {tranches[0]:,.2f} TL (%40)",
+        f"2. kademe 7 gün sonra, karar korunursa: {tranches[1]:,.2f} TL (%30)",
+        f"3. kademe 14 gün sonra, kategori liderliği sürerse: {tranches[2]:,.2f} TL (%30)",
+        f"Olumsuz senaryoda yaklaşık parasal risk: {money_risk:,.2f} TL",
+        "",
+        f"SATIŞ/AZALTMA KOŞULU: {winner['Çıkış Koşulu']}",
+        f"Alış valörü: T+{detail.get('fonSatisValor', '?')} | Satış valörü: T+{detail.get('fonGeriAlisValor', '?')}",
+        "",
+        "Bu sonuç banka emri değildir. Fiyatlar tahmin değil, geçmiş momentumdan üretilen stres senaryolarıdır.",
+        "Hiçbir fon veya formül kazanç garantisi vermez; zarar olasılığı sermaye planında gösterilmiştir.",
+        f"Detay veri notu: {detail_error}" if detail_error else "Kaynak: TEFAS güncel fon ve profil verileri",
+    ])
+    return frame, source, {"uygun": True, "fon": winner["Fon Kodu"], "rapor": report}

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.5.0"
+APP_VERSION = "8.6.0"
 
 
 def uygulama_klasoru() -> Path:
@@ -1182,15 +1182,16 @@ class TrackPage(QWidget):
 class FundWorker(QObject):
     finished = Signal(bool, object, str)
 
-    def __init__(self, max_risk=7):
+    def __init__(self, max_risk=7, capital=0):
         super().__init__()
         self.max_risk = max_risk
+        self.capital = capital
 
     def run(self):
         try:
-            from fon_analizi import fon_taramasi
-            frame, source = fon_taramasi(self.max_risk)
-            self.finished.emit(True, frame, source)
+            from fon_analizi import tek_fon_secimi
+            frame, source, selection = tek_fon_secimi(self.max_risk, self.capital)
+            self.finished.emit(True, {"frame": frame, "selection": selection}, source)
         except Exception:
             self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
 
@@ -1216,10 +1217,14 @@ class FundAnalysisPage(QWidget):
         self.max_risk = QLineEdit("7")
         self.max_risk.setPlaceholderText("Azami risk: 1–7")
         self.max_risk.setMaximumWidth(170)
+        self.capital = QLineEdit("50000")
+        self.capital.setPlaceholderText("Yatırılacak tutar (TL)")
+        self.capital.setMaximumWidth(220)
         self.button = QPushButton("TEFAS FONLARINI TARA")
         self.button.setObjectName("primary")
         self.button.clicked.connect(self.run)
         controls.addWidget(self.max_risk)
+        controls.addWidget(self.capital)
         controls.addWidget(self.button)
         controls.addStretch()
         layout.addLayout(controls)
@@ -1227,6 +1232,14 @@ class FundAnalysisPage(QWidget):
         self.status.setObjectName("subText")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.selection = QTextEdit()
+        self.selection.setReadOnly(True)
+        self.selection.setObjectName("analysisText")
+        self.selection.setMinimumHeight(310)
+        self.selection.setPlainText(
+            "Tarama sonunda şartları geçen tek risk-ayarlı fon adayı, kademeli alım tutarları, süre ve satış koşulu burada gösterilir."
+        )
+        layout.addWidget(self.selection)
         self.table = SearchableTable(
             "Yüksek Getiri ve Fon Karar Adayları",
             "Tablo puana göre sıralanır. Bir aylık yükselişi aşırı hızlanan fonlarda 'kovalama' uyarısı verilir.",
@@ -1244,10 +1257,17 @@ class FundAnalysisPage(QWidget):
         except ValueError:
             QMessageBox.warning(self, "Risk", "Azami risk değerini 1 ile 7 arasında yazın.")
             return
+        try:
+            capital = float(self.capital.text().replace(".", "").replace(",", "."))
+            if capital <= 0:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "Tutar", "Yatırılacak tutarı pozitif bir sayı olarak yazın.")
+            return
         self.button.setEnabled(False)
         self.status.setText("TEFAS fonları alınıyor ve aynı kategoride karşılaştırılıyor...")
         self.thread = QThread()
-        self.worker = FundWorker(max_risk)
+        self.worker = FundWorker(max_risk, capital)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.done)
@@ -1255,13 +1275,16 @@ class FundAnalysisPage(QWidget):
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.start()
 
-    def done(self, ok, frame, message):
+    def done(self, ok, payload, message):
         self.button.setEnabled(True)
         if not ok:
             self.status.setText("Fon taraması yapılamadı. Eski sonuç karar olarak kullanılmadı.")
             QMessageBox.warning(self, "Fon taraması", message)
             return
+        frame = payload.get("frame", pd.DataFrame())
+        selection = payload.get("selection", {})
         self.table.load(frame)
+        self.selection.setPlainText(selection.get("rapor", "Tek fon sonucu üretilemedi."))
         strong = 0 if frame.empty else int(frame["20%+ Uç Senaryo"].astype(str).eq("VAR").sum())
         self.status.setText(f"Kaynak: {message} | Uygun fon: {len(frame)} | 20%+ uç senaryo adayı: {strong}")
 
