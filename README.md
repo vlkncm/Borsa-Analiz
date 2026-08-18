@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v8.7.0
+# Borsa Analiz Pro MAX v8.7.1
+
+## v8.7.1 tarama kapanma koruması
+
+- Ağır profesyonel tarama ana arayüzden ayrı bir alt süreçte çalıştırılır.
+- Veri/Python motorunda yerel çökme olsa bile ana pencere açık kalır ve hata canlı logda gösterilir.
+- Alt süreç raporu oluşturabildiyse normal kapanmasa dahi son rapor güvenli biçimde yüklenir.
+- Yerel çökme ayrıntıları tanı için `tarama_cokme.log` dosyasına kaydedilir.
 
 ## v8.7.0 en iyi 3 hisse ve fon karar listesi
 
@@ -95,8 +102,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.7.0 kurulum dosyasını indir](downloads/v8.7.0/Setup_Borsa_Analiz_Pro_MAX_v8.7.0.exe)
-- SHA-256: `FDA57F60F4DD9FCBC093DE59B492173091909D60F4B0C4C19727030AEC43A008`
+- [Borsa Analiz Pro MAX v8.7.1 kurulum dosyasını indir](downloads/v8.7.1/Setup_Borsa_Analiz_Pro_MAX_v8.7.1.exe)
+- SHA-256: `DE13EF66F0957C0BA9A56A63748AE4E1DBE6F804FA47879E4502C61031CF2790`
 
 ## v7.2 merkezi veri katmanı
 

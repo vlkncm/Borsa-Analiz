@@ -8,7 +8,7 @@ import pandas as pd
 from bist30 import normalize_bist_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer, QProcess
 from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.7.0"
+APP_VERSION = "8.7.1"
 
 
 def uygulama_klasoru() -> Path:
@@ -40,6 +40,13 @@ def rapor_yolu() -> Path:
         return primary
     alternatives = sorted(output.glob("Borsa_Analiz_Pro_MAX_Rapor_*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
     return alternatives[0] if alternatives else primary
+
+
+def tarama_alt_sureci_komutu():
+    """Kaynak kod ve PyInstaller EXE için güvenli tarama alt süreci komutu."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, ["--headless-scan"]
+    return sys.executable, [str(Path(__file__).resolve()), "--headless-scan"]
 
 
 def normalize_symbol(text: str) -> str:
@@ -1301,8 +1308,9 @@ class MainWindow(QMainWindow):
         if icon.exists():
             self.setWindowIcon(QIcon(str(icon)))
 
-        self.thread = None
-        self.worker = None
+        self.scan_process = None
+        self._scan_stdout_buffer = ""
+        self._scan_stderr_buffer = ""
         self.pages = QStackedWidget()
 
         self.terminal = InvestmentTerminalPage()
@@ -1499,20 +1507,65 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def scan(self):
-        if self.thread is not None and self.thread.isRunning():
+        if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
             return
         self.scan_button.setEnabled(False)
         self.pages.setCurrentIndex(7)
         self.log.clear()
-        self.thread = QThread()
-        self.worker = ScanWorker()
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
-        self.worker.log.connect(self.log.append)
-        self.worker.finished.connect(self.scan_done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
+        self.log.append("Tarama ayrı ve güvenli bir işlemde başlatılıyor...")
+        self._scan_stdout_buffer = ""
+        self._scan_stderr_buffer = ""
+        program, arguments = tarama_alt_sureci_komutu()
+        self.scan_process = QProcess(self)
+        self.scan_process.setProgram(program)
+        self.scan_process.setArguments(arguments)
+        self.scan_process.setWorkingDirectory(str(uygulama_klasoru()))
+        self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
+        self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
+        self.scan_process.errorOccurred.connect(self._scan_process_error)
+        self.scan_process.finished.connect(self._scan_process_finished)
+        self.scan_process.start()
+
+    def _append_process_text(self, text, is_error=False):
+        attr = "_scan_stderr_buffer" if is_error else "_scan_stdout_buffer"
+        buffer = getattr(self, attr) + text
+        lines = buffer.split("\n")
+        setattr(self, attr, lines.pop())
+        for line in lines:
+            if line.strip():
+                self.log.append(line.rstrip())
+
+    def _read_scan_stdout(self):
+        if self.scan_process is not None:
+            text = bytes(self.scan_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            self._append_process_text(text)
+
+    def _read_scan_stderr(self):
+        if self.scan_process is not None:
+            text = bytes(self.scan_process.readAllStandardError()).decode("utf-8", errors="replace")
+            self._append_process_text(text, is_error=True)
+
+    def _scan_process_error(self, error):
+        if self.scan_process is not None:
+            self.log.append(f"Tarama işlemi başlatma/çalışma hatası: {self.scan_process.errorString()} ({error})")
+
+    def _scan_process_finished(self, exit_code, exit_status):
+        self._read_scan_stdout()
+        self._read_scan_stderr()
+        for attr in ("_scan_stdout_buffer", "_scan_stderr_buffer"):
+            tail = getattr(self, attr).strip()
+            if tail:
+                self.log.append(tail)
+            setattr(self, attr, "")
+        ok = exit_status == QProcess.NormalExit and exit_code == 0
+        if not ok and rapor_yolu().exists():
+            self.log.append(
+                "Tarama alt süreci normal kapanmadı; ana program korundu ve oluşan son rapor yükleniyor."
+            )
+        self.scan_done(ok, f"Alt süreç çıkış kodu: {exit_code}")
+        if self.scan_process is not None:
+            self.scan_process.deleteLater()
+            self.scan_process = None
 
     def scan_done(self, ok, message):
         self.scan_button.setEnabled(True)
@@ -1523,6 +1576,8 @@ class MainWindow(QMainWindow):
             self.pages.setCurrentIndex(0)
         else:
             self.log.append(message)
+            if rapor_yolu().exists():
+                self.load_report()
 
 
 def exception_hook(exc_type, exc_value, exc_tb):
@@ -1534,8 +1589,17 @@ def exception_hook(exc_type, exc_value, exc_tb):
 
 
 if __name__ == "__main__":
-    sys.excepthook = exception_hook
-    app = QApplication(sys.argv)
-    win = MainWindow()
-    win.show()
-    sys.exit(app.exec())
+    if "--headless-scan" in sys.argv:
+        import faulthandler
+        import main as analiz_main
+
+        crash_log = veri_klasoru() / "tarama_cokme.log"
+        with crash_log.open("a", encoding="utf-8") as crash_stream:
+            faulthandler.enable(file=crash_stream, all_threads=True)
+            analiz_main.main()
+    else:
+        sys.excepthook = exception_hook
+        app = QApplication(sys.argv)
+        win = MainWindow()
+        win.show()
+        sys.exit(app.exec())
