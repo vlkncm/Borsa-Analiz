@@ -200,6 +200,103 @@ def fon_taramasi(max_risk: int = 7) -> tuple[pd.DataFrame, str]:
     return fonlari_puanla(records, max_risk=max_risk), source
 
 
+def fon_kurumunu_bul(detail: dict[str, Any], fund_name: str = "") -> str:
+    """TEFAS detayındaki kurucu/yönetici kurum adını şema değişikliklerine dayanıklı bulur."""
+    preferred = (
+        "kurucuUnvan", "kurucuAdi", "kurucu", "fonKurucuUnvan",
+        "yoneticiUnvan", "yoneticiAdi", "portfoyYonetimSirketi",
+    )
+    for key in preferred:
+        value = detail.get(key)
+        if value and str(value).strip():
+            return str(value).strip()
+    for key, value in detail.items():
+        folded = str(key).casefold()
+        if value and any(token in folded for token in ("kurucu", "yonetici", "yönetici", "portfoy", "portföy")):
+            return str(value).strip()
+    # Detay servisi kurum alanı döndürmezse fon unvanı tahmin olarak etiketlenmez.
+    return "TEFAS detayında kurum bilgisi yok"
+
+
+def en_iyi_fonlari_sec(max_risk: int = 7, sermaye: float = 0, adet: int = 3) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+    """2-3 aylık ufuk için en fazla üç risk-ayarlı adayı ve ölçülebilir planı üretir."""
+    frame, source = fon_taramasi(max_risk=max_risk)
+    if frame.empty:
+        return frame, source, {"uygun": False, "fonlar": [], "rapor": "ALIMA UYGUN FON BULUNAMADI."}
+
+    candidates = frame[
+        frame["Karar"].isin([
+            "20%+ POTANSİYEL ADAYI – ÇOK YÜKSEK RİSK",
+            "KATEGORİ LİDERİ – KADEMELİ AL",
+            "GÜÇLÜ İZLE",
+        ])
+        & (frame["Momentum Puanı"] >= 68)
+        & (frame["1 Ay %"] > 0) & (frame["3 Ay %"] > 0) & (frame["6 Ay %"] > 0)
+    ].copy()
+    if candidates.empty:
+        return frame, source, {
+            "uygun": False, "fonlar": [],
+            "rapor": "BU TARAMADA 2-3 AYLIK UFUK İÇİN YETERLİ ORTAK TEYİT YOK. ZORLA ALIM ÖNERİLMEDİ.",
+        }
+
+    candidates["Risk Ayarlı Puan"] = (
+        candidates["Momentum Puanı"] - candidates["Risk"] * 1.5
+        + candidates["3 Ay %"].clip(-30, 60) * 0.08
+    )
+    winners = candidates.sort_values(
+        ["Risk Ayarlı Puan", "3 Ay %", "6 Ay %"], ascending=False
+    ).head(max(1, min(int(adet), 3)))
+    capital = max(0.0, _number(sermaye))
+    allocation = capital / len(winners) if len(winners) else 0.0
+    reports, selected = [], []
+
+    for rank, (_, winner) in enumerate(winners.iterrows(), start=1):
+        detail_error = ""
+        try:
+            detail = tefas_fon_detayi(winner["Fon Kodu"])
+        except Exception as exc:
+            detail, detail_error = {}, str(exc)
+        price = _number(detail.get("sonFiyat"))
+        m1 = float(winner["1 Ay %"])
+        m3 = _monthly(float(winner["3 Ay %"]), 3)
+        m6 = _monthly(float(winner["6 Ay %"]), 6)
+        monthly = max(-8.0, min(12.0, m1 * 0.20 + m3 * 0.50 + m6 * 0.30))
+        target_2 = price * ((1 + monthly / 100) ** 2) if math.isfinite(price) else float("nan")
+        target_3 = price * ((1 + monthly / 100) ** 3) if math.isfinite(price) else float("nan")
+        downside_pct = min(20.0, max(4.0, float(winner["Risk"]) * 2.5))
+        stop = price * (1 - downside_pct / 100) if math.isfinite(price) else float("nan")
+        institution = fon_kurumunu_bul(detail, winner["Fon Adı"])
+        availability = (
+            "TEFAS'ta işlem görüyor; kesin banka/kanal erişimi yatırım hesabından kontrol edilmeli"
+        )
+        price_text = f"{price:.6f} TL" if math.isfinite(price) else "alınamadı"
+        target_text = (
+            f"2 ay {target_2:.6f} TL | 3 ay {target_3:.6f} TL | risk eşiği {stop:.6f} TL"
+            if math.isfinite(price) else "fiyat olmadığı için üretilemedi"
+        )
+        reports.append("\n".join([
+            f"{rank}. ADAY: {winner['Fon Kodu']} — {winner['Fon Adı']}",
+            f"Kurucu/yönetici kurum: {institution}",
+            f"Alım kanalı: {availability}",
+            f"Karar: {winner['Karar']} | Risk ayarlı puan: {winner['Risk Ayarlı Puan']:.1f}/100 | Risk: {winner['Risk']}/7",
+            f"Güncel pay fiyatı / alış referansı: {price_text}",
+            f"2-3 aylık model hedefi: {target_text}",
+            f"Geçmiş getiri: 1 ay %{m1:.2f} | 3 ay %{winner['3 Ay %']:.2f} | 6 ay %{winner['6 Ay %']:.2f}",
+            f"Ayrılan tutar: {allocation:,.2f} TL; %40 şimdi, %30 7 gün ve %30 14 gün sonra yalnızca sinyal korunursa",
+            f"Çıkış/azaltma: {winner['Çıkış Koşulu']}",
+            f"Alış valörü: T+{detail.get('fonSatisValor', '?')} | Satış valörü: T+{detail.get('fonGeriAlisValor', '?')}",
+            f"Detay notu: {detail_error}" if detail_error else "Kaynak: TEFAS fon ve profil verileri",
+        ]))
+        selected.append({"fon": winner["Fon Kodu"], "kurum": institution})
+
+    header = (
+        "2-3 AYLIK UFUK İÇİN EN GÜÇLÜ MODEL ADAYLARI\n"
+        "Hedefler garanti veya satış emri değil; geçmiş momentumdan türetilen koşullu senaryolardır.\n"
+        "TEFAS işlem durumu, fonun yalnızca kurucu bankadan alınacağı anlamına gelmez.\n"
+    )
+    return frame, source, {"uygun": True, "fonlar": selected, "rapor": header + "\n\n".join(reports)}
+
+
 def tek_fon_secimi(max_risk: int = 7, sermaye: float = 0) -> tuple[pd.DataFrame, str, dict[str, Any]]:
     frame, source = fon_taramasi(max_risk=max_risk)
     if frame.empty:

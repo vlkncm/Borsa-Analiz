@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.6.0"
+APP_VERSION = "8.7.0"
 
 
 def uygulama_klasoru() -> Path:
@@ -669,8 +669,8 @@ class InvestmentTerminalPage(QWidget):
             "ALMA, veri kontrolü gerekli veya kanıtı yetersiz sonuçlar. Veri sorunu satış sinyali anlamına gelmez.",
         )
         self.onay = SimpleTable(
-            "Yüksek Onaylı Adaylar — Garanti Değildir",
-            "Yalnızca güncel veri, güçlü ortak teyit ve en az 1:1,8 risk/getiri koşullarını geçen en fazla 5 aday",
+            "En İyi 3 Hisse Adayı — Garanti Değildir",
+            "Yalnızca güncel veri, güçlü ortak teyit ve en az 1:1,8 risk/getiri koşullarını geçen en fazla 3 aday; alış, hedef ve stop birlikte gösterilir",
         )
         self.tum = SearchableTable(
             "Tüm BIST Sonuçları",
@@ -1189,8 +1189,8 @@ class FundWorker(QObject):
 
     def run(self):
         try:
-            from fon_analizi import tek_fon_secimi
-            frame, source, selection = tek_fon_secimi(self.max_risk, self.capital)
+            from fon_analizi import en_iyi_fonlari_sec
+            frame, source, selection = en_iyi_fonlari_sec(self.max_risk, self.capital, adet=3)
             self.finished.emit(True, {"frame": frame, "selection": selection}, source)
         except Exception:
             self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
@@ -1237,7 +1237,7 @@ class FundAnalysisPage(QWidget):
         self.selection.setObjectName("analysisText")
         self.selection.setMinimumHeight(310)
         self.selection.setPlainText(
-            "Tarama sonunda şartları geçen tek risk-ayarlı fon adayı, kademeli alım tutarları, süre ve satış koşulu burada gösterilir."
+            "Tarama sonunda şartları geçen en fazla 3 risk-ayarlı fon adayı; kurum, kademeli alım, 2-3 aylık hedef ve çıkış koşuluyla gösterilir."
         )
         layout.addWidget(self.selection)
         self.table = SearchableTable(
@@ -1468,7 +1468,7 @@ class MainWindow(QMainWindow):
             sort_columns = [c for c in ["Model Olasılığı %", "v4 Güven Puanı", "Karar Risk/Getiri"] if c in high_conviction.columns]
             if sort_columns:
                 high_conviction = high_conviction.sort_values(sort_columns, ascending=False)
-            high_conviction = high_conviction.head(5)
+            high_conviction = high_conviction.head(3)
             conviction_columns = [
                 "Hisse", "Yatırım Kararı", "Fiyat", "Önerilen Alış Alt",
                 "Önerilen Alış Üst", "Önerilen Satış", "Önerilen Stop",

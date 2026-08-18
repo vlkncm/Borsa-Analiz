@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v8.6.0
+# Borsa Analiz Pro MAX v8.7.0
+
+## v8.7.0 en iyi 3 hisse ve fon karar listesi
+
+- Hisse taraması, ortak teyit eşiklerini geçen en güçlü 3 adayı alış bandı, hedef, stop ve risk/getiri oranıyla gösterir.
+- Fon taraması, 2–3 aylık ufuk için en fazla 3 risk-ayarlı adayı seçer; zayıf koşullarda listeyi zorla doldurmaz.
+- Her fon için güncel pay fiyatı, 2 ve 3 aylık koşullu hedef, risk eşiği, kademeli alım ve ölçülebilir çıkış koşulu üretilir.
+- TEFAS profilinden kurucu/yönetici kurum gösterilir; fonun TEFAS'ta bulunmasının tek bir bankadan alınacağı anlamına gelmediği açıklanır.
 
 ## v8.6.0 tek fon seçimi ve alım planı
 
@@ -88,8 +95,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.6.0 kurulum dosyasını indir](downloads/v8.6.0/Setup_Borsa_Analiz_Pro_MAX_v8.6.0.exe)
-- SHA-256: `D628ADF7056133349D27210A9A5751E2B965411A5FF2CF434CF35BBDF9290BF9`
+- [Borsa Analiz Pro MAX v8.7.0 kurulum dosyasını indir](downloads/v8.7.0/Setup_Borsa_Analiz_Pro_MAX_v8.7.0.exe)
+- SHA-256: `FDA57F60F4DD9FCBC093DE59B492173091909D60F4B0C4C19727030AEC43A008`
 
 ## v7.2 merkezi veri katmanı
 
