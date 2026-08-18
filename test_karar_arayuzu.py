@@ -9,8 +9,7 @@ class KararArayuzuTest(unittest.TestCase):
     def test_kaynak_kodda_tarama_ayri_python_surecinde_baslar(self):
         program, arguments = tarama_alt_sureci_komutu()
         self.assertTrue(program)
-        self.assertIn("--headless-scan", arguments)
-        self.assertTrue(any(str(arg).endswith("app_qt.py") for arg in arguments))
+        self.assertTrue(any(str(arg).endswith("scan_runner.py") for arg in arguments))
 
     def test_vade_yerine_alis_kararina_gore_gruplar(self):
         frame = pd.DataFrame({

@@ -64,6 +64,19 @@ app_qt.py
 
 if errorlevel 1 goto :pyinstaller_hatasi
 
+"%PYTHON%" -m PyInstaller ^
+--noconfirm ^
+--clean ^
+--onedir ^
+--console ^
+--name BorsaTaramaMotoru ^
+--hidden-import main ^
+scan_runner.py
+
+if errorlevel 1 goto :pyinstaller_hatasi
+
+copy /y "dist\BorsaTaramaMotoru\BorsaTaramaMotoru.exe" "dist\BorsaAnalizProMAX\BorsaTaramaMotoru.exe" >nul || goto :pyinstaller_hatasi
+
 if not exist "dist\BorsaAnalizProMAX\BorsaAnalizProMAX.exe" (
     echo HATA: Ana EXE bulunamadi.
     pause

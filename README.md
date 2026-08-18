@@ -1,4 +1,10 @@
-# Borsa Analiz Pro MAX v8.7.2
+# Borsa Analiz Pro MAX v8.7.3
+
+## v8.7.3 bağımsız tarama motoru
+
+- Profesyonel tarama, GUI uygulamasının ikinci kopyası yerine ayrı `BorsaTaramaMotoru.exe` ile çalışır.
+- Konsol tabanlı motorun çıktısı canlı log ekranına satır satır aktarılır.
+- Tarama motoru ile arayüz tamamen ayrıldığı için düğmenin sessiz kalması ve GUI'nin taramayla birlikte kapanması önlenir.
 
 ## v8.7.2 temiz ve canlı tarama günlüğü
 
@@ -107,8 +113,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.7.2 kurulum dosyasını indir](downloads/v8.7.2/Setup_Borsa_Analiz_Pro_MAX_v8.7.2.exe)
-- SHA-256: `B2A9BA4E88D3E860B8FE74FF20A63DD5A14738AB480D7F5BEF016C87A6542F18`
+- [Borsa Analiz Pro MAX v8.7.3 kurulum dosyasını indir](downloads/v8.7.3/Setup_Borsa_Analiz_Pro_MAX_v8.7.3.exe)
+- SHA-256: `910BEEB34EB03D19296BC635D11280A9E91C82253023B6B937EF6ABD6B6E68FF`
 
 ## v7.2 merkezi veri katmanı
 

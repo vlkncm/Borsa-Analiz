@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.7.2"
+APP_VERSION = "8.7.3"
 
 
 def uygulama_klasoru() -> Path:
@@ -47,8 +47,9 @@ def rapor_yolu() -> Path:
 def tarama_alt_sureci_komutu():
     """Kaynak kod ve PyInstaller EXE için güvenli tarama alt süreci komutu."""
     if getattr(sys, "frozen", False):
-        return sys.executable, ["--headless-scan"]
-    return sys.executable, [str(Path(__file__).resolve()), "--headless-scan"]
+        worker = uygulama_klasoru() / "BorsaTaramaMotoru.exe"
+        return str(worker), []
+    return sys.executable, [str(Path(__file__).resolve().with_name("scan_runner.py"))]
 
 
 def normalize_symbol(text: str) -> str:
