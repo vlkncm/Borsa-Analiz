@@ -1,4 +1,9 @@
-# Borsa Analiz Pro MAX v8.7.1
+# Borsa Analiz Pro MAX v8.7.2
+
+## v8.7.2 temiz ve canlı tarama günlüğü
+
+- Pandas'ın taramayı durdurmayan tekrar eden `FutureWarning` satırları kullanıcı günlüğünden kaldırıldı.
+- Alt süreç çıktısı tamponsuz çalıştırılarak hisse ve tarama ilerlemesi ekranda anlık gösterilir.
 
 ## v8.7.1 tarama kapanma koruması
 
@@ -102,8 +107,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.7.1 kurulum dosyasını indir](downloads/v8.7.1/Setup_Borsa_Analiz_Pro_MAX_v8.7.1.exe)
-- SHA-256: `DE13EF66F0957C0BA9A56A63748AE4E1DBE6F804FA47879E4502C61031CF2790`
+- [Borsa Analiz Pro MAX v8.7.2 kurulum dosyasını indir](downloads/v8.7.2/Setup_Borsa_Analiz_Pro_MAX_v8.7.2.exe)
+- SHA-256: `B2A9BA4E88D3E860B8FE74FF20A63DD5A14738AB480D7F5BEF016C87A6542F18`
 
 ## v7.2 merkezi veri katmanı
 

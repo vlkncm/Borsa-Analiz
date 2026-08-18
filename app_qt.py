@@ -8,7 +8,9 @@ import pandas as pd
 from bist30 import normalize_bist_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QUrl, QTimer, QProcess
+from PySide6.QtCore import (
+    Qt, QObject, Signal, QThread, QUrl, QTimer, QProcess, QProcessEnvironment,
+)
 from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -18,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.7.1"
+APP_VERSION = "8.7.2"
 
 
 def uygulama_klasoru() -> Path:
@@ -1520,6 +1522,9 @@ class MainWindow(QMainWindow):
         self.scan_process.setProgram(program)
         self.scan_process.setArguments(arguments)
         self.scan_process.setWorkingDirectory(str(uygulama_klasoru()))
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("PYTHONUNBUFFERED", "1")
+        self.scan_process.setProcessEnvironment(environment)
         self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
         self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
         self.scan_process.errorOccurred.connect(self._scan_process_error)
@@ -1591,8 +1596,14 @@ def exception_hook(exc_type, exc_value, exc_tb):
 if __name__ == "__main__":
     if "--headless-scan" in sys.argv:
         import faulthandler
+        import warnings
         import main as analiz_main
 
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Downcasting object dtype arrays.*",
+            category=FutureWarning,
+        )
         crash_log = veri_klasoru() / "tarama_cokme.log"
         with crash_log.open("a", encoding="utf-8") as crash_stream:
             faulthandler.enable(file=crash_stream, all_threads=True)
