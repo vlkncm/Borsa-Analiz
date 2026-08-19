@@ -31,8 +31,8 @@ class ResponsiveChartTests(unittest.TestCase):
                 chart.resize(width, 900)
                 self.app.processEvents()
                 chart._refresh_pixmap()
-                displayed = chart.pixmap()
                 self.assertEqual(chart.height(), ResponsiveChartLabel.CHART_HEIGHT)
+                displayed = chart.pixmap()
                 self.assertLessEqual(displayed.width(), chart.contentsRect().width())
                 self.assertLessEqual(displayed.height(), chart.contentsRect().height())
 

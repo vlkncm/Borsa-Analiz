@@ -11,7 +11,7 @@ from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import (
     Qt, QObject, Signal, QThread, QUrl, QTimer, QProcess, QProcessEnvironment,
 )
-from PySide6.QtGui import QIcon, QColor, QDesktopServices, QPixmap
+from PySide6.QtGui import QIcon, QColor, QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.7.3"
+APP_VERSION = "8.7.8"
+_CRASH_STREAM = None
 
 
 def uygulama_klasoru() -> Path:
@@ -62,6 +63,19 @@ def guvenli_sayi(value, default=0.0):
         return number if pd.notna(number) else default
     except (TypeError, ValueError):
         return default
+
+
+def hata_gunlugune_yaz(context: str, details: str) -> None:
+    """Arayüz/worker hatalarını EXE'de de sonradan incelenebilir halde tutar."""
+    try:
+        log_path = veri_klasoru() / "uygulama_hatalari.log"
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                f"\n[{datetime.now().isoformat(timespec='seconds')}] {context}\n{details.rstrip()}\n"
+            )
+    except Exception:
+        # Hata kaydındaki bir dosya sistemi sorunu uygulamayı kapatmamalı.
+        pass
 
 
 def karar_gruplarina_ayir(df):
@@ -368,7 +382,9 @@ class SingleWorker(QObject):
                 result["kullanici_maliyeti"] = cost
             self.finished.emit(True, result, "Tamamlandı.")
         except Exception:
-            self.finished.emit(False, {}, traceback.format_exc())
+            details = traceback.format_exc()
+            hata_gunlugune_yaz(f"Tek hisse worker ({self.mode}, {self.symbol})", details)
+            self.finished.emit(False, {}, details)
 
 
 class InfoWorker(QObject):
@@ -717,7 +733,10 @@ class ResponsiveChartLabel(QLabel):
 
     def __init__(self):
         super().__init__("Bir hisse kodu yazıp analiz başlatın.")
-        self._source_pixmap = QPixmap()
+        # QPixmap ekran sürücüsüne bağlı bir kaynaktır ve bazı Windows/Qt
+        # kombinasyonlarında büyük PNG'yi tekrar ölçeklerken access violation
+        # oluşturabiliyor. Kaynağı CPU tarafındaki QImage olarak sakla.
+        self._source_image = QImage()
         self._last_scaled_size = None
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -734,40 +753,42 @@ class ResponsiveChartLabel(QLabel):
 
     def show_message(self, message):
         self._resize_timer.stop()
-        self._source_pixmap = QPixmap()
+        self._source_image = QImage()
         self._last_scaled_size = None
         self.clear()
         self.setText(message)
 
     def load_chart(self, path):
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
+        image = QImage(str(path))
+        if image.isNull():
             self.show_message("Grafik dosyası görüntülenemedi.")
             return False
-        self._source_pixmap = pixmap
+        self._source_image = image.copy()
         self._last_scaled_size = None
         self.setText("")
-        self._refresh_pixmap()
+        QTimer.singleShot(0, self._refresh_pixmap)
         return True
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self._source_pixmap.isNull():
+        if not self._source_image.isNull():
             self._resize_timer.start()
 
     def _refresh_pixmap(self):
-        if self._source_pixmap.isNull() or self.width() < 10 or self.height() < 10:
+        if self._source_image.isNull() or self.width() < 10 or self.height() < 10:
             return
         target_size = self.contentsRect().size()
         if self._last_scaled_size == target_size:
             return
-        scaled = self._source_pixmap.scaled(
+        scaled_image = self._source_image.scaled(
             target_size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
+        if scaled_image.isNull():
+            return
+        self.setPixmap(QPixmap.fromImage(scaled_image.copy()))
         self._last_scaled_size = target_size
-        self.setPixmap(scaled)
 
 
 class SingleAnalysisPage(QWidget):
@@ -876,7 +897,7 @@ class SingleAnalysisPage(QWidget):
         if not symbol:
             QMessageBox.warning(self, "Hisse", "Bir hisse kodu yaz.")
             return
-        if self.thread is not None and self.thread.isRunning():
+        if not self.button.isEnabled():
             return
 
         self.button.setEnabled(False)
@@ -889,15 +910,10 @@ class SingleAnalysisPage(QWidget):
             "Veri güncelliği, trend, momentum, hacim, tarihsel kanıt ve risk/getiri değerlendiriliyor..."
         )
         self.research_result.setPlainText("Şirketin doğrulanabilir temel verileri hazırlanıyor...")
-        self.thread = QThread()
         self.worker = SingleWorker(symbol, "analysis")
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
+        QTimer.singleShot(0, self.worker.run)
 
     def done(self, ok, r, message):
         self.button.setEnabled(True)
@@ -941,18 +957,14 @@ class SingleAnalysisPage(QWidget):
         self.scroll.verticalScrollBar().setValue(0)
 
     def _load_research(self, symbol):
-        if self.research_thread is not None and self.research_thread.isRunning():
+        if self.research_worker is not None:
             return
-        self.research_thread = QThread()
         self.research_worker = InfoWorker(symbol, "research")
-        self.research_worker.moveToThread(self.research_thread)
-        self.research_thread.started.connect(self.research_worker.run)
         self.research_worker.finished.connect(self._research_done)
-        self.research_worker.finished.connect(self.research_thread.quit)
-        self.research_thread.finished.connect(self.research_worker.deleteLater)
-        self.research_thread.start()
+        QTimer.singleShot(0, self.research_worker.run)
 
     def _research_done(self, ok, result, message):
+        self.research_worker = None
         if not ok:
             self.research_result.setPlainText("Şirket araştırması alınamadı:\n" + message)
             return
@@ -1019,6 +1031,11 @@ class SalePage(QWidget):
 
     def run(self):
         symbol = normalize_symbol(self.symbol.text())
+        if not symbol:
+            QMessageBox.warning(self, "Hisse", "Bir hisse kodu yaz.")
+            return
+        if not self.button.isEnabled():
+            return
         try:
             cost = float(self.cost.text().replace(",", "."))
             if cost <= 0:
@@ -1028,29 +1045,31 @@ class SalePage(QWidget):
             return
         self.button.setEnabled(False)
         self.status.setText("Satış kararı hesaplanıyor...")
-        self.thread = QThread()
         self.worker = SingleWorker(symbol, f"sale:{cost}")
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
+        QTimer.singleShot(0, self.worker.run)
 
     def done(self, ok, r, message):
         self.button.setEnabled(True)
         if not ok:
+            self.status.setText("Satış kararı hesaplanamadı; uygulama çalışmaya devam ediyor.")
             self.result.setPlainText(message)
             return
+        price = guvenli_sayi(r.get("price"))
+        cost = guvenli_sayi(r.get("kullanici_maliyeti"))
+        pnl = guvenli_sayi(r.get("kar_zarar_yuzde"))
+        target = guvenli_sayi(r.get("onerilen_satis"))
+        stop = guvenli_sayi(r.get("yeni_stop"))
+        realize = guvenli_sayi(r.get("kar_realizasyon_orani"))
         lines = [
             f"KARAR: {r.get('satis_karari', '-')}",
-            f"GÜNCEL FİYAT: {r.get('price', 0):.2f} TL",
-            f"MALİYET: {r.get('kullanici_maliyeti', 0):.2f} TL",
-            f"KÂR/ZARAR: %{r.get('kar_zarar_yuzde', 0):.2f}",
-            f"MODEL HEDEFİ: {r.get('onerilen_satis', 0):.2f} TL",
-            f"YENİ STOP: {r.get('yeni_stop', 0):.2f} TL",
-            f"KÂR REALİZASYONU: %{r.get('kar_realizasyon_orani', 0)}",
+            f"GÜNCEL FİYAT: {price:.2f} TL",
+            f"MALİYET: {cost:.2f} TL",
+            f"KÂR/ZARAR: %{pnl:.2f}",
+            f"MODEL HEDEFİ: {target:.2f} TL",
+            f"YENİ STOP: {stop:.2f} TL",
+            f"KÂR REALİZASYONU: %{realize:.0f}",
             "",
             f"NEDEN: {r.get('satis_nedeni', '-')}",
             "",
@@ -1105,16 +1124,13 @@ class SelectedInfoPage(QWidget):
         symbol = normalize_symbol(self.symbol.text())
         if not symbol:
             return
+        if not self.button.isEnabled():
+            return
         self.button.setEnabled(False)
         self.status.setText("İnceleniyor...")
-        self.thread = QThread()
         self.worker = InfoWorker(symbol, self.kind)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
+        QTimer.singleShot(0, self.worker.run)
 
     def done(self, ok, result, message):
         self.button.setEnabled(True)
@@ -1258,7 +1274,7 @@ class FundAnalysisPage(QWidget):
         layout.addWidget(self.table, 1)
 
     def run(self):
-        if self.thread is not None and self.thread.isRunning():
+        if not self.button.isEnabled():
             return
         try:
             max_risk = int(self.max_risk.text().strip())
@@ -1276,14 +1292,9 @@ class FundAnalysisPage(QWidget):
             return
         self.button.setEnabled(False)
         self.status.setText("TEFAS fonları alınıyor ve aynı kategoride karşılaştırılıyor...")
-        self.thread = QThread()
         self.worker = FundWorker(max_risk, capital)
-        self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.done)
-        self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater)
-        self.thread.start()
+        QTimer.singleShot(0, self.worker.run)
 
     def done(self, ok, payload, message):
         self.button.setEnabled(True)
@@ -1588,6 +1599,7 @@ class MainWindow(QMainWindow):
 
 def exception_hook(exc_type, exc_value, exc_tb):
     text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    hata_gunlugune_yaz("Yakalanmamış arayüz hatası", text)
     try:
         QMessageBox.critical(None, "Kritik Hata", text)
     except Exception:
@@ -1610,6 +1622,11 @@ if __name__ == "__main__":
             faulthandler.enable(file=crash_stream, all_threads=True)
             analiz_main.main()
     else:
+        import faulthandler
+
+        # Qt/C uzantılarındaki sert kapanmalar sys.excepthook'a ulaşmaz; ayrı kaydet.
+        _CRASH_STREAM = (veri_klasoru() / "arayuz_cokme.log").open("a", encoding="utf-8")
+        faulthandler.enable(file=_CRASH_STREAM, all_threads=True)
         sys.excepthook = exception_hook
         app = QApplication(sys.argv)
         win = MainWindow()

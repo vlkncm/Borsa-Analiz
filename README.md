@@ -1,4 +1,10 @@
-# Borsa Analiz Pro MAX v8.7.3
+# Borsa Analiz Pro MAX v8.7.8
+
+## v8.7.8 kararlılık ve paket güncellemesi
+
+- Grafik görüntüleme Windows/Qt ortamlarında daha güvenli olacak şekilde güncellendi.
+- Analiz ve satış işlemlerindeki hata yakalama, sayı biçimlendirme ve tekrar tıklama korumaları iyileştirildi.
+- EXE paketindeki sürüm kaynak koduyla eşitlendi.
 
 ## v8.7.3 bağımsız tarama motoru
 
@@ -113,8 +119,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.7.3 kurulum dosyasını indir](downloads/v8.7.3/Setup_Borsa_Analiz_Pro_MAX_v8.7.3.exe)
-- SHA-256: `910BEEB34EB03D19296BC635D11280A9E91C82253023B6B937EF6ABD6B6E68FF`
+- [Borsa Analiz Pro MAX v8.7.8 kurulum dosyasını indir](downloads/v8.7.8/Setup_Borsa_Analiz_Pro_MAX_v8.7.8.exe)
+- SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
 
 ## v7.2 merkezi veri katmanı
 
