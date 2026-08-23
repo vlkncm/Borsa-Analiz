@@ -1,4 +1,4 @@
-BORSA ANALİZ PRO MAX v8.7.8 — TEK TIKLA KURULUM HAZIRLAMA
+BORSA ANALİZ PRO MAX v8.8.0 — TEK TIKLA KURULUM HAZIRLAMA
 
 1. Bu ZIP dosyasını bilgisayarında bir klasöre çıkar.
 2. Çıkan klasörü aç.
@@ -7,7 +7,7 @@ BORSA ANALİZ PRO MAX v8.7.8 — TEK TIKLA KURULUM HAZIRLAMA
 5. İşlem bitince SetupOutput klasörü otomatik açılır.
 6. Paylaşacağın tek dosya:
 
-   Setup_Borsa_Analiz_Pro_MAX_v8.7.8.exe
+   Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe
 
 Karşı bilgisayarda Python, PyCharm veya Inno Setup gerekmez.
 Sadece Setup dosyasını çalıştırması yeterlidir.

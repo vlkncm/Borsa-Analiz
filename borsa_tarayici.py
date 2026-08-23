@@ -8,6 +8,7 @@ from datetime import datetime
 from profesyonel_analiz import profesyonel_analiz
 from uluslararasi_faktorler import faktorleri_hesapla
 from bist30 import BIST30_SEMBOLLERI
+from rsi_supertrend_stratejisi import hesapla as rsi_supertrend_hesapla
 
 _BENCHMARK_LOCK = threading.Lock()
 _BENCHMARK_CACHE = None
@@ -419,6 +420,7 @@ def teknik_analiz(symbol, kategori):
         fibonacci = fibonacci_analizi(df)
         profesyonel = profesyonel_analiz(df, bist100_verisi())
         uluslararasi_faktorler = faktorleri_hesapla(df)
+        rsi_supertrend = rsi_supertrend_hesapla(df, zaman_dilimi="1G")
 
         # ==========================
         # Mevcut karar sistemi
@@ -505,6 +507,7 @@ def teknik_analiz(symbol, kategori):
             "risk_notes": risk_notes or ["Belirgin ek teknik risk notu bulunamadı"]
             ,**profesyonel
             ,**uluslararasi_faktorler
+            ,**rsi_supertrend
         }
 
     except Exception as e:

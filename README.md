@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v8.7.8
+# Borsa Analiz Pro MAX v8.8.0
+
+## v8.8.0 RSI–SuperTrend deneysel dip teyidi
+
+- RSI ortalamasındaki ikinci toparlanmayı dip adayı olarak izler.
+- SuperTrend yukarı yönlü olduğunda sinyali teyitli olarak işaretler.
+- Ana AL/SAT puanını otomatik değiştirmez; bağımsız kanıt alanı olarak gösterilir.
+- Sosyal medyadaki `%80 başarı` iddiasını garanti olarak kullanmaz.
+- Tarama sonucuna RSI-ST durumu, trend yönü ve son sinyal yaşı eklenir.
 
 ## v8.7.8 kararlılık ve paket güncellemesi
 
@@ -119,7 +127,7 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.7.8 kurulum dosyasını indir](downloads/v8.7.8/Setup_Borsa_Analiz_Pro_MAX_v8.7.8.exe)
+- [Borsa Analiz Pro MAX v8.8.0 kurulum dosyasını indir](downloads/v8.8.0/Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe)
 - SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
 
 ## v7.2 merkezi veri katmanı

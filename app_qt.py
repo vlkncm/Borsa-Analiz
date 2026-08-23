@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.7.8"
+APP_VERSION = "8.8.0"
 _CRASH_STREAM = None
 
 
@@ -1195,14 +1195,30 @@ class TrackPage(QWidget):
     def refresh(self):
         self.load(self.get_prices(self.symbols))
 
+    def remove(self, symbol):
+        symbol = normalize_symbol(symbol)
+        if not symbol or symbol not in self.symbols:
+            return
+        self.symbols.remove(symbol)
+        self.write_list(self.symbols)
+        self.show_symbols()
+
     def load(self, df):
         self.table.clear()
         self.table.setRowCount(len(df))
-        self.table.setColumnCount(len(df.columns))
-        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        self.table.setColumnCount(len(df.columns) + 1)
+        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns] + ["İşlem"])
         for r, (_, row) in enumerate(df.iterrows()):
             for c, value in enumerate(row):
                 self.table.setItem(r, c, QTableWidgetItem(str(value)))
+            symbol = normalize_symbol(row.get("Hisse", ""))
+            remove_button = QPushButton("SİL")
+            remove_button.setToolTip(f"{symbol.replace('.IS', '')} hissesini takip listesinden çıkar")
+            remove_button.clicked.connect(lambda checked=False, value=symbol: self.remove(value))
+            self.table.setCellWidget(r, len(df.columns), remove_button)
+        self.table.horizontalHeader().setSectionResizeMode(
+            len(df.columns), QHeaderView.ResizeToContents
+        )
 
 
 class FundWorker(QObject):

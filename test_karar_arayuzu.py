@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 from PySide6.QtWidgets import QApplication
@@ -6,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from app_qt import (
     SalePage,
     SearchableTable,
+    TrackPage,
     karar_gruplarina_ayir,
     tarama_alt_sureci_komutu,
 )
@@ -62,6 +64,18 @@ class KararArayuzuTest(unittest.TestCase):
         self.assertFalse(table.table.isRowHidden(1))
         table.deleteLater()
 
+    def test_takip_listesindeki_hisse_sil_butonuyla_kaldirilir(self):
+        kayitlar = []
+        with patch("takip_modulu.takip_listesini_oku", return_value=["ASELS.IS", "THYAO.IS"]), \
+             patch("takip_modulu.takip_listesini_yaz", side_effect=lambda symbols: kayitlar.append(list(symbols))):
+            page = TrackPage()
+            sil_butonu = page.table.cellWidget(0, 1)
+            self.assertEqual(sil_butonu.text(), "SİL")
+            sil_butonu.click()
+            self.assertEqual(page.symbols, ["THYAO.IS"])
+            self.assertEqual(kayitlar[-1], ["THYAO.IS"])
+            self.assertEqual(page.table.rowCount(), 1)
+            page.deleteLater()
 
 if __name__ == "__main__":
     unittest.main()
