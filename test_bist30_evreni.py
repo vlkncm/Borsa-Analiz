@@ -15,8 +15,12 @@ class Bist30EvreniTests(unittest.TestCase):
         self.assertIn("2026-Q3", BIST30_DONEMI)
 
     def test_toplu_tarama_aktif_bist_evrenini_kullanir(self):
-        with patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
+        with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "ALL"}), patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
             self.assertEqual(main.hisseleri_txt_oku(), ["ASELS.IS", "MEGMT.IS"])
+
+    def test_genel_tarama_bist30_kullanir(self):
+        with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "BIST30"}), patch("main.karantinadaki_semboller", return_value=set()):
+            self.assertEqual(main.hisseleri_txt_oku(), list(BIST30_SEMBOLLERI))
 
     def test_bist30_disi_tek_hisse_kabul_edilir(self):
         self.assertEqual(normalize_symbol("MEGMT"), "MEGMT.IS")

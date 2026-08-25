@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.1.0"
+APP_VERSION = "10.1.1"
 _CRASH_STREAM = None
 
 
@@ -1336,6 +1336,8 @@ class DailyTradeWorker(QObject):
             rows = []
             symbols = tum_bist_hisseleri()
             for index, symbol in enumerate(symbols, 1):
+                if QThread.currentThread().isInterruptionRequested():
+                    break
                 self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
                 row = gunluk_trade_analiz(
                     symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
@@ -1369,7 +1371,7 @@ class DailyTradePage(QWidget):
         warning.setObjectName("riskBanner")
         layout.addWidget(warning)
         controls = QHBoxLayout()
-        self.scan_button = QPushButton("TARAMAYI BAŞLAT / YENİLE")
+        self.scan_button = QPushButton("TÜM BIST GÜNLÜK TRADE TARAMASINI BAŞLAT")
         self.scan_button.setObjectName("primary")
         self.interval = QComboBox()
         self.interval.addItems(["15m", "5m"])
@@ -1377,7 +1379,8 @@ class DailyTradePage(QWidget):
         self.risk = QDoubleSpinBox(); self.risk.setRange(0.1, 1.0); self.risk.setValue(0.5); self.risk.setSingleStep(0.1); self.risk.setSuffix(" % risk")
         self.min_rr = QDoubleSpinBox(); self.min_rr.setRange(1.0, 5.0); self.min_rr.setValue(1.8); self.min_rr.setSingleStep(0.1); self.min_rr.setPrefix("Min R/G ")
         self.confirmed = QCheckBox("Yalnızca teyitli sinyaller")
-        for widget in (self.scan_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
+        self.cancel_button = QPushButton("İPTAL"); self.cancel_button.clicked.connect(self.cancel_scan)
+        for widget in (self.scan_button, self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             controls.addWidget(widget)
         layout.addLayout(controls)
         self.status = QLabel("Henüz tarama yapılmadı.")
@@ -1395,7 +1398,7 @@ class DailyTradePage(QWidget):
         if self.thread and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.status.setText("BIST 30 tamamlanmış intraday mumlarla taranıyor...")
+        self.status.setText("Aktif BIST evreni tamamlanmış intraday mumlarla taranıyor...")
         self.thread = QThread(self)
         self.worker = DailyTradeWorker(self.interval.currentText(), self.account.value(), self.risk.value(),
                                        self.min_rr.value(), self.confirmed.isChecked())
@@ -1413,10 +1416,23 @@ class DailyTradePage(QWidget):
         self.worker = None
         self.thread = None
 
+    def cancel_scan(self):
+        if self.thread and self.thread.isRunning():
+            self.thread.requestInterruption()
+            self.status.setText("Tarama güvenli biçimde durduruluyor…")
+
     def scan_done(self, ok, frame, message):
         self.scan_button.setEnabled(True)
         self.results = frame if ok else pd.DataFrame()
         display = self.results[self.results.get("Sonuç", pd.Series(dtype=str)).ne("VERİ YETERSİZ")].copy() if not self.results.empty else self.results
+        if not display.empty:
+            priority = {"AL ADAYI": 3, "TEYİT BEKLE": 2, "FİYAT KOVALAMA": 1, "İŞLEM YOK": 0}
+            display["_öncelik"] = display["Sonuç"].map(priority).fillna(0)
+            display["_pot"] = pd.to_numeric(display.get("Hedef Potansiyeli %", 0), errors="coerce").fillna(0)
+            display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", 0), errors="coerce").fillna(0)
+            display = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
+            columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop", "Hedef Potansiyeli %", "Risk/Getiri"]
+            display = display[[c for c in columns if c in display.columns]].reset_index(drop=True)
         self.table.load(display)
         if not ok:
             self.status.setText("Tarama hatası: " + message.splitlines()[-1])
@@ -1551,6 +1567,17 @@ class DecisionPage(SimpleTable):
         self.live_result.setText(decision)
 
 
+class FullMarketPage(SimpleTable):
+    scan_requested = Signal()
+
+    def __init__(self, title, subtitle):
+        super().__init__(title, subtitle)
+        button = QPushButton("TÜM BIST TARAMASINI BAŞLAT")
+        button.setObjectName("primary")
+        button.clicked.connect(self.scan_requested.emit)
+        self.layout().insertWidget(3, button)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1576,22 +1603,18 @@ class MainWindow(QMainWindow):
         self.sale = SalePage()
         self.track = TrackPage()
         self.funds = FundAnalysisPage()
-        self.daily_trade = DecisionPage("GÜNLÜK TRADE", "En fazla 5 aday. Veriler yaklaşık 15 dakika gecikmeli olabilir; işlem öncesinde güncel fiyatı aracı kurumunuzdan kontrol edin.")
+        self.daily_trade = DailyTradePage()
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
-        self.early_growth = SimpleTable("ERKEN BÜYÜME ADAYLARI", "Finansal büyüme, kalite, borç ve değerleme birlikte incelenir.")
-        self.under_50 = SimpleTable("50 TL ALTI HİSSE FIRSATLARI", "Fiyat yalnızca ilk filtredir. Büyüme, kârlılık, borç, değerleme, işlem gücü ve risk birlikte incelenir; en fazla 20 seçenek sunulur.")
-        self.long_growth = SimpleTable("UZUN VADELİ YÜKSEK BÜYÜME", "Uzun vadeli büyüme senaryosudur; kesin getiri garantisi değildir.")
-        self.ten_x = SimpleTable("10X POTANSİYEL SENARYOSU", "10X senaryosu çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
+        self.under_50 = FullMarketPage("50 TL ALTI HİSSE FIRSATLARI", "Tüm BIST taranır; 50 TL altındaki hisselerden en likit 120 şirket incelenir ve en iyi 20 seçenek sunulur.")
+        self.ten_x = FullMarketPage("10X POTANSİYEL SENARYOSU", "Tüm BIST taranır. Senaryo çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
         self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
-        self.settings = SimpleTable("AYARLAR", "Tarama varsayılanları güvenli değerlerle yönetilir.")
-        self.help_page = SimpleTable("YARDIM", "Sonuçlar yatırım tavsiyesi değildir; hedef ve stop seviyelerini güncel fiyatla doğrulayın.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.home, self.daily_trade, self.short_term, self.medium_term, self.early_growth,
-                  self.under_50, self.long_growth, self.ten_x, self.track, self.sale, self.single,
-                  self.history, self.settings, self.help_page, self.log]:
+        for p in [self.home, self.daily_trade, self.short_term, self.medium_term,
+                  self.under_50, self.ten_x, self.track, self.sale, self.single,
+                  self.history, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1612,11 +1635,9 @@ class MainWindow(QMainWindow):
         menu = [
             ("BUGÜN", self.home), ("  Günlük Trade", self.daily_trade),
             ("KISA VADE", self.short_term), ("ORTA VADE", self.medium_term),
-            ("BÜYÜME", self.early_growth), ("  Erken Büyüme", self.early_growth),
-            ("  50 TL Altı", self.under_50), ("  Uzun Vadeli Büyüme", self.long_growth), ("  10X Potansiyel", self.ten_x),
+            ("BÜYÜME · 50 TL Altı", self.under_50), ("  10X Potansiyel", self.ten_x),
             ("TAKİP LİSTEM", self.track), ("  Satış / Çıkış Kararı", self.sale),
             ("DETAY · Hisse İncele", self.single), ("GEÇMİŞ", self.history),
-            ("AYARLAR", self.settings), ("YARDIM", self.help_page),
         ]
         for text, page in menu:
             button = QPushButton(text)
@@ -1683,8 +1704,8 @@ class MainWindow(QMainWindow):
         )
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
-        self.daily_trade.scan_requested.connect(self.scan_daily_trade)
-        self.daily_trade.cancel_requested.connect(self.cancel_scan)
+        self.under_50.scan_requested.connect(lambda: self.scan_all_market(self.under_50))
+        self.ten_x.scan_requested.connect(lambda: self.scan_all_market(self.ten_x))
         self.pages.setCurrentWidget(self.home)
 
         self.load_report()
@@ -1713,7 +1734,7 @@ class MainWindow(QMainWindow):
             self.tum.load(compact)
 
             trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
-            self.daily_trade.load(trade_frame)
+            self.daily_trade.table.load(trade_frame)
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
@@ -1737,12 +1758,8 @@ class MainWindow(QMainWindow):
             self.medium_term.load(medium_frame)
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = buyume_adaylari(likit_120_sec(all_results), fiyat_limiti=50, limit=20, min_score=45)
-            early_frame = buyume_adaylari(all_results, limit=5, min_score=65)
-            long_frame = buyume_adaylari(all_results, limit=5, min_score=70)
             ten_frame = on_x_senaryosu(all_results, limit=5)
-            self.early_growth.load(early_frame)
             self.under_50.load(under_frame)
-            self.long_growth.load(long_frame)
             self.ten_x.load(ten_frame)
             self.history.load(sheets.get("Sinyal Gecmisi", pd.DataFrame()).tail(30))
             self.home.portfolio_summary.setText(
@@ -1758,7 +1775,7 @@ class MainWindow(QMainWindow):
             market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
             self.home.index_value.setText(f"BIST EVRENİ\n{len(all_results)} hisse analiz edildi")
             self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
-            self.home.update_state(trade_frame, short_frame, medium_frame, market, len(early_frame) + len(under_frame))
+            self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame) + len(ten_frame))
 
             def numeric(name, default=0):
                 if name not in all_results.columns:
@@ -1841,6 +1858,7 @@ class MainWindow(QMainWindow):
         self.scan_process.setWorkingDirectory(str(uygulama_klasoru()))
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
+        environment.insert("BORSA_TARAMA_EVRENI", getattr(self, "_scan_universe", "BIST30"))
         self.scan_process.setProcessEnvironment(environment)
         self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
         self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
@@ -1850,6 +1868,11 @@ class MainWindow(QMainWindow):
 
     def scan_daily_trade(self):
         self._scan_target = self.daily_trade
+        self.scan()
+
+    def scan_all_market(self, target):
+        self._scan_target = target
+        self._scan_universe = "ALL"
         self.scan()
 
     def cancel_scan(self):
@@ -1908,6 +1931,7 @@ class MainWindow(QMainWindow):
             self.log.append(f"Excel raporu: {rapor_yolu()}")
             self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home))
             self._scan_target = self.home
+            self._scan_universe = "BIST30"
         else:
             self.log.append(message)
             if rapor_yolu().exists():

@@ -87,13 +87,14 @@ def dogrulanmis_hisse_dosyasi():
 
 
 def hisseleri_txt_oku(dosya_adi=None):
-    """Aktif BIST pay evrenini döndürür; analiz formüllerini değiştirmez."""
-    symbols = tum_bist_hisseleri()
+    """Genel taramada BIST 30; özel büyüme görevinde aktif BIST evreni."""
+    tum_evren = os.getenv("BORSA_TARAMA_EVRENI", "BIST30").strip().upper() == "ALL"
+    symbols = tum_bist_hisseleri() if tum_evren else bist30_hisseleri()
     quarantined = set(karantinadaki_semboller())
     if quarantined:
         symbols = [symbol for symbol in symbols if symbol not in quarantined]
         print(f"Veri hatasi nedeniyle karantinada: {len(set(symbols) & quarantined)} hisse")
-    print(f"Aktif BIST analiz evreni: {len(symbols)} sembol")
+    print(f"{'Aktif BIST' if tum_evren else 'BIST 30'} analiz evreni: {len(symbols)} sembol")
     return symbols
 
 

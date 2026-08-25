@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v10.1.0
+# Borsa Analiz Pro MAX v10.1.1
+
+## v10.1.1 tarama görevleri düzeltmesi
+
+- Genel, kısa ve orta vade taraması BIST 30 evrenine döndürüldü.
+- Günlük Trade bağımsız olarak tüm aktif BIST evrenini tarar.
+- 50 TL Altı ve 10X ekranlarına tüm BIST tarama düğmesi eklendi.
+- Ayarlar, Yardım, Erken Büyüme ve Uzun Büyüme ekranları kaldırıldı.
+- Paketlere çevrimdışı 613 hisselik evren dosyası eklendi.
 
 ## v10.1.0 referans dashboard ve geniş BIST taraması
 

@@ -5,7 +5,7 @@ a = Analysis(
     ['app_qt.py'],
     pathex=[],
     binaries=[],
-    datas=[('logo.png', '.'), ('logo.ico', '.'), ('assets', 'assets')],
+    datas=[('logo.png', '.'), ('logo.ico', '.'), ('assets', 'assets'), ('bist_hisseleri_613_aktif.txt', '.'), ('bist_hisseleri_dogrulanmis.txt', '.')],
     hiddenimports=['main', 'bist30', 'veri_saglayici', 'bist_bulteni', 'borsa_tarayici', 'gunluk_trade_gostergeleri', 'pro_moduller', 'kap_modulu', 'backtest', 'intraday_backtest', 'intraday_gostergeler', 'gunluk_trade_motoru', 'mum_formasyonlari', 'mtf_grafik', 'olasilik_temettu', 'faaliyet_raporu', 'piyasa_guncelleme', 'sistem_kontrol', 'v4_puanlama', 'formasyon_motoru', 'takip_modulu', 'fibonacci_motoru', 'karar_motoru', 'satis_karar_motoru', 'vade_motoru', 'profesyonel_analiz'],
     hookspath=[],
     hooksconfig={},
