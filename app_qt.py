@@ -16,11 +16,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QTextEdit, QMessageBox, QFrame, QLineEdit, QAbstractItemView, QTabWidget,
-    QDialog, QGridLayout, QScrollArea, QSizePolicy
+    QDialog, QGridLayout, QScrollArea, QSizePolicy, QComboBox, QDoubleSpinBox,
+    QCheckBox
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "8.8.0"
+APP_VERSION = "9.0.0"
 _CRASH_STREAM = None
 
 
@@ -1329,6 +1330,134 @@ class FundAnalysisPage(QWidget):
         StockDetailDialog(data, self, show_chart=False).exec()
 
 
+class DailyTradeWorker(QObject):
+    finished = Signal(bool, object, str)
+    progress = Signal(str)
+
+    def __init__(self, interval, account, risk, min_rr, confirmed_only):
+        super().__init__()
+        self.interval, self.account, self.risk = interval, account, risk
+        self.min_rr, self.confirmed_only = min_rr, confirmed_only
+
+    def run(self):
+        try:
+            from bist30 import bist30_hisseleri
+            from gunluk_trade_motoru import gunluk_trade_analiz
+            rows = []
+            symbols = bist30_hisseleri()
+            for index, symbol in enumerate(symbols, 1):
+                self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
+                row = gunluk_trade_analiz(
+                    symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
+                    risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
+                    sadece_teyitli=self.confirmed_only,
+                )
+                if not self.confirmed_only or row.get("Sonuç") == "AL ADAYI":
+                    rows.append(row)
+            self.finished.emit(True, pd.DataFrame(rows), "Tarama tamamlandı.")
+        except Exception:
+            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+
+
+class DailyTradePage(QWidget):
+    """Gecikme ve kanıt durumunu gizlemeden sunan günlük trade karar-destek sayfası."""
+    def __init__(self):
+        super().__init__()
+        self.thread = None
+        self.worker = None
+        self.results = pd.DataFrame()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        title = QLabel("GÜNLÜK TRADE")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        warning = QLabel(
+            "Karar-destek ve kâğıt işlem ekranıdır; gerçek emir göndermez. Yahoo intraday veri ücretsizdir, "
+            "gecikmesi garanti edilmez. Geçmiş performans gelecekteki sonucu garanti etmez."
+        )
+        warning.setWordWrap(True)
+        warning.setObjectName("riskBanner")
+        layout.addWidget(warning)
+        controls = QHBoxLayout()
+        self.scan_button = QPushButton("TARAMAYI BAŞLAT / YENİLE")
+        self.scan_button.setObjectName("primary")
+        self.interval = QComboBox()
+        self.interval.addItems(["15m", "5m"])
+        self.account = QDoubleSpinBox(); self.account.setRange(0, 100_000_000); self.account.setValue(100_000); self.account.setSuffix(" TL")
+        self.risk = QDoubleSpinBox(); self.risk.setRange(0.1, 1.0); self.risk.setValue(0.5); self.risk.setSingleStep(0.1); self.risk.setSuffix(" % risk")
+        self.min_rr = QDoubleSpinBox(); self.min_rr.setRange(1.0, 5.0); self.min_rr.setValue(1.8); self.min_rr.setSingleStep(0.1); self.min_rr.setPrefix("Min R/G ")
+        self.confirmed = QCheckBox("Yalnızca teyitli sinyaller")
+        for widget in (self.scan_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
+            controls.addWidget(widget)
+        layout.addLayout(controls)
+        self.status = QLabel("Henüz tarama yapılmadı.")
+        self.status.setObjectName("subText")
+        layout.addWidget(self.status)
+        self.table = SimpleTable("Adaylar", "Uygun aday yoksa liste boş bırakılır.")
+        self.table.row_selected.connect(self.show_detail)
+        layout.addWidget(self.table, 1)
+        self.paper_button = QPushButton("SEÇİLİ SATIRI KÂĞIT İŞLEM OLARAK KAYDET")
+        self.paper_button.clicked.connect(self.save_selected)
+        layout.addWidget(self.paper_button)
+        self.scan_button.clicked.connect(self.start_scan)
+
+    def start_scan(self):
+        if self.thread and self.thread.isRunning():
+            return
+        self.scan_button.setEnabled(False)
+        self.status.setText("BIST 30 tamamlanmış intraday mumlarla taranıyor...")
+        self.thread = QThread(self)
+        self.worker = DailyTradeWorker(self.interval.currentText(), self.account.value(), self.risk.value(),
+                                       self.min_rr.value(), self.confirmed.isChecked())
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.progress.connect(self.status.setText)
+        self.worker.finished.connect(self.scan_done)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self._thread_finished)
+        self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.start()
+
+    def _thread_finished(self):
+        self.worker = None
+        self.thread = None
+
+    def scan_done(self, ok, frame, message):
+        self.scan_button.setEnabled(True)
+        self.results = frame if ok else pd.DataFrame()
+        display = self.results[self.results.get("Sonuç", pd.Series(dtype=str)).ne("VERİ YETERSİZ")].copy() if not self.results.empty else self.results
+        self.table.load(display)
+        if not ok:
+            self.status.setText("Tarama hatası: " + message.splitlines()[-1])
+        elif display.empty:
+            self.status.setText("Bugün ölçütleri geçen aday bulunamadı. Veri yetersiz/gecikmeli sonuçlardan işlem üretilmedi.")
+        else:
+            counts = display["Sonuç"].value_counts().to_dict()
+            self.status.setText(f"Tarama tamamlandı: {counts} | Çift tıklayarak ayrıntıları açın.")
+
+    def _selected_record(self):
+        row = self.table.table.currentRow()
+        if row < 0:
+            return None
+        marker = self.table.table.item(row, 0)
+        source_row = marker.data(Qt.UserRole) if marker else row
+        return self.table._data.iloc[int(source_row)].to_dict()
+
+    def save_selected(self):
+        record = self._selected_record()
+        if not record:
+            QMessageBox.information(self, "Kâğıt İşlem", "Önce bir sonuç satırı seçin.")
+            return
+        from gunluk_trade_motoru import kagit_islem_kaydet
+        path = veri_klasoru() / "gunluk_trade" / "kagit_islemler.jsonl"
+        digest = kagit_islem_kaydet(record, path)
+        QMessageBox.information(self, "Kâğıt İşlem", f"Değiştirilemez kayıt eklendi.\n{path}\nKayıt: {digest[:12]}")
+
+    def show_detail(self, data):
+        StockDetailDialog(data, self, show_chart=False).exec()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1355,10 +1484,12 @@ class MainWindow(QMainWindow):
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
         self.funds = FundAnalysisPage()
+        self.daily_trade = DailyTradePage()
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity, self.funds, self.log]:
+        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity,
+                  self.funds, self.daily_trade, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1377,18 +1508,19 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(brand)
 
         menu = [
-            ("YATIRIM TERMİNALİ", 0),
-            ("HİSSE KARAR MERKEZİ", 1),
-            ("SATIŞ KARARI", 2),
-            ("TAKİP LİSTEM", 3),
-            ("SEÇİLİ HİSSE KAP", 4),
-            ("SEÇİLİ HİSSE FAALİYET", 5),
-            ("FON KARAR MERKEZİ", 6),
-            ("CANLI LOG", 7),
+            ("YATIRIM TERMİNALİ", self.terminal),
+            ("GÜNLÜK TRADE", self.daily_trade),
+            ("HİSSE KARAR MERKEZİ", self.single),
+            ("SATIŞ KARARI", self.sale),
+            ("TAKİP LİSTEM", self.track),
+            ("SEÇİLİ HİSSE KAP", self.kap),
+            ("SEÇİLİ HİSSE FAALİYET", self.activity),
+            ("FON KARAR MERKEZİ", self.funds),
+            ("CANLI LOG", self.log),
         ]
-        for text, index in menu:
+        for text, page in menu:
             button = QPushButton(text)
-            button.clicked.connect(lambda checked=False, i=index: self.pages.setCurrentIndex(i))
+            button.clicked.connect(lambda checked=False, p=page: self.pages.setCurrentWidget(p))
             side_layout.addWidget(button)
         side_layout.addStretch()
 
@@ -1540,7 +1672,7 @@ class MainWindow(QMainWindow):
         if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
             return
         self.scan_button.setEnabled(False)
-        self.pages.setCurrentIndex(7)
+        self.pages.setCurrentWidget(self.log)
         self.log.clear()
         self.log.append("Tarama ayrı ve güvenli bir işlemde başlatılıyor...")
         self._scan_stdout_buffer = ""
@@ -1606,7 +1738,7 @@ class MainWindow(QMainWindow):
             self.log.append("\nTARAMA TAMAMLANDI.")
             self.load_report()
             self.log.append(f"Excel raporu: {rapor_yolu()}")
-            self.pages.setCurrentIndex(0)
+            self.pages.setCurrentWidget(self.terminal)
         else:
             self.log.append(message)
             if rapor_yolu().exists():

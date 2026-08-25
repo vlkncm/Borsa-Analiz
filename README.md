@@ -1,4 +1,26 @@
-# Borsa Analiz Pro MAX v8.8.0
+# Borsa Analiz Pro MAX v9.0.0
+
+## v9.0.0 Günlük Trade karar-destek ekranı
+
+- Masaüstü uygulamasına BIST 30 için ayrı `GÜNLÜK TRADE` sayfası eklendi; 5 ve 15 dakikalık tamamlanmış mumlar taranır.
+- Ücretsiz Yahoo intraday verisinin gecikmesi garanti edilmez ve ekranda açıkça gösterilir. Eski, hacimsiz veya eksik veri `AL ADAYI` üretemez.
+- Doji türü, trend bağlamı ve sonraki tamamlanmış mum teyidi; seans VWAP'ı, önceki gün pivotları ve Wilder ATR(14) ayrı test edilebilir motorlarda hesaplanır.
+- Hedef potansiyeli matematiksel fiyat mesafesidir. Beklenen gün sonu hareketi ve hedefe stop'tan önce ulaşma olasılığı yalnızca en az 30 geçmiş out-of-sample örnek varsa gösterilir; aksi halde `Yetersiz örnek` yazılır.
+- Hesap riski varsayılan `%0,5`, kullanıcı üst sınırı `%1`; pozisyon adedi risk tutarı, nakit/portföy ve likidite sınırlarının en küçüğüdür.
+- Kâğıt işlemler tahmin anındaki alanlarla hash zincirli JSONL günlüğüne eklenir; uygulama gerçek aracı kurum emri göndermez.
+- Aynı barda hedef ve stop görülürse backtest kötümser biçimde stopu önce kabul eder; komisyon ve kayma net getiriden düşülür.
+
+### Günlük Trade metodolojisi ve sınırlamalar
+
+Klasik pivotlar yalnızca önceki tamamlanmış günlük `High/Low/Close` değerlerinden hesaplanır. VWAP her İstanbul seansında sıfırlanır ve yalnızca pozitif hacimli tamamlanmış intraday barları kullanır. Stop; yapı/doji geçersizliği, pivot desteği ve varsayılan `1,5 × ATR` adaylarının korumacı birleşimidir. Hedef, kullanıcının minimum risk/getiri oranını ve yakın pivot/ATR alanını gözetir.
+
+Olasılık kanıtı Beta taban oranına küçültülmüş ampirik geçmiş hedef-önce oranıdır; sabit bir yüzde aralığına sıkıştırılmaz. Walk-forward değerlendirmede her tahmin yalnızca kendisinden önceki işlemleri görür. Brier skoru ancak geçmiş tahmin ve sonuç çifti varsa raporlanabilir. Bu sürüm beraberinde lisanslı gerçek zamanlı BIST verisi veya hazır tarihsel intraday veri seti getirmediğinden, yeterli out-of-sample kayıt oluşana kadar olasılık ve tahmin aralığı bilinmiyor gösterilebilir; bu güvenlik davranışıdır.
+
+Testler çevrimdışı ve deterministik fixture'larla çalıştırılır:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -v
+```
 
 ## v8.8.0 RSI–SuperTrend deneysel dip teyidi
 

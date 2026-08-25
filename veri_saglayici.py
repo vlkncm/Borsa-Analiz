@@ -8,7 +8,11 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Protocol
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -16,6 +20,27 @@ import yfinance as yf
 from bist_bulteni import resmi_gunluk_satir
 
 _LOCK = threading.RLock()
+ISTANBUL = ZoneInfo("Europe/Istanbul")
+
+
+@dataclass(frozen=True)
+class VeriMetadatasi:
+    source: str
+    fetched_at: datetime
+    last_bar_at: datetime | None
+    exchange_timezone: str = "Europe/Istanbul"
+    is_delayed: bool | None = None
+    delay_minutes: float | None = None
+    is_stale: bool = True
+    is_complete_bar: bool = False
+
+    def dict(self) -> dict:
+        return asdict(self)
+
+
+class PiyasaVeriAdapteri(Protocol):
+    def get_daily_ohlcv(self, symbol: str, period: str = "6mo") -> tuple[pd.DataFrame, VeriMetadatasi]: ...
+    def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d") -> tuple[pd.DataFrame, VeriMetadatasi]: ...
 
 
 def uygulama_klasoru() -> Path:
@@ -167,3 +192,82 @@ def cache_bilgisi() -> dict:
     with _LOCK, closing(_baglanti()) as db:
         adet, son = db.execute("SELECT COUNT(*), MAX(alis_zamani) FROM fiyat_cache").fetchone()
     return {"kaynak": "Yahoo tarihsel + Borsa İstanbul resmî kapanış", "kayit": adet, "son_guncelleme": son}
+
+
+def _istanbul_index(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out[~out.index.isna()]
+    if out.index.tz is None:
+        out.index = out.index.tz_localize(ISTANBUL)
+    else:
+        out.index = out.index.tz_convert(ISTANBUL)
+    return out
+
+
+def _interval_dakika(interval: str) -> int:
+    return {"5m": 5, "15m": 15}.get(interval, 15)
+
+
+class YahooPiyasaVeriAdapteri:
+    """Ücretsiz Yahoo verisini gecikmeli/bilinmeyen gecikmeli olarak açıkça etiketler."""
+
+    source = "Yahoo Finance (ücretsiz; gecikme garantisi yok)"
+
+    def get_daily_ohlcv(self, symbol: str, period: str = "6mo") -> tuple[pd.DataFrame, VeriMetadatasi]:
+        fetched = datetime.now(ISTANBUL)
+        frame = download(symbol, period=period, interval="1d", progress=False, auto_adjust=False)
+        frame = _istanbul_index(frame)
+        last = frame.index[-1].to_pydatetime() if not frame.empty else None
+        meta = VeriMetadatasi(
+            source=frame.attrs.get("veri_kaynagi", self.source), fetched_at=fetched,
+            last_bar_at=last, is_delayed=True, delay_minutes=None,
+            is_stale=frame.empty or last is None or (fetched.date() - last.date()).days > 4,
+            is_complete_bar=True,
+        )
+        return frame, meta
+
+    def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d") -> tuple[pd.DataFrame, VeriMetadatasi]:
+        if interval not in {"5m", "15m"}:
+            raise ValueError("Intraday aralık yalnızca 5m veya 15m olabilir")
+        fetched = datetime.now(ISTANBUL)
+        # Intraday işlem adayı eski cache'den üretilmez; kaynak hatası doğrudan üst katmana taşınır.
+        raw = yf.download(symbol, period=period, interval=interval, progress=False,
+                          auto_adjust=False, threads=False, timeout=20)
+        frame = _istanbul_index(_normalize(raw))
+        if frame.empty:
+            raise ValueError("Intraday sağlayıcı boş veya geçersiz OHLCV döndürdü")
+        minutes = _interval_dakika(interval)
+        last = frame.index[-1].to_pydatetime()
+        last_complete = fetched >= last + timedelta(minutes=minutes)
+        frame["is_complete_bar"] = True
+        if not last_complete:
+            frame.iloc[-1, frame.columns.get_loc("is_complete_bar")] = False
+        completed = frame[frame["is_complete_bar"]].copy()
+        last_completed = completed.index[-1].to_pydatetime() if not completed.empty else None
+        delay = None if last_completed is None else max(0.0, (fetched-last_completed).total_seconds()/60.0-minutes)
+        same_session = last_completed is not None and last_completed.date() == fetched.date()
+        # Seans sırasında 2 barı aşan yaş eskidir. Seans dışında son işlem günü verisi plan amaçlıdır.
+        in_session = fetched.weekday() < 5 and ((10, 0) <= (fetched.hour, fetched.minute) <= (18, 15))
+        stale = not same_session if in_session else completed.empty
+        if in_session and delay is not None:
+            stale = stale or delay > minutes * 2
+        meta = VeriMetadatasi(
+            source=self.source, fetched_at=fetched, last_bar_at=last_completed,
+            is_delayed=True, delay_minutes=delay, is_stale=stale,
+            is_complete_bar=last_complete,
+        )
+        return completed, meta
+
+
+_VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = YahooPiyasaVeriAdapteri()
+
+
+def get_daily_ohlcv(symbol: str, period: str = "6mo", adapter: PiyasaVeriAdapteri | None = None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_daily_ohlcv(symbol, period)
+
+
+def get_intraday_ohlcv(symbol: str, interval: str = "15m", period: str = "5d",
+                       adapter: PiyasaVeriAdapteri | None = None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_intraday_ohlcv(symbol, interval, period)
