@@ -285,6 +285,7 @@ def teknik_analiz(symbol, kategori):
         prev = df.iloc[-2]
 
         price = float(last["Close"])
+        acilis_fiyati = float(last["Open"])
         rsi = float(last["RSI"])
         ema20 = float(last["EMA20"])
         ema50 = float(last["EMA50"])
@@ -409,6 +410,11 @@ def teknik_analiz(symbol, kategori):
         risk_miktari = max(price - stop_loss, price * 0.01)
         risk_getiri_1 = max(0, (hedef_1 - price) / risk_miktari)
         risk_getiri_2 = max(0, (hedef_2 - price) / risk_miktari)
+        # Eski sade trade görünümü için: açılıştan, ATR ile sınırlı gün içi hedefe
+        # kadar yalnızca matematiksel yükseliş mesafesi. Olasılık veya garanti değildir.
+        gun_ici_hedef, gun_ici_yukselis_yuzde = gun_ici_yukselis_hesapla(
+            acilis_fiyati, price, hedef_1, atr
+        )
         destek_mesafe_yuzde = ((price - ana_destek) / price * 100) if ana_destek > 0 else 0
         direnc_mesafe_yuzde = ((ana_direnc - price) / price * 100) if ana_direnc > price else 0
 
@@ -453,6 +459,9 @@ def teknik_analiz(symbol, kategori):
             "elenen_eksik_bar": temizlenen_satir,
             "kategori": kategori,
             "price": price,
+            "acilis_fiyati": acilis_fiyati,
+            "gun_ici_hedef": gun_ici_hedef,
+            "gun_ici_yukselis_yuzde": gun_ici_yukselis_yuzde,
             "rsi": rsi,
             "ema20": ema20,
             "ema50": ema50,
@@ -575,3 +584,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+def gun_ici_yukselis_hesapla(acilis_fiyati, referans_fiyat, teknik_hedef, atr):
+    """ATR ile sınırlı gün içi hedefi ve açılıştan yüzde mesafesini hesaplar."""
+    try:
+        acilis, fiyat, hedef, atr_degeri = map(float, (acilis_fiyati, referans_fiyat, teknik_hedef, atr))
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if acilis <= 0 or fiyat <= 0 or hedef <= 0 or atr_degeri < 0:
+        return 0.0, 0.0
+    gun_ici_hedef = max(fiyat, min(hedef, fiyat + atr_degeri * 0.75))
+    return gun_ici_hedef, max(0.0, (gun_ici_hedef / acilis - 1.0) * 100.0)

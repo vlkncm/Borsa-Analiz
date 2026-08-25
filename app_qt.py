@@ -1484,12 +1484,11 @@ class MainWindow(QMainWindow):
         self.kap = SelectedInfoPage("kap")
         self.activity = SelectedInfoPage("activity")
         self.funds = FundAnalysisPage()
-        self.daily_trade = DailyTradePage()
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
         for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity,
-                  self.funds, self.daily_trade, self.log]:
+                  self.funds, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1509,7 +1508,6 @@ class MainWindow(QMainWindow):
 
         menu = [
             ("YATIRIM TERMİNALİ", self.terminal),
-            ("GÜNLÜK TRADE", self.daily_trade),
             ("HİSSE KARAR MERKEZİ", self.single),
             ("SATIŞ KARARI", self.sale),
             ("TAKİP LİSTEM", self.track),
@@ -1602,6 +1600,7 @@ class MainWindow(QMainWindow):
                 "Hisse", "Veri Tarihi", "Yatırım Kararı", "Fırsat Seviyesi",
                 "Veri Durumu", "Veri Gecikmesi (İş Günü)",
                 "AI Güven Puanı", "v4 Güven Puanı", "Broker Aksiyon", "Fiyat",
+                "Açılış Fiyatı", "Gün İçi Hedef", "Gün İçi Yükseliş %",
                 "Önerilen Alış Alt", "Önerilen Alış Üst", "Önerilen Satış",
                 "Önerilen Stop", "Beklenen Getiri %", "Karar Risk/Getiri",
                 "MTF Uyum", "Temel Puan", "Faaliyet Puanı", "KAP Etiket",
@@ -1619,7 +1618,8 @@ class MainWindow(QMainWindow):
             buy_results, wait_results, avoid_results = karar_gruplarina_ayir(all_results)
 
             decision_columns = [
-                "Hisse", "Yatırım Kararı", "Fiyat", "Önerilen Alış Alt", "Önerilen Alış Üst",
+                "Hisse", "Yatırım Kararı", "Fiyat", "Açılış Fiyatı", "Gün İçi Hedef",
+                "Gün İçi Yükseliş %", "Önerilen Alış Alt", "Önerilen Alış Üst",
                 "Önerilen Satış", "Önerilen Stop", "Beklenen Getiri %", "Karar Risk/Getiri",
                 "Model Olasılığı %", "Veri Durumu", "Karar Nedenleri",
             ]
@@ -1640,7 +1640,8 @@ class MainWindow(QMainWindow):
                 high_conviction = high_conviction.sort_values(sort_columns, ascending=False)
             high_conviction = high_conviction.head(3)
             conviction_columns = [
-                "Hisse", "Yatırım Kararı", "Fiyat", "Önerilen Alış Alt",
+                "Hisse", "Yatırım Kararı", "Fiyat", "Açılış Fiyatı", "Gün İçi Hedef",
+                "Gün İçi Yükseliş %", "Önerilen Alış Alt",
                 "Önerilen Alış Üst", "Önerilen Satış", "Önerilen Stop",
                 "Beklenen Getiri %", "Karar Risk/Getiri", "Model Olasılığı %",
                 "v4 Güven Puanı", "Karar Nedenleri",

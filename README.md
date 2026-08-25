@@ -1,8 +1,9 @@
 # Borsa Analiz Pro MAX v9.0.0
 
-## v9.0.0 Günlük Trade karar-destek ekranı
+## v9.0.0 Sade gün içi yükseliş göstergesi
 
-- Masaüstü uygulamasına BIST 30 için ayrı `GÜNLÜK TRADE` sayfası eklendi; 5 ve 15 dakikalık tamamlanmış mumlar taranır.
+- Eski `BIST 30 Alış–Satış Fırsatları` görünümü korunur; ayrı ve karmaşık bir trade sayfası gösterilmez.
+- Tabloya açılış fiyatı, ATR ile sınırlı gün içi hedef ve `(gün içi hedef / açılış fiyatı - 1) × 100` formülüyle `Gün İçi Yükseliş %` eklenir.
 - Ücretsiz Yahoo intraday verisinin gecikmesi garanti edilmez ve ekranda açıkça gösterilir. Eski, hacimsiz veya eksik veri `AL ADAYI` üretemez.
 - Doji türü, trend bağlamı ve sonraki tamamlanmış mum teyidi; seans VWAP'ı, önceki gün pivotları ve Wilder ATR(14) ayrı test edilebilir motorlarda hesaplanır.
 - Hedef potansiyeli matematiksel fiyat mesafesidir. Beklenen gün sonu hareketi ve hedefe stop'tan önce ulaşma olasılığı yalnızca en az 30 geçmiş out-of-sample örnek varsa gösterilir; aksi halde `Yetersiz örnek` yazılır.

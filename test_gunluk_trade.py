@@ -13,6 +13,7 @@ from intraday_backtest import ampirik_kanit, islem_sonucu, walk_forward_tahminle
 from intraday_gostergeler import klasik_pivot, pivot_serisi, pozisyon_boyutu, seans_vwap, wilder_atr
 from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
 from veri_saglayici import VeriMetadatasi
+from borsa_tarayici import gun_ici_yukselis_hesapla
 
 
 TZ = ZoneInfo("Europe/Istanbul")
@@ -49,6 +50,11 @@ class DojiTests(unittest.TestCase):
 
 
 class IndicatorTests(unittest.TestCase):
+    def test_open_to_intraday_target_growth_percentage(self):
+        target, growth = gun_ici_yukselis_hesapla(35, 36, 38, 2)
+        self.assertEqual(target, 37.5)
+        self.assertAlmostEqual(growth, (37.5 / 35 - 1) * 100)
+
     def test_pivot_known_example_and_previous_day_shift(self):
         p = klasik_pivot(110, 90, 100)
         self.assertEqual(p, {"P": 100, "R1": 110, "S1": 90, "R2": 120, "S2": 80})

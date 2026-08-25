@@ -12,13 +12,10 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_page_exists_and_routes_without_index_dependency(self):
+    def test_old_terminal_view_is_kept_without_separate_trade_page(self):
         window = MainWindow()
-        self.assertGreaterEqual(window.pages.indexOf(window.daily_trade), 0)
-        window.pages.setCurrentWidget(window.daily_trade)
-        self.assertIs(window.pages.currentWidget(), window.daily_trade)
-        self.assertEqual(window.daily_trade.interval.count(), 2)
-        self.assertLessEqual(window.daily_trade.risk.maximum(), 1.0)
+        self.assertIs(window.pages.widget(0), window.terminal)
+        self.assertFalse(hasattr(window, "daily_trade"))
         window.close()
 
 
