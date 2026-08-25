@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "9.0.0"
+APP_VERSION = "9.1.0"
 _CRASH_STREAM = None
 
 
@@ -1482,12 +1482,15 @@ class MainWindow(QMainWindow):
         self.sale = SalePage()
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
-        self.activity = SelectedInfoPage("activity")
         self.funds = FundAnalysisPage()
+        self.daily_trade = SimpleTable(
+            "GÜNLÜK TRADE — Sade Teyit Tablosu",
+            "AlphaTrend + EMA20 + BBW + MACD-V birlikte değerlendirilir. Yüzde, açılıştan teknik gün içi hedefe matematiksel mesafedir; garanti değildir.",
+        )
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.single, self.sale, self.track, self.kap, self.activity,
+        for p in [self.terminal, self.daily_trade, self.single, self.sale, self.track, self.kap,
                   self.funds, self.log]:
             self.pages.addWidget(p)
 
@@ -1508,11 +1511,11 @@ class MainWindow(QMainWindow):
 
         menu = [
             ("YATIRIM TERMİNALİ", self.terminal),
+            ("GÜNLÜK TRADE", self.daily_trade),
             ("HİSSE KARAR MERKEZİ", self.single),
             ("SATIŞ KARARI", self.sale),
             ("TAKİP LİSTEM", self.track),
             ("SEÇİLİ HİSSE KAP", self.kap),
-            ("SEÇİLİ HİSSE FAALİYET", self.activity),
             ("FON KARAR MERKEZİ", self.funds),
             ("CANLI LOG", self.log),
         ]
@@ -1608,6 +1611,21 @@ class MainWindow(QMainWindow):
             ]
             compact = all_results[[c for c in visible_columns if c in all_results.columns]].copy()
             self.tum.load(compact)
+
+            trade_columns = [
+                "Hisse", "Yatırım Kararı", "Açılış Fiyatı", "Fiyat", "Gün İçi Hedef",
+                "Gün İçi Yükseliş %", "Günlük Trade Teyit", "AlphaTrend Yönü",
+                "EMA20 Durumu", "BBW %", "BBW Durumu", "MACD-V", "MACD-V Sinyal",
+                "MACD-V Durumu", "Önerilen Stop", "Veri Tarihi", "Veri Durumu",
+            ]
+            trade_columns = [c for c in trade_columns if c in all_results.columns]
+            trade_frame = all_results[trade_columns].copy()
+            if "Günlük Trade Teyit" in trade_frame.columns:
+                rank = trade_frame["Günlük Trade Teyit"].astype(str).eq("4/4 TEYİTLİ").astype(int)
+                trade_frame = trade_frame.assign(_teyit_sira=rank).sort_values(
+                    ["_teyit_sira", "Gün İçi Yükseliş %"], ascending=[False, False]
+                ).drop(columns="_teyit_sira")
+            self.daily_trade.load(trade_frame)
 
             def numeric(name, default=0):
                 if name not in all_results.columns:

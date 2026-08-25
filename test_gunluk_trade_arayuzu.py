@@ -12,10 +12,11 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_old_terminal_view_is_kept_without_separate_trade_page(self):
+    def test_simple_trade_page_exists_and_activity_page_is_removed(self):
         window = MainWindow()
         self.assertIs(window.pages.widget(0), window.terminal)
-        self.assertFalse(hasattr(window, "daily_trade"))
+        self.assertGreaterEqual(window.pages.indexOf(window.daily_trade), 0)
+        self.assertFalse(hasattr(window, "activity"))
         window.close()
 
 

@@ -42,6 +42,7 @@ if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 --hidden-import veri_saglayici ^
 --hidden-import bist_bulteni ^
 --hidden-import borsa_tarayici ^
+--hidden-import gunluk_trade_gostergeleri ^
 --hidden-import rsi_supertrend_stratejisi ^
 --hidden-import pro_moduller ^
 --hidden-import kap_modulu ^

@@ -14,6 +14,7 @@ from intraday_gostergeler import klasik_pivot, pivot_serisi, pozisyon_boyutu, se
 from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
 from veri_saglayici import VeriMetadatasi
 from borsa_tarayici import gun_ici_yukselis_hesapla
+from gunluk_trade_gostergeleri import gunluk_trade_teyitleri, macd_v
 
 
 TZ = ZoneInfo("Europe/Istanbul")
@@ -50,6 +51,17 @@ class DojiTests(unittest.TestCase):
 
 
 class IndicatorTests(unittest.TestCase):
+    def test_macd_v_is_atr_normalized_and_trade_confirmation_has_four_filters(self):
+        idx = pd.date_range("2025-01-01", periods=180, freq="B")
+        close = pd.Series(np.linspace(50, 90, len(idx)) + np.sin(np.arange(len(idx))/4), index=idx)
+        frame = pd.DataFrame({"Open": close-.2, "High": close+1, "Low": close-1,
+                              "Close": close, "Volume": 1_000_000}, index=idx)
+        mv = macd_v(frame)
+        self.assertTrue(np.isfinite(mv.iloc[-1]["MACD_V"]))
+        result = gunluk_trade_teyitleri(frame)
+        self.assertIn(result["gunluk_trade_teyit"], {"4/4 TEYİTLİ", "TEYİT BEKLE"})
+        self.assertIn(result["bbw_durumu"], {"HAREKETLİ", "YATAY / SIKIŞIK"})
+
     def test_open_to_intraday_target_growth_percentage(self):
         target, growth = gun_ici_yukselis_hesapla(35, 36, 38, 2)
         self.assertEqual(target, 37.5)

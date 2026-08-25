@@ -1,4 +1,5 @@
 from veri_saglayici import veri as yf
+from gunluk_trade_gostergeleri import gunluk_trade_teyitleri
 from formasyon_motoru import formasyonlari_tespit_et
 from fibonacci_motoru import fibonacci_analizi
 import pandas as pd
@@ -427,6 +428,7 @@ def teknik_analiz(symbol, kategori):
         profesyonel = profesyonel_analiz(df, bist100_verisi())
         uluslararasi_faktorler = faktorleri_hesapla(df)
         rsi_supertrend = rsi_supertrend_hesapla(df, zaman_dilimi="1G")
+        gunluk_trade = gunluk_trade_teyitleri(df)
 
         # ==========================
         # Mevcut karar sistemi
@@ -517,6 +519,7 @@ def teknik_analiz(symbol, kategori):
             ,**profesyonel
             ,**uluslararasi_faktorler
             ,**rsi_supertrend
+            ,**gunluk_trade
         }
 
     except Exception as e:

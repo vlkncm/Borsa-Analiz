@@ -1,4 +1,15 @@
-# Borsa Analiz Pro MAX v9.0.0
+# Borsa Analiz Pro MAX v9.1.0
+
+## v9.1.0 dört teyitli sade Günlük Trade
+
+- Günlük Trade yeniden ayrı fakat sade bir tablo olarak eklendi; ayrı ağ taraması yapmaz, profesyonel taramanın aynı doğrulanmış raporunu kullanır.
+- Tweet yaklaşımı ölçülebilir dört filtreye çevrildi: RSI tabanlı AlphaTrend yönü, yükselen EMA20, BBW yatay/sıkışık piyasa filtresi ve ATR'ye normalize MACD-V momentumu.
+- MACD-V formülü `100 × (EMA12 − EMA26) / ATR26`; sinyal çizgisi MACD-V'nin EMA9'udur. Pozitif teyit için MACD-V hem sıfırın hem sinyal çizgisinin üzerinde olmalıdır.
+- BBW formülü `100 × (üst Bollinger − alt Bollinger) / SMA20`; son değer 120 barlık geçmişin alt çeyreğindeyse yatay/sıkışık kabul edilir ve tam teyit verilmez.
+- Yükseliş alanı `(gün içi hedef / açılış − 1) × 100` olarak korunur. Tek göstergeden AL üretilmez; dört filtrenin tamamı geçerse `4/4 TEYİTLİ` yazılır.
+- Faaliyet raporu sayfası sol menüden ve masaüstü sayfa akışından kaldırıldı; KAP sayfası korunur.
+
+Kaynak yaklaşımı: [Kıvanç Özbilgiç MACD-V](https://www.tradingview.com/script/mionn7XC-MACD-V-Volatility-Normalized-MACD/). Gösterge fikri yeniden uygulanmış, Pine Script kaynak kodu kopyalanmamıştır.
 
 ## v9.0.0 Sade gün içi yükseliş göstergesi
 
