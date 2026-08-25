@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import time
 import os
+from uygulama_ayarlari import SETTINGS
 import sys
 
 import pandas as pd
@@ -138,8 +139,8 @@ def profesyonel_veri_ekle(results):
     Ortam değişkenleriyle isteğe bağlı açılabilir:
     PRO_KAP=1, PRO_FAALIYET=1
     """
-    kap_aktif = os.environ.get("PRO_KAP", "1") == "1"
-    faaliyet_aktif = os.environ.get("PRO_FAALIYET", "0") == "1"
+    kap_aktif = SETTINGS.pro_kap
+    faaliyet_aktif = SETTINGS.pro_faaliyet
 
     print("\nMakro analiz yapılıyor...")
     makro = makro_analiz_yfinance()
@@ -147,7 +148,7 @@ def profesyonel_veri_ekle(results):
 
     # Performans için tüm 613 yerine en güçlü ilk adaylara temel/haber/KAP ekliyoruz.
     # Varsayılan 30; app.py üzerinden env ile değiştirilebilir.
-    analiz_limiti = int(os.environ.get("PRO_ANALIZ_LIMIT", os.environ.get("KAP_ANALIZ_LIMIT", "100")))
+    analiz_limiti = SETTINGS.pro_analiz_limit
 
     oncelikli = sorted(results, key=lambda x: x.get("guven", 0), reverse=True)
     zenginlestirilecek_liste = [x["symbol"] for x in oncelikli[:analiz_limiti]]
@@ -156,7 +157,7 @@ def profesyonel_veri_ekle(results):
     print(f"Pro analiz limiti: İlk {analiz_limiti} güçlü aday")
 
     if kap_aktif:
-        kap_limiti = max(1, int(os.environ.get("KAP_ANALIZ_LIMIT", "10")))
+        kap_limiti = SETTINGS.kap_analiz_limit
         kap_liste = zenginlestirilecek_liste[:kap_limiti]
         print(f"\nKAP analizi başlıyor. İlk {len(kap_liste)} güçlü aday kontrollü olarak sorgulanacak...")
         kap_sonuclari = kap_toplu_analiz(kap_liste, bekleme=0.35)
@@ -170,7 +171,7 @@ def profesyonel_veri_ekle(results):
         print(f"MTF analiz {idx}/{len(zenginlestirilecek_liste)}: {sym}")
         mtf_sonuclari[sym] = coklu_zaman_dilimi_analizi(sym)
 
-    faaliyet_limiti = int(os.environ.get("FAALIYET_ANALIZ_LIMIT", "10"))
+    faaliyet_limiti = SETTINGS.faaliyet_analiz_limit
     faaliyet_liste = zenginlestirilecek_liste[:faaliyet_limiti]
     if faaliyet_aktif:
         print(f"\nFaaliyet raporu analizi başlıyor. İlk {len(faaliyet_liste)} güçlü aday incelenecek...")
@@ -1212,7 +1213,7 @@ def main():
         reverse=True,
     )
 
-    if os.environ.get("PRO_TEMETTU", "0") == "1":
+    if SETTINGS.pro_temettu:
         print("\nTemettü taraması başlıyor...")
         temettu_df = temettu_toplu_tara(hisseleri_txt_oku(), max_workers=8)
     else:

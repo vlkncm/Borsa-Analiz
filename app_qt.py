@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.1.2"
+APP_VERSION = "10.2.0"
 _CRASH_STREAM = None
 
 
@@ -1432,7 +1432,9 @@ class DailyTradePage(QWidget):
             display["_pot"] = pd.to_numeric(display.get("Hedef Potansiyeli %", 0), errors="coerce").fillna(0)
             display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", 0), errors="coerce").fillna(0)
             display = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
-            columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop", "Hedef Potansiyeli %", "Risk/Getiri"]
+            columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop",
+                       "Hedef Potansiyeli %", "Net Beklenti %", "Hedef Önce Olasılığı %",
+                       "Olasılık %95 Güven Aralığı", "Örnek", "Risk/Getiri", "Piyasa Rejimi", "Veri Zamanı", "Gerekçe"]
             display = display[[c for c in columns if c in display.columns]].reset_index(drop=True)
         if display.empty and not self.report_fallback.empty:
             display = self.report_fallback.copy()

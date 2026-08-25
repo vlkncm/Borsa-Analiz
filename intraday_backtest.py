@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import pandas as pd
 import numpy as np
+from trade_kanitlari import Outcome, label_trade_outcome, mfe_mae, three_way_oos_evidence
 
 
 def islem_sonucu(bars: pd.DataFrame, entry: float, target: float, stop: float,
@@ -24,29 +25,28 @@ def islem_sonucu(bars: pd.DataFrame, entry: float, target: float, stop: float,
             break
     gross = exit_price / entry - 1
     cost = commission_rate * 2 + slippage_rate * 2
-    return {"sonuc": reason, "cikis": exit_price, "brut_getiri": gross,
-            "net_getiri": gross-cost, "maliyet": cost, "belirsiz": ambiguous, "bar_sayisi": bars_seen}
+    outcome, _ = label_trade_outcome(bars, target, stop)
+    excursions = mfe_mae(bars.iloc[:bars_seen], entry)
+    return {"sonuc": reason, "olay": outcome.value, "hedef_once": outcome == Outcome.HEDEF_ONCE,
+            "cikis": exit_price, "brut_getiri": gross, "net_getiri": gross-cost,
+            "maliyet": cost, "belirsiz": ambiguous, "bar_sayisi": bars_seen, **excursions}
 
 
 def ampirik_kanit(outcomes, min_samples: int = 30, prior_strength: int = 20) -> dict:
-    """Zaman sıralı geçmiş sonuçlardan küçültülmüş olasılık ve sağlam aralık."""
+    """Üç sonuçlu, Wilson aralıklı zaman sıralı OOS kanıtı; eski kayıtlarla uyumlu."""
     rows = pd.DataFrame(outcomes).copy()
-    if rows.empty or "net_getiri" not in rows or "hedef_once" not in rows:
-        return {"n": 0, "olasilik": None, "medyan_hareket": None, "p10": None, "p90": None,
-                "kalibrasyon": "Yetersiz örnek"}
-    rows = rows.dropna(subset=["net_getiri", "hedef_once"])
-    n = len(rows)
-    if n < min_samples:
-        return {"n": n, "olasilik": None, "medyan_hareket": None, "p10": None, "p90": None,
-                "kalibrasyon": "Yetersiz örnek"}
-    wins = float(rows["hedef_once"].astype(float).sum())
-    # Beta(1,1) taban oranına küçültme; keyfî olasılık aralığına sıkıştırma yok.
-    base = 0.5
-    probability = (wins + prior_strength * base) / (n + prior_strength)
-    returns = rows["net_getiri"].astype(float).to_numpy()
-    return {"n": n, "olasilik": probability*100, "medyan_hareket": float(np.median(returns))*100,
-            "p10": float(np.quantile(returns, .10))*100, "p90": float(np.quantile(returns, .90))*100,
-            "kalibrasyon": "Beta taban oranına küçültülmüş ampirik OOS"}
+    if "olay" not in rows and "hedef_once" in rows:
+        result_text = rows["sonuc"].astype(str) if "sonuc" in rows else pd.Series("", index=rows.index)
+        rows["olay"] = np.where(rows["hedef_once"].astype(bool), Outcome.HEDEF_ONCE.value,
+                                 np.where(result_text.str.startswith("STOP"), Outcome.STOP_ONCE.value, Outcome.SURE_DOLDU.value))
+    evidence = three_way_oos_evidence(rows, min_samples)
+    returns = pd.to_numeric(rows["net_getiri"], errors="coerce").dropna() if "net_getiri" in rows else pd.Series(dtype=float)
+    evidence.update({"olasilik": evidence["hedef_olasiligi_pct"],
+                     "guven_araligi": evidence["hedef_guven_araligi_pct"],
+                     "medyan_hareket": evidence["medyan_net_getiri_pct"],
+                     "p10": float(returns.quantile(.10)*100) if evidence["yeterli"] else None,
+                     "p90": float(returns.quantile(.90)*100) if evidence["yeterli"] else None})
+    return evidence
 
 
 def performans_ozeti(trades: pd.DataFrame) -> dict:

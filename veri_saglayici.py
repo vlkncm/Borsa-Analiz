@@ -28,11 +28,17 @@ class VeriMetadatasi:
     source: str
     fetched_at: datetime
     last_bar_at: datetime | None
+    symbol: str = ""
+    first_bar_at: datetime | None = None
     exchange_timezone: str = "Europe/Istanbul"
+    interval: str = "1d"
     is_delayed: bool | None = None
     delay_minutes: float | None = None
     is_stale: bool = True
     is_complete_bar: bool = False
+    price_basis: str = "raw"
+    official_close_verified: bool = False
+    corporate_action_warning: bool = False
 
     def dict(self) -> dict:
         return asdict(self)
@@ -67,6 +73,7 @@ def _normalize(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.copy()
+    input_rows = len(out)
     if isinstance(out.columns, pd.MultiIndex):
         out.columns = out.columns.get_level_values(0)
     gerekli = ["Open", "High", "Low", "Close"]
@@ -78,9 +85,24 @@ def _normalize(df: pd.DataFrame | None) -> pd.DataFrame:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     if isinstance(out.index, pd.DatetimeIndex):
         out.index = pd.DatetimeIndex(out.index.as_unit("ns").values)
+    nan_rows = int(out[gerekli].isna().any(axis=1).sum())
     out = out.dropna(subset=gerekli)
-    out = out[(out[gerekli] > 0).all(axis=1)]
-    return out[~out.index.duplicated(keep="last")].sort_index()
+    invalid_price = ~(out[gerekli] > 0).all(axis=1)
+    invalid_volume = out["Volume"].notna() & out["Volume"].lt(0)
+    invalid_ohlc = ((out["High"] < out[["Open", "Close"]].max(axis=1))
+                    | (out["Low"] > out[["Open", "Close"]].min(axis=1))
+                    | (out["High"] < out["Low"]))
+    out = out[~(invalid_price | invalid_volume | invalid_ohlc)]
+    duplicates = int(out.index.duplicated(keep="last").sum())
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    ratios = out["Close"].pct_change(fill_method=None).add(1).replace([float("inf"), float("-inf")], pd.NA)
+    corporate_warning = bool(((ratios > 3) | (ratios < 1/3)).fillna(False).any())
+    out.attrs["quality_report"] = {"input_rows": input_rows, "output_rows": len(out),
+                                   "nan_rows": nan_rows, "invalid_price_rows": int(invalid_price.sum()),
+                                   "invalid_volume_rows": int(invalid_volume.sum()),
+                                   "invalid_ohlc_rows": int(invalid_ohlc.sum()), "duplicate_rows": duplicates}
+    out.attrs["corporate_action_warning"] = corporate_warning
+    return out
 
 
 def _ttl(interval: str) -> int:
@@ -222,9 +244,12 @@ class YahooPiyasaVeriAdapteri:
         last = frame.index[-1].to_pydatetime() if not frame.empty else None
         meta = VeriMetadatasi(
             source=frame.attrs.get("veri_kaynagi", self.source), fetched_at=fetched,
-            last_bar_at=last, is_delayed=True, delay_minutes=None,
+            last_bar_at=last, symbol=symbol, first_bar_at=(frame.index[0].to_pydatetime() if not frame.empty else None),
+            interval="1d", is_delayed=True, delay_minutes=None,
             is_stale=frame.empty or last is None or (fetched.date() - last.date()).days > 4,
-            is_complete_bar=True,
+            is_complete_bar=True, price_basis="raw",
+            official_close_verified="Borsa" in frame.attrs.get("veri_kaynagi", ""),
+            corporate_action_warning=bool(frame.attrs.get("corporate_action_warning", False)),
         )
         return frame, meta
 
@@ -255,8 +280,11 @@ class YahooPiyasaVeriAdapteri:
             stale = stale or delay > minutes * 2
         meta = VeriMetadatasi(
             source=self.source, fetched_at=fetched, last_bar_at=last_completed,
+            symbol=symbol, first_bar_at=(completed.index[0].to_pydatetime() if not completed.empty else None),
+            interval=interval,
             is_delayed=True, delay_minutes=delay, is_stale=stale,
-            is_complete_bar=last_complete,
+            is_complete_bar=last_complete, price_basis="raw",
+            corporate_action_warning=bool(frame.attrs.get("corporate_action_warning", False)),
         )
         return completed, meta
 
