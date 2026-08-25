@@ -80,6 +80,107 @@ def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None
     return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
 
 
+def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
+    """Intraday servis yokken son güvenilir günlük raporu görünür yedek listeye çevirir."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=SADE_KOLONLAR)
+    work = df.copy()
+    price = _num(work, ("Fiyat", "Referans Fiyat"))
+    low = _num(work, ("Önerilen Alış Alt", "Alış Alt"), price)
+    high = _num(work, ("Önerilen Alış Üst", "Alış Üst"), price)
+    target = _num(work, ("Gün İçi Hedef", "Önerilen Satış", "Hedef"))
+    stop = _num(work, ("Önerilen Stop", "Stop Loss", "Stop"))
+    score = _num(work, ("Günlük Trade Skoru", "v4 Güven Puanı", "AI Güven Puanı"))
+    valid = (price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 60)
+    if "Veri Durumu" in work:
+        valid &= work["Veri Durumu"].astype(str).str.upper().eq("GÜVENİLİR")
+    idx = work.index[valid]
+    if idx.empty:
+        return pd.DataFrame(columns=SADE_KOLONLAR)
+    potential = ((target.loc[idx] / price.loc[idx]) - 1) * 100
+    result = pd.DataFrame({
+        "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
+        "Karar": "GÜNCEL FİYATLA DOĞRULA",
+        "Referans Fiyat": price.loc[idx].round(2),
+        "Alım Bölgesi": [f"{a:.2f} – {b:.2f} TL" for a, b in zip(low.loc[idx], high.loc[idx])],
+        "Hedef": target.loc[idx].round(2), "Stop": stop.loc[idx].round(2),
+        "Potansiyel %": potential.round(2), "Tahmini Süre": "Gün içi",
+        "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
+        "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
+    }, index=idx)
+    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+
+
+def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iterable[str] = ()) -> pd.DataFrame:
+    """Katı fırsat filtresi boş kaldığında hesaplanmış hedef/stopu olan izleme adaylarını gösterir."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=SADE_KOLONLAR)
+    work = df.copy()
+    symbols = _text(work, ("Hisse",)).str.replace(".IS", "", regex=False).str.upper()
+    if haric:
+        work = work.loc[~symbols.isin({str(x).replace(".IS", "").upper() for x in haric})].copy()
+    price = _num(work, ("Fiyat", "Referans Fiyat"))
+    low, high = _num(work, ("Önerilen Alış Alt", "Alış Alt"), price), _num(work, ("Önerilen Alış Üst", "Alış Üst"), price)
+    target, stop = _num(work, ("Önerilen Satış", "Hedef 1", "Hedef")), _num(work, ("Önerilen Stop", "Stop Loss", "Stop"))
+    score = _num(work, ("v4 Güven Puanı", "AI Güven Puanı", "Broker Skor"))
+    valid = (price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 50)
+    idx = work.index[valid]
+    if idx.empty:
+        return pd.DataFrame(columns=SADE_KOLONLAR)
+    result = pd.DataFrame({
+        "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
+        "Karar": "TAKİP ET", "Referans Fiyat": price.loc[idx].round(2),
+        "Alım Bölgesi": [f"{a:.2f} – {b:.2f} TL" for a, b in zip(low.loc[idx], high.loc[idx])],
+        "Hedef": target.loc[idx].round(2), "Stop": stop.loc[idx].round(2),
+        "Potansiyel %": (((target.loc[idx] / price.loc[idx]) - 1) * 100).round(2),
+        "Tahmini Süre": sure, "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
+        "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
+    }, index=idx)
+    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+
+
+def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
+    """iPhone/PWA 50 TL altı taramasındaki teknik ve likidite puanını masaüstünde uygular."""
+    columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Skor", "Risk/Getiri"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columns)
+    work = df.copy()
+    price = _num(work, ("Fiyat", "Referans Fiyat"))
+    turnover = _num(work, ("Ortalama Günlük İşlem Tutarı",))
+    e20, e50, e200 = (_num(work, (name,)) for name in ("EMA20", "EMA50", "EMA200"))
+    rsi = _num(work, ("RSI",), 50)
+    macd, signal = _num(work, ("MACD",)), _num(work, ("MACD Signal",))
+    volume_ratio = _num(work, ("Hacim Oranı",), 1)
+    ret20, ret60 = _num(work, ("Son 20 Gün %",)), _num(work, ("Son 60 Gün %",))
+    stop = _num(work, ("Önerilen Stop", "Stop Loss"), price * .97)
+    target = _num(work, ("Önerilen Satış", "Hedef 1"), price * 1.08)
+    rr = (target - price) / (price - stop).replace(0, pd.NA)
+    score = (
+        (price > e20).astype(int) * 12 + (e20 > e50).astype(int) * 18 +
+        (price > e200).astype(int) * 15 + rsi.between(45, 68).astype(int) * 18 +
+        (macd > signal).astype(int) * 15 + (volume_ratio >= 1.15).astype(int) * 12 +
+        ((ret20 > 0) & (ret20 < 20)).astype(int) * 5 + (ret60 > 0).astype(int) * 5 +
+        (rr >= 1.5).astype(int) * 5
+    ).clip(0, 100)
+    valid = price.between(1, 50, inclusive="both") & (turnover >= 5_000_000) & (score >= 48) & (target > price) & (stop < price)
+    idx = work.index[valid]
+    if idx.empty:
+        return pd.DataFrame(columns=columns)
+    status = pd.Series("TEYİT BEKLE", index=idx)
+    status.loc[(score.loc[idx] >= 75) & (price.loc[idx] <= e20.loc[idx] * 1.04)] = "ALIM BÖLGESİNDE"
+    status.loc[price.loc[idx] > e20.loc[idx] * 1.08] = "GERİ ÇEKİLME BEKLE"
+    potential = ((target.loc[idx] / price.loc[idx]) - 1) * 100
+    result = pd.DataFrame({
+        "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
+        "Durum": status, "Mevcut Fiyat": price.loc[idx].round(2),
+        "Alım Bölgesi": [f"{min(p * .98, e):.2f} – {p * 1.01:.2f} TL" for p, e in zip(price.loc[idx], e20.loc[idx])],
+        "Hedef": target.loc[idx].round(2), "Stop": stop.loc[idx].round(2),
+        "Potansiyel %": potential.round(2), "Skor": score.loc[idx].astype(int),
+        "Risk/Getiri": rr.loc[idx].round(2),
+    }, index=idx)
+    return result.sort_values(["Skor", "Risk/Getiri"], ascending=False).head(limit).reset_index(drop=True)
+
+
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:
     """Out-of-sample risk ayarlı puanı en yüksek gerçekçi tutma süresini seçer."""
     candidates = VADE_ADAYLARI[tur]

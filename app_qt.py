@@ -7,8 +7,8 @@ from datetime import datetime
 import pandas as pd
 from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari
 from sade_karar_modeli import (
-    buyume_adaylari, en_iyi_vade, on_x_senaryosu, orta_vadeden_kisa_adaylari_cikar,
-    sade_firsatlar, sure_metni,
+    elli_tl_adaylari, en_iyi_vade, gunluk_rapor_adaylari, on_x_senaryosu,
+    orta_vadeden_kisa_adaylari_cikar, sade_firsatlar, sure_metni, vade_rapor_adaylari,
 )
 from bist_evreni import likit_120_sec
 from bist30 import normalize_bist_sembolu
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.1.1"
+APP_VERSION = "10.1.2"
 _CRASH_STREAM = None
 
 
@@ -1358,6 +1358,7 @@ class DailyTradePage(QWidget):
         self.thread = None
         self.worker = None
         self.results = pd.DataFrame()
+        self.report_fallback = pd.DataFrame()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         title = QLabel("GÜNLÜK TRADE")
@@ -1433,11 +1434,15 @@ class DailyTradePage(QWidget):
             display = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
             columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop", "Hedef Potansiyeli %", "Risk/Getiri"]
             display = display[[c for c in columns if c in display.columns]].reset_index(drop=True)
+        if display.empty and not self.report_fallback.empty:
+            display = self.report_fallback.copy()
         self.table.load(display)
         if not ok:
             self.status.setText("Tarama hatası: " + message.splitlines()[-1])
         elif display.empty:
             self.status.setText("Bugün ölçütleri geçen aday bulunamadı. Veri yetersiz/gecikmeli sonuçlardan işlem üretilmedi.")
+        elif "Karar" in display.columns and display["Karar"].astype(str).eq("GÜNCEL FİYATLA DOĞRULA").any():
+            self.status.setText("Canlı intraday veri alınamadı. Son güvenilir günlük analiz gösteriliyor; işlem öncesinde güncel fiyatı doğrulayın.")
         else:
             counts = display["Sonuç"].value_counts().to_dict()
             self.status.setText(f"Tarama tamamlandı: {counts} | Çift tıklayarak ayrıntıları açın.")
@@ -1734,13 +1739,20 @@ class MainWindow(QMainWindow):
             self.tum.load(compact)
 
             trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
+            if trade_frame.empty:
+                trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
+            self.daily_trade.report_fallback = trade_frame.copy()
             self.daily_trade.table.load(trade_frame)
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
             medium_days, medium_evidence = en_iyi_vade(backtest_frame, "orta")
-            short_source = sheets.get("Kisa Vade", all_results)
-            medium_source = sheets.get("Orta Vade", all_results).copy()
+            short_source = sheets.get("Kisa Vade", pd.DataFrame())
+            medium_source = sheets.get("Orta Vade", pd.DataFrame()).copy()
+            if short_source.empty:
+                short_source = all_results.copy()
+            if medium_source.empty:
+                medium_source = all_results.copy()
             if "Hisse" in all_results:
                 base = all_results.set_index(all_results["Hisse"].astype(str).str.replace(".IS", "", regex=False).str.upper())
                 for source in (short_source, medium_source):
@@ -1751,13 +1763,20 @@ class MainWindow(QMainWindow):
                         if column not in source and column in base:
                             source[column] = keys.map(base[column])
             short_frame = sade_firsatlar(short_source, "kisa", limit=5, sure=sure_metni(short_days))
+            if short_frame.empty:
+                short_frame = vade_rapor_adaylari(all_results, sure_metni(short_days), limit=5)
             medium_source = orta_vadeden_kisa_adaylari_cikar(short_frame, medium_source)
             medium_frame = sade_firsatlar(medium_source, "orta", limit=5, sure=sure_metni(medium_days))
+            if medium_frame.empty:
+                medium_frame = vade_rapor_adaylari(
+                    all_results, sure_metni(medium_days), limit=5,
+                    haric=short_frame.get("Hisse", pd.Series(dtype=str)).tolist(),
+                )
             self.short_term.load(short_frame)
             self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
             self.medium_term.load(medium_frame)
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
-            under_frame = buyume_adaylari(likit_120_sec(all_results), fiyat_limiti=50, limit=20, min_score=45)
+            under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
             ten_frame = on_x_senaryosu(all_results, limit=5)
             self.under_50.load(under_frame)
             self.ten_x.load(ten_frame)

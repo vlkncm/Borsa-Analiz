@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v10.1.1
+# Borsa Analiz Pro MAX v10.1.2
+
+## v10.1.2 görünür sonuç ve 50 TL uyumluluk düzeltmesi
+
+- Dashboard, katı filtre sonuç üretmese bile hesaplanmış ve güvenilir izleme adaylarını gösterir.
+- Günlük Trade intraday servis kesintisinde son güvenilir raporu açık uyarıyla gösterir.
+- Kısa ve orta vade ekranları boş kalmaz; iki listede farklı BIST30 adayları sıralanır.
+- 50 TL Altı analizi iPhone/PWA ile aynı likidite, trend, momentum, hacim ve risk/getiri puanlamasını kullanır.
 
 ## v10.1.1 tarama görevleri düzeltmesi
 
