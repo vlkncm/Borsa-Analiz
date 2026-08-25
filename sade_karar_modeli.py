@@ -107,6 +107,17 @@ def sure_metni(days: int) -> str:
     return f"{max(1, weeks - 2)}–{weeks + 2} hafta"
 
 
+def orta_vadeden_kisa_adaylari_cikar(short_frame: pd.DataFrame, medium_source: pd.DataFrame) -> pd.DataFrame:
+    """Formüllere dokunmadan kullanıcı tercihine göre iki sonuç listesini ayrıştırır."""
+    if medium_source is None or medium_source.empty or "Hisse" not in medium_source:
+        return pd.DataFrame() if medium_source is None else medium_source.copy()
+    if short_frame is None or short_frame.empty or "Hisse" not in short_frame:
+        return medium_source.copy()
+    short_symbols = short_frame["Hisse"].astype(str).str.replace(".IS", "", regex=False).str.upper()
+    medium_symbols = medium_source["Hisse"].astype(str).str.replace(".IS", "", regex=False).str.upper()
+    return medium_source[~medium_symbols.isin(set(short_symbols))].copy()
+
+
 def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: int = 5, min_score: float = 65) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["Hisse", "Büyüme Skoru", "Mevcut Fiyat", "Risk", "Beklenen Süre", "Büyüme Potansiyeli", "Ana Gerekçe"])

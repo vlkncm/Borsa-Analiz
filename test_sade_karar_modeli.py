@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from sade_karar_modeli import buyume_adaylari, en_iyi_vade, on_x_senaryosu, sade_firsatlar
+from sade_karar_modeli import buyume_adaylari, en_iyi_vade, on_x_senaryosu, orta_vadeden_kisa_adaylari_cikar, sade_firsatlar
 from main import sade_ana_rapor
 
 
@@ -31,6 +31,12 @@ class SadeKararModeliTests(unittest.TestCase):
     def test_vade_out_of_sample_sonucundan_secilir(self):
         backtest = pd.DataFrame({"Tutma Süresi": [5, 10, 20], "Ortalama Getiri %": [2, 4, 8], "Max Drawdown %": [4, 3, 3], "Başarı %": [52, 60, 65], "İşlem Sayısı": [30, 30, 30]})
         self.assertEqual(20, en_iyi_vade(backtest, "kisa")[0])
+
+    def test_kisa_adaylari_orta_vadeden_cikarilir(self):
+        short = pd.DataFrame({"Hisse": ["H1", "H2"]})
+        medium = pd.DataFrame({"Hisse": ["H2.IS", "H3.IS"]})
+        result = orta_vadeden_kisa_adaylari_cikar(short, medium)
+        self.assertEqual(["H3.IS"], result["Hisse"].tolist())
 
     def test_buyume_fiyat_limiti_sadece_filtredir(self):
         result = buyume_adaylari(self.frame, fiyat_limiti=50, limit=20, min_score=45)

@@ -14,9 +14,9 @@ class Bist30EvreniTests(unittest.TestCase):
         self.assertTrue(all(symbol.endswith(".IS") for symbol in BIST30_SEMBOLLERI))
         self.assertIn("2026-Q3", BIST30_DONEMI)
 
-    def test_eski_genis_liste_artik_kullanilmaz(self):
-        with patch("main.karantinadaki_semboller", return_value=set()):
-            self.assertEqual(main.hisseleri_txt_oku("bist_hisseleri_613_aktif.txt"), list(BIST30_SEMBOLLERI))
+    def test_toplu_tarama_aktif_bist_evrenini_kullanir(self):
+        with patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
+            self.assertEqual(main.hisseleri_txt_oku(), ["ASELS.IS", "MEGMT.IS"])
 
     def test_bist30_disi_tek_hisse_kabul_edilir(self):
         self.assertEqual(normalize_symbol("MEGMT"), "MEGMT.IS")

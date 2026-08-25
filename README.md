@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v10.0.1
+# Borsa Analiz Pro MAX v10.1.0
+
+## v10.1.0 referans dashboard ve geniş BIST taraması
+
+- Koyu lacivert ve yeşil vurgulu yeni ana dashboard eklendi.
+- Günlük Trade aktif BIST evrenini tarar; ağ sorusunda 613 hisselik yerel liste kullanılır.
+- Kısa ve orta vade listeleri sonuç aşamasında birbirinden ayrılır; analiz formülleri korunur.
+- 50 TL altı analiz, likiditesi en yüksek 120 hisse içinden en iyi 20 sonucu seçer.
+- Portföy menüsü Takip Listem olarak değiştirildi; KAP bildirim ekranı bulunmaz.
 
 ## v10.0.1 kullanılabilirlik düzeltmeleri
 

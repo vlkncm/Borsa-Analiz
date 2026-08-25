@@ -27,6 +27,7 @@ from gunluk_islem_plani import gun_sonu_plani
 from faktor_model_portfoy import faktor_model_portfoyu
 from usta_yatirimci_modeli import usta_model_portfoyu
 from bist30 import BIST30_DONEMI, BIST30_KUMESI, bist30_hisseleri
+from bist_evreni import tum_bist_hisseleri
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -86,13 +87,13 @@ def dogrulanmis_hisse_dosyasi():
 
 
 def hisseleri_txt_oku(dosya_adi=None):
-    """Yalnizca resmi donemsel BIST 30 analiz evrenini dondurur."""
-    symbols = bist30_hisseleri()
+    """Aktif BIST pay evrenini döndürür; analiz formüllerini değiştirmez."""
+    symbols = tum_bist_hisseleri()
     quarantined = set(karantinadaki_semboller())
     if quarantined:
         symbols = [symbol for symbol in symbols if symbol not in quarantined]
-        print(f"Veri hatasi nedeniyle karantinada: {len(BIST30_KUMESI & quarantined)} BIST 30 hissesi")
-    print(f"BIST 30 analiz evreni: {len(symbols)} sembol | Donem: {BIST30_DONEMI}")
+        print(f"Veri hatasi nedeniyle karantinada: {len(set(symbols) & quarantined)} hisse")
+    print(f"Aktif BIST analiz evreni: {len(symbols)} sembol")
     return symbols
 
 
@@ -102,7 +103,7 @@ def dogrulanmis_listeyi_kaydet(results):
         for item in results
         if str(item.get("symbol", "")).strip().endswith(".IS")
     })
-    if not symbols or not set(symbols).issubset(BIST30_KUMESI):
+    if not symbols:
         print(f"Doğrulanmış liste kaydedilmedi; sayı yetersiz: {len(symbols)}")
         return
     hedef = dogrulanmis_hisse_dosyasi()
