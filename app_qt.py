@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.0.0"
+APP_VERSION = "10.0.1"
 _CRASH_STREAM = None
 
 
@@ -1461,13 +1461,16 @@ class HomePage(QWidget):
         layout.addWidget(self.market)
         cards = QHBoxLayout()
         self.counts = {}
+        self.previews = {}
         for key, caption in (("trade", "GÜNLÜK TRADE"), ("short", "KISA VADE"), ("medium", "ORTA VADE")):
             card = QFrame(); card.setObjectName("metricCard")
             box = QVBoxLayout(card)
             label = QLabel(caption); label.setObjectName("metricCaption")
             value = QLabel("0 uygun aday"); value.setObjectName("metricValue")
-            box.addWidget(label); box.addWidget(value); cards.addWidget(card)
+            preview = QLabel("Henüz veri yok"); preview.setObjectName("homePreview"); preview.setWordWrap(True)
+            box.addWidget(label); box.addWidget(value); box.addWidget(preview); cards.addWidget(card)
             self.counts[key] = value
+            self.previews[key] = preview
         layout.addLayout(cards)
         self.trade_button = QPushButton("BUGÜNÜN TRADE ADAYLARINI BUL")
         self.trade_button.setObjectName("heroButton")
@@ -1478,24 +1481,42 @@ class HomePage(QWidget):
         layout.addWidget(note)
         layout.addStretch()
 
-    def update_state(self, trade: int, short: int, medium: int, market: str):
+    @staticmethod
+    def _preview(frame):
+        if frame is None or frame.empty:
+            return "Uygun aday bulunamadı"
+        rows = []
+        for _, row in frame.head(3).iterrows():
+            symbol = row.get("Hisse", "-")
+            potential = row.get("Potansiyel %", 0)
+            score = row.get("Güven Skoru", 0)
+            rows.append(f"{symbol}   +%{float(potential):.1f}   Güven {int(score)}")
+        return "\n".join(rows)
+
+    def update_state(self, trade, short, medium, market: str):
         self.market.setText(f"Piyasa: {market}")
-        self.counts["trade"].setText(f"{trade} uygun aday")
-        self.counts["short"].setText(f"{short} uygun aday")
-        self.counts["medium"].setText(f"{medium} uygun aday")
+        for key, frame in (("trade", trade), ("short", short), ("medium", medium)):
+            self.counts[key].setText(f"{len(frame)} uygun aday")
+            self.previews[key].setText(self._preview(frame))
 
 
 class DecisionPage(SimpleTable):
+    scan_requested = Signal()
+
     def __init__(self, title, subtitle=""):
         super().__init__(title, subtitle)
         self.row_selected.connect(self.show_reason)
         if title == "GÜNLÜK TRADE":
+            scan = QPushButton("BUGÜNÜN TRADE TARAMASINI BAŞLAT")
+            scan.setObjectName("heroButton")
+            scan.clicked.connect(self.scan_requested.emit)
+            self.layout().insertWidget(3, scan)
             controls = QHBoxLayout()
             self.live_price = QDoubleSpinBox(); self.live_price.setRange(0.01, 1_000_000); self.live_price.setDecimals(2); self.live_price.setPrefix("Güncel fiyat  "); self.live_price.setSuffix(" TL")
             check = QPushButton("SEÇİLİ ADAYI KONTROL ET"); check.clicked.connect(self.check_live_price)
             self.live_result = QLabel("Adayı seçip aracı kurumunuzdaki güncel fiyatı girebilirsiniz."); self.live_result.setObjectName("subText")
             controls.addWidget(self.live_price); controls.addWidget(check); controls.addWidget(self.live_result, 1)
-            self.layout().insertLayout(3, controls)
+            self.layout().insertLayout(4, controls)
 
     def show_reason(self, data):
         from sade_karar_modeli import sade_gerekce
@@ -1549,19 +1570,17 @@ class MainWindow(QMainWindow):
         self.single = SingleAnalysisPage()
         self.sale = SalePage()
         self.track = TrackPage()
-        self.kap = SelectedInfoPage("kap")
         self.funds = FundAnalysisPage()
         self.daily_trade = DecisionPage("GÜNLÜK TRADE", "En fazla 5 aday. Veriler yaklaşık 15 dakika gecikmeli olabilir; işlem öncesinde güncel fiyatı aracı kurumunuzdan kontrol edin.")
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
-        self.early_growth = SimpleTable("ERKEN BÜYÜME ADAYLARI", "Finansal büyüme, kalite, borç ve değerleme verileri birlikte değerlendirilir.")
-        self.under_50 = SimpleTable("50 TL ALTI BÜYÜME ADAYLARI", "50 TL yalnızca filtredir; düşük nominal fiyat şirketin ucuz olduğu anlamına gelmez.")
+        self.under_50 = SimpleTable("50 TL ALTI HİSSE FIRSATLARI", "Fiyat yalnızca ilk filtredir. Büyüme, kârlılık, borç, değerleme, işlem gücü ve risk birlikte incelenir; en fazla 20 seçenek sunulur.")
         self.ten_x = SimpleTable("UZUN VADE YÜKSEK BÜYÜME", "10X senaryosu çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.home, self.daily_trade, self.short_term, self.medium_term, self.early_growth,
-                  self.under_50, self.ten_x, self.track, self.sale, self.single, self.kap, self.log]:
+        for p in [self.home, self.daily_trade, self.short_term, self.medium_term,
+                  self.under_50, self.ten_x, self.track, self.sale, self.single, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1582,10 +1601,9 @@ class MainWindow(QMainWindow):
         menu = [
             ("BUGÜN", self.home), ("  Günlük Trade", self.daily_trade),
             ("KISA VADE", self.short_term), ("ORTA VADE", self.medium_term),
-            ("BÜYÜME · Erken Büyüme", self.early_growth), ("  50 TL Altı", self.under_50),
-            ("  Uzun Vadeli Yüksek Büyüme", self.ten_x),
+            ("BÜYÜME · 50 TL Altı", self.under_50), ("  Uzun Vadeli Yüksek Büyüme", self.ten_x),
             ("PORTFÖY · Mevcut Portföy", self.track), ("  Satış / Çıkış Kararı", self.sale),
-            ("DETAY · Tek Hisse İncele", self.single), ("  KAP / Şirket Araştırma", self.kap),
+            ("DETAY · Tek Hisse İncele", self.single),
         ]
         for text, page in menu:
             button = QPushButton(text)
@@ -1658,6 +1676,7 @@ class MainWindow(QMainWindow):
         )
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
+        self.daily_trade.scan_requested.connect(self.scan_daily_trade)
         self.pages.setCurrentWidget(self.home)
 
         self.load_report()
@@ -1697,16 +1716,14 @@ class MainWindow(QMainWindow):
             self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
             self.medium_term.load(medium_frame)
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
-            growth_frame = buyume_adaylari(all_results, limit=5)
-            under_frame = buyume_adaylari(all_results, fiyat_limiti=50, limit=5)
+            under_frame = buyume_adaylari(all_results, fiyat_limiti=50, limit=20, min_score=45)
             ten_frame = on_x_senaryosu(all_results, limit=5)
-            self.early_growth.load(growth_frame)
             self.under_50.load(under_frame)
             self.ten_x.load(ten_frame)
 
             market_score = pd.to_numeric(all_results.get("v4 Güven Puanı", pd.Series(dtype=float)), errors="coerce").median()
             market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
-            self.home.update_state(len(trade_frame), len(short_frame), len(medium_frame), market)
+            self.home.update_state(trade_frame, short_frame, medium_frame, market)
 
             def numeric(name, default=0):
                 if name not in all_results.columns:
@@ -1791,6 +1808,10 @@ class MainWindow(QMainWindow):
         self.scan_process.finished.connect(self._scan_process_finished)
         self.scan_process.start()
 
+    def scan_daily_trade(self):
+        self._scan_target = self.daily_trade
+        self.scan()
+
     def _append_process_text(self, text, is_error=False):
         attr = "_scan_stderr_buffer" if is_error else "_scan_stdout_buffer"
         buffer = getattr(self, attr) + text
@@ -1838,7 +1859,8 @@ class MainWindow(QMainWindow):
             self.log.append("\nTARAMA TAMAMLANDI.")
             self.load_report()
             self.log.append(f"Excel raporu: {rapor_yolu()}")
-            self.pages.setCurrentWidget(self.terminal)
+            self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home))
+            self._scan_target = self.home
         else:
             self.log.append(message)
             if rapor_yolu().exists():

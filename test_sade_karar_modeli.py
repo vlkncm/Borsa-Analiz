@@ -33,7 +33,7 @@ class SadeKararModeliTests(unittest.TestCase):
         self.assertEqual(20, en_iyi_vade(backtest, "kisa")[0])
 
     def test_buyume_fiyat_limiti_sadece_filtredir(self):
-        result = buyume_adaylari(self.frame, fiyat_limiti=50)
+        result = buyume_adaylari(self.frame, fiyat_limiti=50, limit=20, min_score=45)
         self.assertTrue((result["Mevcut Fiyat"] < 50).all())
         self.assertIn("Büyüme Skoru", result)
 

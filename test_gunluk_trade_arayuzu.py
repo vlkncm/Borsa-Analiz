@@ -18,6 +18,9 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
         self.assertGreaterEqual(window.pages.indexOf(window.daily_trade), 0)
         self.assertEqual(window.daily_trade.table.horizontalScrollBarPolicy().value, 1)
         self.assertLessEqual(window.daily_trade.table.columnCount(), 10)
+        self.assertFalse(hasattr(window, "early_growth"))
+        self.assertFalse(hasattr(window, "kap"))
+        self.assertTrue(hasattr(window.daily_trade, "scan_requested"))
         self.assertFalse(hasattr(window, "activity"))
         window.close()
 

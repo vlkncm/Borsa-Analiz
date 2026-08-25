@@ -107,7 +107,7 @@ def sure_metni(days: int) -> str:
     return f"{max(1, weeks - 2)}–{weeks + 2} hafta"
 
 
-def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: int = 5) -> pd.DataFrame:
+def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: int = 5, min_score: float = 65) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["Hisse", "Büyüme Skoru", "Mevcut Fiyat", "Risk", "Beklenen Süre", "Büyüme Potansiyeli", "Ana Gerekçe"])
     work = df.copy()
@@ -124,7 +124,7 @@ def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: 
     valuation_bonus = (35 - valuation).clip(0, 25)
     debt_penalty = (debt - 1).clip(0, 4).mul(7)
     score = (financial * .25 + quality * .25 + momentum * .15 + fundamental * .25 + valuation_bonus * .4 - debt_penalty).clip(0, 100)
-    valid = (price > 0) & (score >= 65)
+    valid = (price > 0) & (score >= min_score)
     if fiyat_limiti is not None:
         valid &= price < fiyat_limiti
     work = work.loc[valid].copy()

@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v10.0.0
+# Borsa Analiz Pro MAX v10.0.1
+
+## v10.0.1 kullanılabilirlik düzeltmeleri
+
+- Bugün ekranına görünür hisse, potansiyel ve güven önizlemeleri eklendi.
+- Günlük Trade ekranına taramayı doğrudan başlatan düğme eklendi.
+- Erken Büyüme ve KAP menüleri kaldırıldı.
+- 50 TL altı analiz en fazla 20 seçenek sunacak şekilde genişletildi.
 
 ## v10.0.0 sade ve karar odaklı arayüz
 
