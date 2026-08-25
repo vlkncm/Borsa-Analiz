@@ -10,32 +10,20 @@ import numpy as np
 import pandas as pd
 
 from mum_formasyonlari import mum_formasyonu_tespit
+from teknik_gostergeler import atr as canonical_atr, bollinger_bands, ema, macd_v as canonical_macd_v, rsi as canonical_rsi
 
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1/period, adjust=False, min_periods=period).mean()
-    rs = gain / loss.replace(0, np.nan)
-    out = 100 - 100/(1+rs)
-    return out.where(loss.ne(0), 100.0).where(gain.ne(0), 0.0).fillna(50.0)
+    return canonical_rsi(close, period)
 
 
 def _atr(frame: pd.DataFrame, period: int) -> pd.Series:
-    prev = frame["Close"].shift(1)
-    tr = pd.concat([(frame["High"]-frame["Low"]), (frame["High"]-prev).abs(),
-                    (frame["Low"]-prev).abs()], axis=1).max(axis=1)
-    return tr.ewm(alpha=1/period, adjust=False, min_periods=period).mean()
+    return canonical_atr(frame, period)
 
 
 def macd_v(frame: pd.DataFrame, fast: int = 12, slow: int = 26,
            signal: int = 9, atr_period: int = 26) -> pd.DataFrame:
-    close = pd.to_numeric(frame["Close"], errors="coerce")
-    atr = _atr(frame, atr_period).replace(0, np.nan)
-    value = 100 * (close.ewm(span=fast, adjust=False).mean()-close.ewm(span=slow, adjust=False).mean())/atr
-    signal_line = value.ewm(span=signal, adjust=False).mean()
-    return pd.DataFrame({"MACD_V": value, "MACD_V_SIGNAL": signal_line,
-                         "MACD_V_HIST": value-signal_line}, index=frame.index)
+    return canonical_macd_v(frame, fast, slow, signal, atr_period)
 
 
 def alpha_trend_rsi(frame: pd.DataFrame, period: int = 14, coefficient: float = 1.0) -> pd.DataFrame:
@@ -68,10 +56,8 @@ def gunluk_trade_teyitleri(frame: pd.DataFrame) -> dict:
     alpha = alpha_trend_rsi(data)
     mv = macd_v(data)
     close = data["Close"]
-    ema20 = close.ewm(span=20, adjust=False).mean()
-    basis = close.rolling(20).mean()
-    deviation = close.rolling(20).std(ddof=0)
-    bbw = 100 * (4*deviation) / basis.replace(0, np.nan)
+    ema20 = ema(close, 20)
+    bbw = bollinger_bands(close, 20, 2.0, 0)["BBW"]
     quiet_threshold = bbw.rolling(120, min_periods=30).quantile(.25)
     last_bbw, last_threshold = float(bbw.iloc[-1]), float(quiet_threshold.iloc[-1])
     bbw_status = "YATAY / SIKIŞIK" if pd.notna(last_threshold) and last_bbw <= last_threshold else "HAREKETLİ"

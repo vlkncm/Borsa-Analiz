@@ -4,41 +4,26 @@ from pathlib import Path
 import math
 import pandas as pd
 from veri_saglayici import veri as yf
+from teknik_gostergeler import atr, ema, macd, rsi
+from sinyal_pipeline import FORMULA_VERSION, STRATEGY_VERSION, daily_features, daily_raw_signal
+from trade_kanitlari import label_trade_outcome, mfe_mae
 
 
 def rsi_hesapla(df, period=14):
-    delta = df["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-
-    # pd.NA kullanmak seriyi ``object`` tipine ceviriyor ve sifir kayipli
-    # (kesintisiz yukselen) serileri yanlislikla RSI=50 yapiyordu.
-    rs = avg_gain / avg_loss.mask(avg_loss == 0)
-    rsi = 100 - (100 / (1 + rs))
-    rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
-    rsi = rsi.mask((avg_gain == 0) & (avg_loss > 0), 0.0)
-    rsi = rsi.mask((avg_gain == 0) & (avg_loss == 0), 50.0)
-    return rsi.fillna(50.0).astype(float)
+    """Deprecated: v10.2 kanonik RSI motoruna yönlendirir."""
+    return rsi(df["Close"], period).fillna(50.0)
 
 
 def macd_hesapla(df):
-    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    """Deprecated: v10.2 kanonik MACD motoruna yönlendirir."""
+    values = macd(df["Close"])
+    return values["MACD"], values["MACD_SIGNAL"]
 
 
 def atr_hesapla(df, period=14):
-    high_low = df["High"] - df["Low"]
-    high_close = (df["High"] - df["Close"].shift()).abs()
-    low_close = (df["Low"] - df["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
-    return atr
+    """Deprecated: v10.2 kanonik Wilder ATR motoruna yönlendirir."""
+    values = atr(df, period)
+    return values.bfill().fillna(0.0)
 
 
 def backtest_hisse(
@@ -73,11 +58,8 @@ def backtest_hisse(
 
         df = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"]).copy()
 
-        df["RSI"] = rsi_hesapla(df)
-        df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
-        df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
-        df["MACD"], df["MACD_SIGNAL"] = macd_hesapla(df)
-        df["ATR"] = atr_hesapla(df)
+        df = daily_features(df)
+        df["RAW_SIGNAL"] = daily_raw_signal(df)
 
         islemler = []
         i = 60
@@ -94,18 +76,7 @@ def backtest_hisse(
             macd_signal = float(row["MACD_SIGNAL"])
             atr = float(row["ATR"]) if not math.isnan(float(row["ATR"])) else price * 0.03
 
-            sinyal = (
-                price > ema20 > ema50 and
-                macd > macd_signal and
-                45 <= rsi <= 68
-            )
-
-            yeni_macd_kesisim = (
-                float(prev["MACD"]) <= float(prev["MACD_SIGNAL"]) and
-                macd > macd_signal
-            )
-
-            if sinyal and yeni_macd_kesisim:
+            if bool(row["RAW_SIGNAL"]):
                 # Sinyal ancak kapanistan sonra kesinlesir. Ayni kapanistan almak
                 # ileriye-bakis yanliligi yaratir; en erken sonraki acilista girilir.
                 entry_i = i + 1
@@ -143,6 +114,9 @@ def backtest_hisse(
 
                 brut_getiri = ((cikis - giris) / giris) * 100 if giris > 0 else 0
                 getiri = brut_getiri - (2 * komisyon_bps / 100)
+                evaluated_bars = df.iloc[entry_i:j+1]
+                event, _ = label_trade_outcome(evaluated_bars, hedef, stop)
+                excursions = mfe_mae(evaluated_bars, giris)
 
                 islemler.append({
                     "Hisse": symbol,
@@ -156,7 +130,9 @@ def backtest_hisse(
                     "Getiri %": round(getiri, 2),
                     "Brut Getiri %": round(brut_getiri, 2),
                     "Tahmini Maliyet %": round(2 * komisyon_bps / 100, 3),
-                    "Holding Gün": holding_days
+                    "Holding Gün": holding_days, "Olay": event.value,
+                    "MFE %": excursions["mfe_pct"], "MAE %": excursions["mae_pct"],
+                    "Formül Sürümü": FORMULA_VERSION, "Strateji Sürümü": STRATEGY_VERSION,
                 })
 
                 # Aynı sinyal üst üste işlem açmasın diye çıkış sonrasına atla

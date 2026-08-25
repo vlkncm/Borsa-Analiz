@@ -5,6 +5,7 @@ import time
 from typing import Dict, List, Any
 
 import pandas as pd
+from teknik_gostergeler import ema
 from veri_saglayici import veri as yf
 
 
@@ -264,9 +265,9 @@ def makro_analiz_yfinance(yalniz_bist100: bool = False) -> Dict[str, Any]:
             if len(close) < 25:
                 continue
             son = guvenli_float(close.iloc[-1])
-            ema20 = guvenli_float(close.ewm(span=20, adjust=False).mean().iloc[-1])
-            ema50 = guvenli_float(close.ewm(span=50, adjust=False).mean().iloc[-1])
-            ema200 = guvenli_float(close.ewm(span=200, adjust=False).mean().iloc[-1])
+            ema20 = guvenli_float(ema(close, 20).iloc[-1])
+            ema50 = guvenli_float(ema(close, 50).iloc[-1])
+            ema200 = guvenli_float(ema(close, 200).iloc[-1])
             ret20 = guvenli_float(close.pct_change(20).iloc[-1] * 100)
 
             sonuc[f"{isim}_son"] = son

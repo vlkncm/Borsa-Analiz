@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Tuple
 
 import pandas as pd
 from veri_saglayici import veri as yf
+from teknik_gostergeler import ema, macd, rsi
 
 import matplotlib
 matplotlib.use("Agg")
@@ -26,22 +27,14 @@ def guvenli_float(x, default=0.0):
 
 
 def rsi_hesapla(close: pd.Series, period=14):
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.fillna(50)
+    """Deprecated: v10.2 kanonik RSI motoruna yönlendirir."""
+    return rsi(close, period)
 
 
 def macd_hesapla(close: pd.Series):
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    """Deprecated: v10.2 kanonik MACD motoruna yönlendirir."""
+    values = macd(close)
+    return values["MACD"], values["MACD_SIGNAL"]
 
 
 def timeframe_analiz(symbol: str, period: str, interval: str) -> Dict[str, Any]:
@@ -69,9 +62,9 @@ def timeframe_analiz(symbol: str, period: str, interval: str) -> Dict[str, Any]:
 
         close = df["Close"]
         price = guvenli_float(close.iloc[-1])
-        ema20 = guvenli_float(close.ewm(span=20, adjust=False).mean().iloc[-1])
-        ema50 = guvenli_float(close.ewm(span=50, adjust=False).mean().iloc[-1])
-        ema100 = guvenli_float(close.ewm(span=100, adjust=False).mean().iloc[-1]) if len(df) >= 100 else ema50
+        ema20 = guvenli_float(ema(close, 20).iloc[-1])
+        ema50 = guvenli_float(ema(close, 50).iloc[-1])
+        ema100 = guvenli_float(ema(close, 100).iloc[-1]) if len(df) >= 100 else ema50
 
         rsi = guvenli_float(rsi_hesapla(close).iloc[-1], 50)
         macd, signal = macd_hesapla(close)
@@ -224,9 +217,9 @@ def grafik_olustur(symbol: str, item: Dict[str, Any], output_dir: str = "output/
         for column in ["Open", "High", "Low", "Close", "Volume"]:
             df[column] = pd.to_numeric(df[column], errors="coerce")
         df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
-        df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
-        df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
-        df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
+        df["EMA20"] = ema(df["Close"], 20)
+        df["EMA50"] = ema(df["Close"], 50)
+        df["EMA200"] = ema(df["Close"], 200)
         df["RSI"] = rsi_hesapla(df["Close"])
         df["MACD"], df["MACD_SINYAL"] = macd_hesapla(df["Close"])
 

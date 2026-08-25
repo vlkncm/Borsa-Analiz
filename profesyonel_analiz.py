@@ -5,6 +5,9 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
+from teknik_gostergeler import (bollinger_bands, cci as canonical_cci, cmf, ema, ichimoku as canonical_ichimoku,
+    mfi as canonical_mfi, obv as canonical_obv, roc, rsi as canonical_rsi, sharpe as canonical_sharpe,
+    sma, sortino as canonical_sortino, stochastic_rsi, supertrend as canonical_supertrend)
 
 
 VADELER = {
@@ -39,37 +42,11 @@ def _ileri_getiri(close: pd.Series, gun: int) -> pd.Series:
 
 def _broker_gostergeleri(work: pd.DataFrame) -> Dict[str, Any]:
     close, high, low = work["Close"], work["High"], work["Low"]
-    typical = (high + low + close) / 3
-    cci = (typical - typical.rolling(20).mean()) / (0.015 * typical.rolling(20).apply(
-        lambda x: np.mean(np.abs(x - np.mean(x))), raw=True
-    ).replace(0, np.nan))
-
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    atr10 = tr.ewm(alpha=0.1, adjust=False).mean()
-    hl2 = (high + low) / 2
-    upper = hl2 + 3 * atr10
-    lower = hl2 - 3 * atr10
-    supertrend = pd.Series(index=work.index, dtype=float)
-    direction = pd.Series(index=work.index, dtype=float)
-    supertrend.iloc[0], direction.iloc[0] = upper.iloc[0], -1
-    for i in range(1, len(work)):
-        if close.iloc[i] > upper.iloc[i - 1]:
-            direction.iloc[i] = 1
-        elif close.iloc[i] < lower.iloc[i - 1]:
-            direction.iloc[i] = -1
-        else:
-            direction.iloc[i] = direction.iloc[i - 1]
-            if direction.iloc[i] > 0:
-                lower.iloc[i] = max(lower.iloc[i], lower.iloc[i - 1])
-            else:
-                upper.iloc[i] = min(upper.iloc[i], upper.iloc[i - 1])
-        supertrend.iloc[i] = lower.iloc[i] if direction.iloc[i] > 0 else upper.iloc[i]
-
-    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
-    kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
-    span_a = ((tenkan + kijun) / 2).shift(26)
-    span_b = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+    cci = canonical_cci(work, 20)
+    st = canonical_supertrend(work, 10, 3.0)
+    supertrend, direction = st["SUPERTREND"], st["SUPERTREND_DIRECTION"]
+    ichi = canonical_ichimoku(work)
+    tenkan, kijun, span_a, span_b = ichi["TENKAN"], ichi["KIJUN"], ichi["SPAN_A"], ichi["SPAN_B"]
     cloud_top = pd.concat([span_a, span_b], axis=1).max(axis=1)
     cloud_bottom = pd.concat([span_a, span_b], axis=1).min(axis=1)
     ichimoku = "BULUT ÜSTÜ" if close.iloc[-1] > cloud_top.iloc[-1] else (
@@ -125,36 +102,24 @@ def profesyonel_analiz(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = Non
     volume = pd.to_numeric(work.get("Volume", 0), errors="coerce").fillna(0)
     ret = close.pct_change()
 
-    ema20 = close.ewm(span=20, adjust=False).mean()
-    ema50 = close.ewm(span=50, adjust=False).mean()
-    sma200 = close.rolling(200).mean()
-    std20 = close.rolling(20).std(ddof=0)
-    bb_z = (close - close.rolling(20).mean()) / std20.replace(0, np.nan)
-    roc20 = close.pct_change(20) * 100
-    momentum60 = close.pct_change(60) * 100
+    ema20, ema50, sma200 = ema(close, 20), ema(close, 50), sma(close, 200)
+    bands = bollinger_bands(close)
+    std20 = (bands["BB_UPPER"]-bands["BB_MIDDLE"])/2
+    bb_z = (close-bands["BB_MIDDLE"])/std20.replace(0, np.nan)
+    roc20 = roc(close, 20)
+    momentum60 = roc(close, 60)
 
     delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-    rsi = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
-    stoch_rsi = (rsi - rsi.rolling(14).min()) / (rsi.rolling(14).max() - rsi.rolling(14).min()).replace(0, np.nan) * 100
+    rsi = canonical_rsi(close, 14)
+    stoch_rsi = stochastic_rsi(close, 14)
 
-    signed_volume = np.sign(delta.fillna(0)) * volume
-    obv = signed_volume.cumsum()
+    obv = canonical_obv(work)
     obv_trend = obv.diff(20)
-    money_flow_multiplier = ((close - low) - (high - close)) / (high - low).replace(0, np.nan)
-    cmf20 = (money_flow_multiplier * volume).rolling(20).sum() / volume.rolling(20).sum().replace(0, np.nan)
-    typical = (high + low + close) / 3
-    raw_flow = typical * volume
-    positive_flow = raw_flow.where(typical.diff() > 0, 0).rolling(14).sum()
-    negative_flow = raw_flow.where(typical.diff() < 0, 0).rolling(14).sum()
-    mfi = 100 - 100 / (1 + positive_flow / negative_flow.replace(0, np.nan))
+    cmf20 = cmf(work, 20)
+    mfi = canonical_mfi(work, 14)
 
-    ann_return = ret.rolling(126).mean() * 252
-    ann_vol = ret.rolling(126).std(ddof=0) * math.sqrt(252)
-    downside = ret.where(ret < 0, 0).rolling(126).std(ddof=0) * math.sqrt(252)
-    sharpe = ann_return / ann_vol.replace(0, np.nan)
-    sortino = ann_return / downside.replace(0, np.nan)
+    sharpe_value = canonical_sharpe(ret.tail(126))
+    sortino_value = canonical_sortino(ret.tail(126))
 
     current = {
         "trend": bool(close.iloc[-1] > ema20.iloc[-1] > ema50.iloc[-1]),
@@ -177,8 +142,8 @@ def profesyonel_analiz(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = Non
         "obv_trend_20": round(_son(obv_trend), 0),
         "cmf_20": round(_son(cmf20), 3),
         "mfi_14": round(_son(mfi, 50), 2),
-        "sharpe_126": round(_son(sharpe), 2),
-        "sortino_126": round(_son(sortino), 2),
+        "sharpe_126": round(sharpe_value, 2),
+        "sortino_126": round(sortino_value, 2),
     }
     result.update(_broker_gostergeleri(work))
     result.update(_bootstrap_senaryolari(close))
@@ -216,7 +181,7 @@ def profesyonel_analiz(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = Non
 
     hacim_puani = 100 * max(0.0, min(1.0, (_son(cmf20) + 0.25) / 0.5))
     trend_puani = 100 if current["trend"] and current["long_trend"] else (60 if current["long_trend"] else 25)
-    risk_puani = max(0.0, min(100.0, 50 + _son(sharpe) * 15 + _son(sortino) * 8))
+    risk_puani = max(0.0, min(100.0, 50 + sharpe_value * 15 + sortino_value * 8))
     kanit = (sum(alt_sinirlar) / len(alt_sinirlar) * 100) if alt_sinirlar else 0.0
     result["profesyonel_kanit_puani"] = round(kanit * 0.55 + trend_puani * 0.20 + hacim_puani * 0.10 + risk_puani * 0.15, 1)
     result["profesyonel_not"] = (

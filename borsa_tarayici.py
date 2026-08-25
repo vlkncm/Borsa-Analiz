@@ -10,6 +10,8 @@ from profesyonel_analiz import profesyonel_analiz
 from uluslararasi_faktorler import faktorleri_hesapla
 from bist30 import BIST30_SEMBOLLERI
 from rsi_supertrend_stratejisi import hesapla as rsi_supertrend_hesapla
+from teknik_gostergeler import adx, atr, macd, rsi
+from sinyal_pipeline import daily_features
 
 _BENCHMARK_LOCK = threading.Lock()
 _BENCHMARK_CACHE = None
@@ -32,24 +34,14 @@ SURPRISE_LIST = []
 
 
 def rsi_hesapla(df, period=14):
-    delta = df["Close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    """Deprecated: v10.2 kanonik RSI motoruna yönlendirir."""
+    return rsi(df["Close"], period)
 
 
 def macd_hesapla(df):
-    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
+    """Deprecated: v10.2 kanonik MACD motoruna yönlendirir."""
+    values = macd(df["Close"])
+    return values["MACD"], values["MACD_SIGNAL"]
 
 
 
@@ -103,31 +95,13 @@ def veri_islem_gunu_gecikmesi(veri_tarihi, simdi=None) -> int:
 
 
 def atr_hesapla(df, period=14):
-    onceki_kapanis = df["Close"].shift(1)
-    tr = pd.concat([
-        df["High"] - df["Low"],
-        (df["High"] - onceki_kapanis).abs(),
-        (df["Low"] - onceki_kapanis).abs()
-    ], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
+    """Deprecated: v10.2 kanonik Wilder ATR motoruna yönlendirir."""
+    return atr(df, period)
 
 
 def adx_hesapla(df, period=14):
-    yukari = df["High"].diff()
-    asagi = -df["Low"].diff()
-    plus_dm = yukari.where((yukari > asagi) & (yukari > 0), 0.0)
-    minus_dm = asagi.where((asagi > yukari) & (asagi > 0), 0.0)
-    onceki_kapanis = df["Close"].shift(1)
-    tr = pd.concat([
-        df["High"] - df["Low"],
-        (df["High"] - onceki_kapanis).abs(),
-        (df["Low"] - onceki_kapanis).abs()
-    ], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean().replace(0, float("nan"))
-    plus_di = 100 * plus_dm.rolling(period).mean() / atr
-    minus_di = 100 * minus_dm.rolling(period).mean() / atr
-    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, float("nan"))) * 100
-    return dx.rolling(period).mean()
+    """Deprecated: v10.2 kanonik ADX motoruna yönlendirir."""
+    return adx(df, period)["ADX"]
 
 
 def teknik_gelecek_gorunumu(price, ema20, ema50, ema200, rsi, macd,
@@ -269,18 +243,7 @@ def teknik_analiz(symbol, kategori):
             print(f"{symbol}: Veri yok veya yetersiz.")
             return None
 
-        df["RSI"] = rsi_hesapla(df)
-        df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
-        df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
-        df["SMA200"] = df["Close"].rolling(200).mean()
-        df["VOLUME_MA20"] = df["Volume"].rolling(20).mean()
-        df["MACD"], df["MACD_SIGNAL"] = macd_hesapla(df)
-        df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
-        df["ATR"] = atr_hesapla(df)
-        df["ADX"] = adx_hesapla(df)
-        df["RET20"] = df["Close"].pct_change(20) * 100
-        df["RET60"] = df["Close"].pct_change(60) * 100
-        df["RET252"] = df["Close"].pct_change(252) * 100
+        df = daily_features(df)
 
         last = df.iloc[-1]
         prev = df.iloc[-2]

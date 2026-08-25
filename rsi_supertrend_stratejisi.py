@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
+from teknik_gostergeler import rsi as canonical_rsi, sma, supertrend as canonical_supertrend
 
 
 @dataclass(frozen=True)
@@ -17,37 +18,21 @@ class RsiSupertrendAyarlar:
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
-    delta = close.diff(); gain = delta.clip(lower=0); loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean(); avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    result = 100 - (100 / (1 + avg_gain / avg_loss.mask(avg_loss == 0)))
-    result = result.mask((avg_loss == 0) & (avg_gain > 0), 100.0).mask((avg_gain == 0) & (avg_loss > 0), 0.0)
-    return result.fillna(50.0).astype(float)
+    """Deprecated: kanonik Wilder RSI motoruna yönlendirir."""
+    return canonical_rsi(close, period)
 
 
 def _supertrend(df: pd.DataFrame, period: int, multiplier: float) -> tuple[pd.Series, pd.Series]:
-    high, low, close = df["High"].astype(float), df["Low"].astype(float), df["Close"].astype(float)
-    previous_close = close.shift(1)
-    tr = pd.concat([(high-low).abs(), (high-previous_close).abs(), (low-previous_close).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1 / period, adjust=False).mean(); midpoint = (high + low) / 2
-    upper, lower = midpoint + multiplier * atr, midpoint - multiplier * atr
-    final_upper, final_lower = upper.copy(), lower.copy(); direction = pd.Series(1, index=df.index, dtype="int64")
-    trend = pd.Series(np.nan, index=df.index, dtype="float64")
-    for i in range(1, len(df)):
-        final_upper.iloc[i] = upper.iloc[i] if upper.iloc[i] < final_upper.iloc[i-1] or close.iloc[i-1] > final_upper.iloc[i-1] else final_upper.iloc[i-1]
-        final_lower.iloc[i] = lower.iloc[i] if lower.iloc[i] > final_lower.iloc[i-1] or close.iloc[i-1] < final_lower.iloc[i-1] else final_lower.iloc[i-1]
-        if close.iloc[i] > final_upper.iloc[i-1]: direction.iloc[i] = 1
-        elif close.iloc[i] < final_lower.iloc[i-1]: direction.iloc[i] = -1
-        else: direction.iloc[i] = direction.iloc[i-1]
-        trend.iloc[i] = final_lower.iloc[i] if direction.iloc[i] == 1 else final_upper.iloc[i]
-    trend.iloc[0] = final_lower.iloc[0]
-    return trend, direction
+    """Deprecated: kanonik SuperTrend motoruna yönlendirir."""
+    values = canonical_supertrend(df, period, multiplier)
+    return values["SUPERTREND"], values["SUPERTREND_DIRECTION"]
 
 
 def hesapla(df: pd.DataFrame, ayarlar: RsiSupertrendAyarlar | None = None, zaman_dilimi: str = "1G") -> dict:
     ayar = ayarlar or RsiSupertrendAyarlar(); gerekli = {"High", "Low", "Close"}
     if df is None or len(df) < max(ayar.rsi_periyodu + ayar.rsi_sma_periyodu, ayar.atr_periyodu) + 5 or not gerekli.issubset(df.columns): return _bos("Yetersiz fiyat verisi", zaman_dilimi)
     work = df.copy().dropna(subset=list(gerekli)); work["RSI_DIP"] = _rsi(work["Close"].astype(float), ayar.rsi_periyodu)
-    work["RSI_SMA"] = work["RSI_DIP"].rolling(ayar.rsi_sma_periyodu).mean(); work["ST"], work["ST_YON"] = _supertrend(work, ayar.atr_periyodu, ayar.supertrend_carpani)
+    work["RSI_SMA"] = sma(work["RSI_DIP"], ayar.rsi_sma_periyodu); work["ST"], work["ST_YON"] = _supertrend(work, ayar.atr_periyodu, ayar.supertrend_carpani)
     cross = (work["RSI_DIP"] > work["RSI_SMA"]) & (work["RSI_DIP"].shift(1) <= work["RSI_SMA"].shift(1)) & (work["RSI_DIP"] < ayar.tetik_siniri)
     count = 0; special = pd.Series(False, index=work.index)
     for i in range(len(work)):
