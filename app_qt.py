@@ -6,6 +6,9 @@ from datetime import datetime
 
 import pandas as pd
 from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari
+from sade_karar_modeli import (
+    buyume_adaylari, en_iyi_vade, on_x_senaryosu, sade_firsatlar, sure_metni,
+)
 from bist30 import normalize_bist_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
@@ -22,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "9.2.0"
+APP_VERSION = "10.0.0"
 _CRASH_STREAM = None
 
 
@@ -436,10 +439,10 @@ class SimpleTable(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setWordWrap(False)
-        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.cellDoubleClicked.connect(self._emit_selected_row)
         layout.addWidget(self.table, 1)
         self._data = pd.DataFrame()
@@ -486,23 +489,7 @@ class SimpleTable(QWidget):
                         item.setForeground(QColor("#38bdf8"))
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
-        if len(df) <= 100:
-            self.table.resizeColumnsToContents()
-            for column in range(self.table.columnCount()):
-                self.table.setColumnWidth(
-                    column,
-                    min(260, max(95, self.table.columnWidth(column) + 16)),
-                )
-        else:
-            sample = df.head(80)
-            for column, name in enumerate(df.columns):
-                lengths = [len(str(name))]
-                for value in sample.iloc[:, column]:
-                    lengths.append(len("-" if pd.isna(value) else str(value)))
-                self.table.setColumnWidth(
-                    column,
-                    min(260, max(95, max(lengths) * 7 + 32)),
-                )
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setUpdatesEnabled(True)
         self.table.viewport().update()
@@ -1459,11 +1446,90 @@ class DailyTradePage(QWidget):
         StockDetailDialog(data, self, show_chart=False).exec()
 
 
+class HomePage(QWidget):
+    trade_requested = Signal()
+
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 32, 32, 32)
+        title = QLabel("BUGÜNÜN DURUMU")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        self.market = QLabel("Piyasa: VERİ BEKLENİYOR")
+        self.market.setObjectName("homeMarket")
+        layout.addWidget(self.market)
+        cards = QHBoxLayout()
+        self.counts = {}
+        for key, caption in (("trade", "GÜNLÜK TRADE"), ("short", "KISA VADE"), ("medium", "ORTA VADE")):
+            card = QFrame(); card.setObjectName("metricCard")
+            box = QVBoxLayout(card)
+            label = QLabel(caption); label.setObjectName("metricCaption")
+            value = QLabel("0 uygun aday"); value.setObjectName("metricValue")
+            box.addWidget(label); box.addWidget(value); cards.addWidget(card)
+            self.counts[key] = value
+        layout.addLayout(cards)
+        self.trade_button = QPushButton("BUGÜNÜN TRADE ADAYLARINI BUL")
+        self.trade_button.setObjectName("heroButton")
+        self.trade_button.clicked.connect(self.trade_requested.emit)
+        layout.addWidget(self.trade_button)
+        note = QLabel("Karmaşık analizler arka planda çalışır. Burada yalnızca karar için gereken sonuçlar gösterilir.")
+        note.setObjectName("subText"); note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch()
+
+    def update_state(self, trade: int, short: int, medium: int, market: str):
+        self.market.setText(f"Piyasa: {market}")
+        self.counts["trade"].setText(f"{trade} uygun aday")
+        self.counts["short"].setText(f"{short} uygun aday")
+        self.counts["medium"].setText(f"{medium} uygun aday")
+
+
+class DecisionPage(SimpleTable):
+    def __init__(self, title, subtitle=""):
+        super().__init__(title, subtitle)
+        self.row_selected.connect(self.show_reason)
+        if title == "GÜNLÜK TRADE":
+            controls = QHBoxLayout()
+            self.live_price = QDoubleSpinBox(); self.live_price.setRange(0.01, 1_000_000); self.live_price.setDecimals(2); self.live_price.setPrefix("Güncel fiyat  "); self.live_price.setSuffix(" TL")
+            check = QPushButton("SEÇİLİ ADAYI KONTROL ET"); check.clicked.connect(self.check_live_price)
+            self.live_result = QLabel("Adayı seçip aracı kurumunuzdaki güncel fiyatı girebilirsiniz."); self.live_result.setObjectName("subText")
+            controls.addWidget(self.live_price); controls.addWidget(check); controls.addWidget(self.live_result, 1)
+            self.layout().insertLayout(3, controls)
+
+    def show_reason(self, data):
+        from sade_karar_modeli import sade_gerekce
+        QMessageBox.information(self, "Neden bu hisse?", sade_gerekce(data))
+
+    def check_live_price(self):
+        row = self.table.currentRow()
+        if row < 0:
+            self.live_result.setText("Önce bir aday seçin."); return
+        data = self._data.iloc[row].to_dict()
+        parts = str(data.get("Alım Bölgesi", "")).replace("TL", "").replace("–", "-").split("-")
+        try:
+            low, high = float(parts[0].strip()), float(parts[1].strip())
+            price, stop, target = self.live_price.value(), float(data.get("Stop", 0)), float(data.get("Hedef", 0))
+        except (ValueError, IndexError, TypeError):
+            self.live_result.setText("Fiyat seviyeleri kontrol edilemedi."); return
+        if price <= stop:
+            decision = "SETUP GEÇERSİZ"
+        elif low <= price <= high:
+            decision = "ALIM BÖLGESİNDE"
+        elif price < low:
+            decision = "GİRİŞ İÇİN BEKLE"
+        elif price >= target:
+            decision = "FİYAT KAÇTI"
+        else:
+            decision = "GİRİŞ İÇİN BEKLE"
+        self.live_result.setText(decision)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME + " v" + APP_VERSION)
-        self.resize(1380, 820)
+        self.resize(1366, 768)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
             self.setWindowIcon(QIcon(str(icon)))
@@ -1473,6 +1539,7 @@ class MainWindow(QMainWindow):
         self._scan_stderr_buffer = ""
         self.pages = QStackedWidget()
 
+        self.home = HomePage()
         self.terminal = InvestmentTerminalPage()
         self.buy = self.terminal.buy
         self.wait = self.terminal.wait
@@ -1484,15 +1551,17 @@ class MainWindow(QMainWindow):
         self.track = TrackPage()
         self.kap = SelectedInfoPage("kap")
         self.funds = FundAnalysisPage()
-        self.daily_trade = SimpleTable(
-            "GÜNLÜK TRADE — Sade Teyit Tablosu",
-            "AlphaTrend + EMA20 + BBW + MACD-V birlikte değerlendirilir. Yüzde, açılıştan teknik gün içi hedefe matematiksel mesafedir; garanti değildir.",
-        )
+        self.daily_trade = DecisionPage("GÜNLÜK TRADE", "En fazla 5 aday. Veriler yaklaşık 15 dakika gecikmeli olabilir; işlem öncesinde güncel fiyatı aracı kurumunuzdan kontrol edin.")
+        self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
+        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
+        self.early_growth = SimpleTable("ERKEN BÜYÜME ADAYLARI", "Finansal büyüme, kalite, borç ve değerleme verileri birlikte değerlendirilir.")
+        self.under_50 = SimpleTable("50 TL ALTI BÜYÜME ADAYLARI", "50 TL yalnızca filtredir; düşük nominal fiyat şirketin ucuz olduğu anlamına gelmez.")
+        self.ten_x = SimpleTable("UZUN VADE YÜKSEK BÜYÜME", "10X senaryosu çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.terminal, self.daily_trade, self.single, self.sale, self.track, self.kap,
-                  self.funds, self.log]:
+        for p in [self.home, self.daily_trade, self.short_term, self.medium_term, self.early_growth,
+                  self.under_50, self.ten_x, self.track, self.sale, self.single, self.kap, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1503,7 +1572,7 @@ class MainWindow(QMainWindow):
 
         side = QFrame()
         side.setObjectName("sidebar")
-        side.setFixedWidth(270)
+        side.setFixedWidth(235)
         side_layout = QVBoxLayout(side)
         brand = QLabel("BORSA ANALİZ\nPRO MAX v" + APP_VERSION)
         brand.setObjectName("brand")
@@ -1511,14 +1580,12 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(brand)
 
         menu = [
-            ("YATIRIM TERMİNALİ", self.terminal),
-            ("GÜNLÜK TRADE", self.daily_trade),
-            ("HİSSE KARAR MERKEZİ", self.single),
-            ("SATIŞ KARARI", self.sale),
-            ("TAKİP LİSTEM", self.track),
-            ("SEÇİLİ HİSSE KAP", self.kap),
-            ("FON KARAR MERKEZİ", self.funds),
-            ("CANLI LOG", self.log),
+            ("BUGÜN", self.home), ("  Günlük Trade", self.daily_trade),
+            ("KISA VADE", self.short_term), ("ORTA VADE", self.medium_term),
+            ("BÜYÜME · Erken Büyüme", self.early_growth), ("  50 TL Altı", self.under_50),
+            ("  Uzun Vadeli Yüksek Büyüme", self.ten_x),
+            ("PORTFÖY · Mevcut Portföy", self.track), ("  Satış / Çıkış Kararı", self.sale),
+            ("DETAY · Tek Hisse İncele", self.single), ("  KAP / Şirket Araştırma", self.kap),
         ]
         for text, page in menu:
             button = QPushButton(text)
@@ -1526,7 +1593,7 @@ class MainWindow(QMainWindow):
             side_layout.addWidget(button)
         side_layout.addStretch()
 
-        self.scan_button = QPushButton("TEK TUŞ PROFESYONEL TARAMA")
+        self.scan_button = QPushButton("YENİ ANALİZ YAP")
         self.scan_button.setObjectName("primary")
         self.scan_button.clicked.connect(self.scan)
         side_layout.addWidget(self.scan_button)
@@ -1562,6 +1629,8 @@ class MainWindow(QMainWindow):
             QPushButton {{ background:#151515; color:#f8fafc; border:1px solid #4b1515; padding:11px; border-radius:7px; text-align:left; font-weight:700; }}
             QPushButton:hover {{ background:#3f0b0b; border-color:#ef4444; color:#ffffff; }}
             #primary {{ background:#b91c1c; border:1px solid #f87171; color:#ffffff; font-weight:800; text-align:center; }}
+            #heroButton {{ background:#15803d; border:1px solid #4ade80; color:white; font-size:19px; min-height:64px; text-align:center; margin-top:24px; }}
+            #homeMarket {{ background:#171717; border-left:5px solid #f59e0b; color:white; font-size:20px; font-weight:800; padding:18px; border-radius:8px; }}
             #pageTitle { font-size:24px; font-weight:bold; color:#ffffff; }
             #subText { color:#d1d5db; }
             #pathText { color:#d1d5db; font-size:10px; padding:4px; }
@@ -1588,6 +1657,9 @@ class MainWindow(QMainWindow):
             style_sheet.replace("__BACKGROUND__", bg_path).replace("{{", "{").replace("}}", "}")
         )
 
+        self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
+        self.pages.setCurrentWidget(self.home)
+
         self.load_report()
 
     def load_report(self):
@@ -1613,17 +1685,28 @@ class MainWindow(QMainWindow):
             compact = all_results[[c for c in visible_columns if c in all_results.columns]].copy()
             self.tum.load(compact)
 
-            trade_columns = [
-                "Hisse", "Yatırım Kararı", "Açılış Fiyatı", "Fiyat", "Gün İçi Hedef",
-                "Gün İçi Yükseliş %", "Günlük Trade Skoru", "Günlük Trade Teyit",
-                "Mum Formasyonu", "Mum Formasyon Yönü", "Mum Formasyon Teyidi", "AlphaTrend Yönü",
-                "EMA20 Durumu", "BBW %", "BBW Durumu", "MACD-V", "MACD-V Sinyal",
-                "MACD-V Durumu", "Önerilen Stop", "Veri Tarihi", "Veri Durumu",
-            ]
-            trade_columns = [c for c in trade_columns if c in all_results.columns]
-            trade_frame = all_results[trade_columns].copy()
-            trade_frame = en_iyi_gunluk_trade_adaylari(trade_frame, limit=5)
+            trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
             self.daily_trade.load(trade_frame)
+
+            backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
+            short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
+            medium_days, medium_evidence = en_iyi_vade(backtest_frame, "orta")
+            short_frame = sade_firsatlar(all_results, "kisa", limit=5, sure=sure_metni(short_days))
+            medium_frame = sade_firsatlar(all_results, "orta", limit=5, sure=sure_metni(medium_days))
+            self.short_term.load(short_frame)
+            self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
+            self.medium_term.load(medium_frame)
+            self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
+            growth_frame = buyume_adaylari(all_results, limit=5)
+            under_frame = buyume_adaylari(all_results, fiyat_limiti=50, limit=5)
+            ten_frame = on_x_senaryosu(all_results, limit=5)
+            self.early_growth.load(growth_frame)
+            self.under_50.load(under_frame)
+            self.ten_x.load(ten_frame)
+
+            market_score = pd.to_numeric(all_results.get("v4 Güven Puanı", pd.Series(dtype=float)), errors="coerce").median()
+            market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
+            self.home.update_state(len(trade_frame), len(short_frame), len(medium_frame), market)
 
             def numeric(name, default=0):
                 if name not in all_results.columns:

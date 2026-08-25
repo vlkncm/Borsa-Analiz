@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v9.2.0
+# Borsa Analiz Pro MAX v10.0.0
+
+## v10.0.0 sade ve karar odaklı arayüz
+
+- Ana sayfa yalnızca piyasa durumunu ve günlük/kısa/orta vade aday sayılarını gösterir.
+- Günlük Trade, Kısa Vade ve Orta Vade listeleri en fazla 5 aday ve sade fiyat/risk bilgileriyle sınırlandırılmıştır.
+- Teknik göstergeler analiz motorunda korunmuş, ana ekrandan ve ana Excel raporundan çıkarılmıştır.
+- Erken Büyüme, 50 TL Altı Büyüme ve belirsizliği açıkça belirtilen 10X Senaryosu eklenmiştir.
+- Ana tablolar 1366×768 ekran için yatay kaydırmasız, PWA ise mobilde tek sütun olacak şekilde düzenlenmiştir.
 
 ## v9.2.0 mum formasyonları ve en iyi 5 Günlük Trade
 

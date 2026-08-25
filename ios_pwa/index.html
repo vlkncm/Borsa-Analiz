@@ -19,7 +19,7 @@
   <main id="home">
     <header><div class="brand"><span>BA</span><div><b>Borsa Analiz</b><small>Mobil karar desteği</small></div></div><button id="install" class="ghost" hidden>Ana ekrana ekle</button></header>
 
-    <section class="intro"><span class="label">BIST HİSSE ANALİZİ</span><h1>Rakamları sadeleştir.<br><em>Kararını bilinçli ver.</em></h1><p>Grafiksiz, hızlı ve açıklanabilir teknik değerlendirme.</p></section>
+    <section class="intro"><span class="label">BUGÜNÜN DURUMU</span><h1>Karmaşık analiz arkada.<br><em>Basit karar önde.</em></h1><p>Yalnızca karar vermek için gereken fiyat, hedef, stop ve güven bilgisi.</p><a class="scan-button" href="#scanner">BUGÜNÜN ADAYLARINI BUL</a></section>
 
     <form id="search"><label for="symbol">Hisse kodu</label><div class="search-row"><input id="symbol" maxlength="6" inputmode="text" autocapitalize="characters" placeholder="Örn. THYAO" required><button type="submit">Analiz et</button></div></form>
     <div id="error" class="error" hidden></div>
@@ -29,19 +29,19 @@
       <article class="decision"><div><span id="date" class="label"></span><h2 id="decision"></h2><p id="decisionText"></p></div><div id="score" class="score"></div></article>
       <div class="grid metrics">
         <article><small>SON FİYAT</small><strong id="price"></strong><span id="change"></span></article>
-        <article><small>RSI (14)</small><strong id="rsi"></strong><span id="rsiText"></span></article>
+        <article><small>BEKLENEN POTANSİYEL</small><strong id="rsi"></strong><span id="rsiText">Model hedefi</span></article>
         <article><small>TREND</small><strong id="trend"></strong><span>EMA 20 / 50</span></article>
         <article><small>VERİ GÜVENİ</small><strong id="confidence"></strong><span id="dataAge"></span></article>
       </div>
       <article class="card levels"><h3>İşlem seviyeleri</h3><div class="level-grid"><p><small>ALIŞ ARALIĞI</small><b id="buy"></b></p><p><small>HEDEF</small><b id="target"></b></p><p><small>STOP</small><b id="stop"></b></p><p><small>RİSK / GETİRİ</small><b id="rr"></b></p></div></article>
-      <div class="grid notes"><article class="card"><h3>Olumlu göstergeler</h3><ul id="positive"></ul></article><article class="card risk"><h3>Dikkat edilmesi gerekenler</h3><ul id="negative"></ul></article></div>
+      <div class="grid notes"><article class="card"><h3>Neden bu hisse?</h3><ul id="positive"></ul></article><article class="card risk"><h3>Dikkat</h3><ul id="negative"></ul></article></div>
       <button id="favorite" class="favorite">☆ Takip listeme ekle</button>
     </section>
 
     <section class="watch"><div class="section-head"><div><span class="label">YEREL KAYIT</span><h2>Takip listem</h2></div><small>Bu iPhone’da saklanır</small></div><div id="watchlist" class="chips"></div></section>
     <section class="scanner" id="scanner">
-      <div class="section-head"><div><span class="label">FIRSAT TARAMA</span><h2>50 TL altı adaylar</h2></div><small>Likidite + teknik güç</small></div>
-      <p class="scanner-info">Likiditesi yüksek 120 hisselik piyasa evrenini küçük gruplarla inceler ve koşulları geçen en güçlü 30 adayı sıralar.</p>
+      <div class="section-head"><div><span class="label">BUGÜN</span><h2>En güçlü 5 aday</h2></div><small>Karar odaklı</small></div>
+      <p class="scanner-info">Kalite ve risk koşullarını geçen en fazla 5 hisse gösterilir. Uygun aday yoksa liste boş kalır.</p>
       <button id="scan" class="scan-button">Taramayı başlat</button>
       <div id="scanProgress" class="progress" hidden><div><i id="progressBar"></i></div><span id="progressText"></span></div>
       <div id="scanError" class="error" hidden></div>

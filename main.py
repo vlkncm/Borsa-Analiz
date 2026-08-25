@@ -493,6 +493,8 @@ def tabloya_cevir(results):
             "Faaliyet Raporu URL": item.get("faaliyet_raporu_url", ""),
             "Faaliyet PDF": item.get("faaliyet_raporu_dosya", ""),
             "Temel Puan": item.get("temel_puan", 50),
+            "Piyasa Değeri": item.get("piyasa_degeri", 0),
+            "İşletme Değeri": item.get("isletme_degeri", 0),
             "F/K": round(item.get("fk", 0), 2),
             "PD/DD": round(item.get("pddd", 0), 2),
             "Borç/Özsermaye": round(item.get("borc_ozsermaye", 0), 2),
@@ -939,6 +941,32 @@ def bugunun_firsatlari_hazirla(df: pd.DataFrame) -> pd.DataFrame:
         ascending=[False, False, False]
     )[mevcut].head(10)
 
+
+def sade_ana_rapor(df: pd.DataFrame) -> pd.DataFrame:
+    """Kullanıcının karar vermesi için gereken tek, sade Excel görünümü."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Hisse", "Analiz Tarihi", "Karar", "Alım Bölgesi", "Referans Fiyat", "Hedef", "Stop", "Potansiyel %", "Tahmini Süre", "Güven Skoru", "Sonuç / Durum"])
+    work = df.copy()
+    def num(name, fallback=None):
+        if name in work:
+            return pd.to_numeric(work[name], errors="coerce")
+        if fallback and fallback in work:
+            return pd.to_numeric(work[fallback], errors="coerce")
+        return pd.Series(0.0, index=work.index)
+    low, high = num("Önerilen Alış Alt", "Alış Alt"), num("Önerilen Alış Üst", "Alış Üst")
+    price, target = num("Fiyat"), num("Önerilen Satış", "Hedef 1")
+    potential = ((target / price.replace(0, pd.NA)) - 1).mul(100)
+    return pd.DataFrame({
+        "Hisse": work.get("Hisse", ""), "Analiz Tarihi": work.get("Veri Tarihi", ""),
+        "Karar": work.get("Yatırım Kararı", work.get("Broker Aksiyon", "İZLE")),
+        "Alım Bölgesi": [f"{a:.2f} – {b:.2f} TL" if pd.notna(a) and pd.notna(b) else "Veri yok" for a, b in zip(low, high)],
+        "Referans Fiyat": price.round(2), "Hedef": target.round(2),
+        "Stop": num("Önerilen Stop", "Stop Loss").round(2),
+        "Potansiyel %": potential.round(2), "Tahmini Süre": work.get("Beklenen Süre", "Model aralığı"),
+        "Güven Skoru": num("v4 Güven Puanı", "AI Güven Puanı").round(0),
+        "Sonuç / Durum": work.get("Veri Durumu", "İZLE"),
+    })
+
 def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None):
     results = [
         item for item in results
@@ -991,6 +1019,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
 
     with writer_context as writer:
         pd.DataFrame(YASAL_UYARI_UZUN, columns=["UYARI"]).to_excel(writer, index=False, sheet_name="Yasal Uyari")
+        sade_ana_rapor(df).to_excel(writer, index=False, sheet_name="Ana Rapor")
         dashboard_olustur(writer, df, baslangic_zamani, temettu_df)
         kisa_df.to_excel(writer, index=False, sheet_name="Kisa Vade")
         orta_df.to_excel(writer, index=False, sheet_name="Orta Vade")
@@ -1058,6 +1087,9 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
                         cell.value = "Veri yok"
 
         excel_stil_uygula(writer.book)
+        # Analiz motorunun yüzlerce girdisi korunur ancak sıradan kullanıcıya ana raporda gösterilmez.
+        if "Tum Sonuclar" in writer.book.sheetnames:
+            writer.book["Tum Sonuclar"].sheet_state = "hidden"
 
         # Temettü tarih ve kalan gün kolonlarını okunaklı biçimlendir.
         if "Temettu Takip" in writer.book.sheetnames:
