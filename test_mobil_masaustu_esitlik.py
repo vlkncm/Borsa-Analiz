@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from sade_karar_modeli import elli_tl_ohlcv_adayi
+from sinyal_pipeline import FORMULA_VERSION, STRATEGY_VERSION
 
 
 ROOT = Path(__file__).resolve().parent
@@ -53,8 +54,8 @@ class MobilMasaustuEsitlikTesti(unittest.TestCase):
                             (ROOT / "bist_hisseleri_613_aktif.txt").read_text(encoding="utf-8").splitlines() if line.strip()}
         self.assertEqual(payload["total"], len(expected_symbols))
 
-        self.assertEqual(desktop["Formül Sürümü"], mobile["formulaVersion"])
-        self.assertEqual(desktop["Strateji Sürümü"], mobile["strategyVersion"])
+        self.assertEqual(FORMULA_VERSION, mobile["formulaVersion"])
+        self.assertEqual(STRATEGY_VERSION, mobile["strategyVersion"])
         self.assertEqual(desktop["Skor"], mobile["score"])
         self.assertAlmostEqual(desktop["Mevcut Fiyat"], round(mobile["price"], 2), places=2)
         self.assertAlmostEqual(desktop["Hedef"], round(mobile["target"], 2), places=2)

@@ -198,7 +198,7 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
         return None
     # RSI, EMA, MACD ve ATR burada yeniden yazılmaz. Masaüstü tarama,
     # backtest ve mobil sözleşmenin dayandığı tek kanonik motor kullanılır.
-    from sinyal_pipeline import FORMULA_VERSION, STRATEGY_VERSION, daily_features
+    from sinyal_pipeline import daily_features
 
     features = daily_features(data)
     close = pd.to_numeric(features["Close"], errors="coerce")
@@ -231,8 +231,7 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     return {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
             "Alım Bölgesi": f"{min(price*.98, e20):.2f} – {price*1.01:.2f} TL", "Hedef": round(target, 2),
             "Stop": round(stop, 2), "Potansiyel %": round((target/price-1)*100, 2), "Skor": int(score),
-            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover),
-            "Formül Sürümü": FORMULA_VERSION, "Strateji Sürümü": STRATEGY_VERSION}
+            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover)}
 
 
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:
