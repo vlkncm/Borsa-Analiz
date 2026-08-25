@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari
 from sade_karar_modeli import (
-    elli_tl_adaylari, en_iyi_vade, gunluk_rapor_adaylari, on_x_senaryosu,
+    elli_tl_adaylari, elli_tl_ohlcv_adayi, en_iyi_vade, gunluk_rapor_adaylari, on_x_senaryosu,
     orta_vadeden_kisa_adaylari_cikar, sade_firsatlar, sure_metni, vade_rapor_adaylari,
 )
 from bist_evreni import likit_120_sec
@@ -1583,6 +1583,61 @@ class FullMarketPage(SimpleTable):
         self.layout().insertWidget(3, button)
 
 
+class Under50Worker(QObject):
+    finished = Signal(bool, object, str)
+    progress = Signal(str)
+
+    def run(self):
+        try:
+            from bist_evreni import tum_bist_hisseleri
+            from veri_saglayici import get_daily_ohlcv
+            symbols, rows = tum_bist_hisseleri(), []
+            for index, symbol in enumerate(symbols, 1):
+                if QThread.currentThread().isInterruptionRequested():
+                    break
+                self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
+                try:
+                    history, _meta = get_daily_ohlcv(symbol, "1y")
+                    candidate = elli_tl_ohlcv_adayi(symbol, history)
+                    if candidate:
+                        rows.append(candidate)
+                except Exception:
+                    continue
+            frame = pd.DataFrame(rows)
+            if not frame.empty:
+                frame = frame.sort_values(["Skor", "Risk/Getiri", "Ortalama İşlem Tutarı"], ascending=False).head(20)
+                frame = frame.drop(columns=["Ortalama İşlem Tutarı"], errors="ignore").reset_index(drop=True)
+            self.finished.emit(True, frame, f"{len(symbols)} BIST hissesi tarandı; en iyi {len(frame)} aday gösteriliyor.")
+        except Exception:
+            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+
+
+class Under50Page(FullMarketPage):
+    def __init__(self):
+        super().__init__("50 TL ALTI HİSSE FIRSATLARI", "613 aktif BIST hissesi doğrudan taranır; iPhone ile aynı formülle en iyi 20 sonuç gösterilir.")
+        self.thread = None; self.worker = None
+        button = self.layout().itemAt(3).widget()
+        button.clicked.disconnect()
+        button.setText("613 BIST HİSSESİNİ TARA")
+        button.clicked.connect(self.start_scan)
+
+    def start_scan(self):
+        if self.thread and self.thread.isRunning(): return
+        self.info.setText("Tüm BIST 50 TL altı taraması başlatılıyor…")
+        self.thread = QThread(self); self.worker = Under50Worker(); self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.info.setText)
+        self.worker.finished.connect(self.done); self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater); self.thread.finished.connect(self._clear)
+        self.thread.start()
+
+    def done(self, ok, frame, message):
+        if ok: self.load(frame); self.info.setText(message)
+        else: self.info.setText("Tarama hatası: " + message.splitlines()[-1])
+
+    def _clear(self):
+        self.worker = None; self.thread = None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1611,7 +1666,7 @@ class MainWindow(QMainWindow):
         self.daily_trade = DailyTradePage()
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
-        self.under_50 = FullMarketPage("50 TL ALTI HİSSE FIRSATLARI", "Tüm BIST taranır; 50 TL altındaki hisselerden en likit 120 şirket incelenir ve en iyi 20 seçenek sunulur.")
+        self.under_50 = Under50Page()
         self.ten_x = FullMarketPage("10X POTANSİYEL SENARYOSU", "Tüm BIST taranır. Senaryo çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
         self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
         self.log = QTextEdit()
@@ -1709,7 +1764,6 @@ class MainWindow(QMainWindow):
         )
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
-        self.under_50.scan_requested.connect(lambda: self.scan_all_market(self.under_50))
         self.ten_x.scan_requested.connect(lambda: self.scan_all_market(self.ten_x))
         self.pages.setCurrentWidget(self.home)
 

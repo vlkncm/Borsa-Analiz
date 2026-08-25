@@ -91,7 +91,15 @@ def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
     target = _num(work, ("Gün İçi Hedef", "Önerilen Satış", "Hedef"))
     stop = _num(work, ("Önerilen Stop", "Stop Loss", "Stop"))
     score = _num(work, ("Günlük Trade Skoru", "v4 Güven Puanı", "AI Güven Puanı"))
-    valid = (price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 60)
+    ema20, ema50 = _num(work, ("EMA20",)), _num(work, ("EMA50",))
+    rsi, macd, signal = _num(work, ("RSI",), 50), _num(work, ("MACD",)), _num(work, ("MACD Signal",))
+    volume, adx = _num(work, ("Hacim Oranı",), 1), _num(work, ("ADX",), 20)
+    potential_all = ((target / price.replace(0, pd.NA)) - 1).mul(100).fillna(0)
+    combo_count = ((price > ema20).astype(int) + (ema20 > ema50).astype(int) +
+                   rsi.between(50, 70, inclusive="neither").astype(int) +
+                   (macd > signal).astype(int) + (volume >= 1.0).astype(int))
+    valid = ((price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 65) &
+             potential_all.between(3, 5, inclusive="both") & (combo_count >= 4) & (adx >= 20))
     if "Veri Durumu" in work:
         valid &= work["Veri Durumu"].astype(str).str.upper().eq("GÜVENİLİR")
     idx = work.index[valid]
@@ -181,6 +189,47 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     return result.sort_values(["Skor", "Risk/Getiri"], ascending=False).head(limit).reset_index(drop=True)
 
 
+def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
+    """iPhone/PWA ile aynı 1 yıllık OHLCV formülünü tek hisseye uygular."""
+    if frame is None or len(frame) < 200:
+        return None
+    data = frame.copy().dropna(subset=["Close", "High", "Low"])
+    if len(data) < 200:
+        return None
+    close = pd.to_numeric(data["Close"], errors="coerce")
+    high, low = pd.to_numeric(data["High"], errors="coerce"), pd.to_numeric(data["Low"], errors="coerce")
+    volume = pd.to_numeric(data.get("Volume", 0), errors="coerce").fillna(0)
+    price = float(close.iloc[-1])
+    if not 1 <= price <= 50:
+        return None
+    turnover = float((close * volume).tail(20).mean())
+    if not math.isfinite(turnover) or turnover < 5_000_000:
+        return None
+    ema = lambda period: close.ewm(span=period, adjust=False).mean()
+    e20, e50, e200 = float(ema(20).iloc[-1]), float(ema(50).iloc[-1]), float(ema(200).iloc[-1])
+    delta = close.diff(); gain = delta.clip(lower=0).tail(14).mean(); loss = (-delta.clip(upper=0)).tail(14).mean()
+    rsi = 100.0 if loss == 0 else float(100 - 100 / (1 + gain / loss))
+    macd_line = ema(12) - ema(26); macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+    volume_ratio = float(volume.iloc[-1] / max(volume.tail(20).mean(), 1))
+    ret20 = float((price / close.iloc[-21] - 1) * 100); ret60 = float((price / close.iloc[-61] - 1) * 100)
+    previous = close.shift(1)
+    tr = pd.concat([(high-low), (high-previous).abs(), (low-previous).abs()], axis=1).max(axis=1)
+    atr = float(tr.tail(14).mean()); support = float(low.tail(20).min())
+    stop = min(price*.985, max(price-atr*1.5, support*.98))
+    target = price + max(atr*2.2, price*.08)
+    rr = (target-price) / max(price-stop, .01)
+    score = (12*(price>e20) + 18*(e20>e50) + 15*(price>e200) + 18*(45<=rsi<=68) +
+             15*(macd_line.iloc[-1]>macd_signal.iloc[-1]) + 12*(volume_ratio>=1.15) +
+             5*(0<ret20<20) + 5*(ret60>0) + 5*(rr>=1.5))
+    if score < 48:
+        return None
+    status = "ALIM BÖLGESİNDE" if score >= 75 and price <= e20*1.04 else "GERİ ÇEKİLME BEKLE" if price > e20*1.08 else "TEYİT BEKLE"
+    return {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
+            "Alım Bölgesi": f"{min(price*.98, e20):.2f} – {price*1.01:.2f} TL", "Hedef": round(target, 2),
+            "Stop": round(stop, 2), "Potansiyel %": round((target/price-1)*100, 2), "Skor": int(score),
+            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover)}
+
+
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:
     """Out-of-sample risk ayarlı puanı en yüksek gerçekçi tutma süresini seçer."""
     candidates = VADE_ADAYLARI[tur]
@@ -251,17 +300,39 @@ def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: 
 
 
 def on_x_senaryosu(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
-    growth = buyume_adaylari(df, limit=max(limit * 3, 10))
-    if growth.empty:
-        return pd.DataFrame(columns=["Hisse", "10X Potansiyel Skoru", "Senaryo", "Bugünkü Fiyat", "Gerekli Yıllık Büyüme", "Ufuk", "Belirsizlik"])
-    score = (growth["Büyüme Skoru"] * .9).clip(0, 100).round().astype(int)
-    years = score.map(lambda x: 7 if x < 80 else 5 if x < 90 else 4)
+    columns = ["Hisse", "10X Potansiyel Skoru", "Senaryo", "Bugünkü Fiyat", "Bugünkü Piyasa Değeri",
+               "Gerekli 10X Piyasa Değeri", "Gerekli Yıllık Büyüme", "Ufuk", "Belirsizlik"]
+    if df is None or df.empty:
+        return pd.DataFrame(columns=columns)
+    work = df.copy()
+    price = _num(work, ("Fiyat", "Referans Fiyat"))
+    cap = _num(work, ("Piyasa Değeri",))
+    revenue = _num(work, ("Ciro Büyüme",)).clip(-1, 1)
+    profit = _num(work, ("Kâr Büyüme",)).clip(-1, 1)
+    roe = _num(work, ("ROE",)).clip(-1, 1)
+    debt = _num(work, ("Borç/Özsermaye",), 99)
+    pe = _num(work, ("F/K",), 99)
+    quality = _num(work, ("Temel Puan", "v4 Güven Puanı"), 0)
+    momentum = _num(work, ("v4 Güven Puanı", "Broker Skor"), 0)
+    growth_score = revenue.clip(0, .50).div(.50).mul(15) + profit.clip(0, .60).div(.60).mul(15)
+    quality_score = roe.clip(0, .35).div(.35).mul(20)
+    valuation_score = (35 - pe).clip(0, 30).div(30).mul(15) + (150_000_000_000 - cap).clip(0, 150_000_000_000).div(150_000_000_000).mul(10)
+    balance_score = (2.5 - debt).clip(0, 2.5).div(2.5).mul(15)
+    model_score = quality.clip(0, 100).mul(.05) + momentum.clip(0, 100).mul(.05)
+    score = (growth_score + quality_score + valuation_score + balance_score + model_score).clip(0, 100).round().astype(int)
+    # 50 TL yalnızca kullanıcı filtresidir; şirket ucuzluğu piyasa değeri ve değerlemeyle sınanır.
+    valid = (price > 0) & (price <= 50) & cap.between(1, 150_000_000_000) & (revenue > .05) & (profit > .05) & (roe > .08) & debt.between(0, 2.5) & pe.between(1, 35) & (score >= 70)
+    idx = work.index[valid]
+    if idx.empty:
+        return pd.DataFrame(columns=columns)
+    score = score.loc[idx]
+    years = score.map(lambda x: 7 if x < 80 else 6 if x < 90 else 5)
     cagr = ((10 ** (1 / years)) - 1) * 100
     label = pd.cut(score, [-1, 69, 79, 89, 100], labels=["10X ADAYI DEĞİL", "İZLENEBİLİR", "YÜKSEK POTANSİYEL", "ÇOK YÜKSEK SPEKÜLATİF POTANSİYEL"])
-    caps = _num(df.set_index(_text(df, ("Hisse",))), ("Piyasa Değeri",), 0)
-    current_cap = growth["Hisse"].map(caps).fillna(0)
-    result = pd.DataFrame({"Hisse": growth["Hisse"], "10X Potansiyel Skoru": score, "Senaryo": label.astype(str),
-                           "Bugünkü Fiyat": growth["Mevcut Fiyat"], "Gerekli Yıllık Büyüme": cagr.round(1).map(lambda x: f"%{x}"),
-                           "Bugünkü Piyasa Değeri": current_cap, "Gerekli 10X Piyasa Değeri": current_cap.mul(10),
-                           "Ufuk": years.map(lambda x: f"{x} yıl"), "Belirsizlik": "ÇOK YÜKSEK"})
-    return result[result["10X Potansiyel Skoru"] >= 70].head(limit).reset_index(drop=True)
+    result = pd.DataFrame({"Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
+                           "10X Potansiyel Skoru": score, "Senaryo": label.astype(str),
+                           "Bugünkü Fiyat": price.loc[idx].round(2), "Bugünkü Piyasa Değeri": cap.loc[idx],
+                           "Gerekli 10X Piyasa Değeri": cap.loc[idx].mul(10),
+                           "Gerekli Yıllık Büyüme": cagr.round(1).map(lambda x: f"%{x}"),
+                           "Ufuk": years.map(lambda x: f"{x} yıl"), "Belirsizlik": "ÇOK YÜKSEK"}, index=idx)
+    return result.sort_values("10X Potansiyel Skoru", ascending=False).head(limit).reset_index(drop=True)

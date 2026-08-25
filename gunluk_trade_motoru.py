@@ -16,6 +16,28 @@ from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
 from veri_saglayici import PiyasaVeriAdapteri, get_daily_ohlcv, get_intraday_ohlcv
 
 
+def _ema(series: pd.Series, period: int) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").ewm(span=period, adjust=False).mean()
+
+
+def _rsi(series: pd.Series, period: int = 14) -> float:
+    delta = pd.to_numeric(series, errors="coerce").diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
+    return float((100 - 100 / (1 + gain / loss.replace(0, pd.NA))).fillna(100).iloc[-1])
+
+
+def _adx(frame: pd.DataFrame, period: int = 14) -> float:
+    high, low, close = frame["High"], frame["Low"], frame["Close"]
+    plus_dm = high.diff().where((high.diff() > -low.diff()) & (high.diff() > 0), 0.0)
+    minus_dm = (-low.diff()).where((-low.diff() > high.diff()) & (-low.diff() > 0), 0.0)
+    tr = pd.concat([(high-low), (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean().replace(0, pd.NA)
+    plus_di = 100 * plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr
+    return float((100 * (plus_di-minus_di).abs() / (plus_di+minus_di).replace(0, pd.NA)).fillna(0).ewm(alpha=1/period, adjust=False).mean().iloc[-1])
+
+
 def _fmt_time(value) -> str:
     return value.isoformat(timespec="minutes") if value else "bilinmiyor"
 
@@ -68,6 +90,19 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     positive_doji = context["teyit"] and context["yon"] == "YUKARI"
     negative_doji = context["teyit"] and context["yon"] == "AŞAĞI"
     momentum = price > float(session["Close"].iloc[-3])
+    daily_close = pd.to_numeric(completed_daily["Close"], errors="coerce")
+    ema21, ema50 = float(_ema(daily_close, 21).iloc[-1]), float(_ema(daily_close, 50).iloc[-1])
+    rsi14 = _rsi(daily_close)
+    macd_series = _ema(daily_close, 12) - _ema(daily_close, 26)
+    macd_signal = _ema(macd_series, 9)
+    macd_up = bool(macd_series.iloc[-1] > macd_signal.iloc[-1] and macd_series.iloc[-1] >= macd_series.iloc[-2])
+    adx14 = _adx(completed_daily)
+    combo = {
+        "EMA21 > EMA50": ema21 > ema50, "RSI > 50": 50 < rsi14 < 70,
+        "MACD yukarı": macd_up, "Hacim artışı": volume_ratio >= 1.20,
+        "VWAP üstü": above_vwap,
+    }
+    combo_count = sum(combo.values())
     entry_low, entry_high = price - atr*0.08, price + atr*0.04
     structural = min(float(signal_bar.Low), piv["P"], piv["S1"])
     stop_atr = price - atr*1.5
@@ -75,11 +110,12 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     risk = price-stop
     target_floor = price + risk*min_risk_getiri
     resistance = min((x for x in (piv["R1"], piv["R2"]) if x > price), default=target_floor)
-    target = max(target_floor, min(resistance, price+atr*2.5))
+    target = max(target_floor, min(resistance, price+atr*2.5, price*1.05))
     rr = (target-price)/risk if risk > 0 else 0.0
     target_potential = (target/price-1)*100
     evidence = ampirik_kanit([] if historical_outcomes is None else historical_outcomes)
-    confirmed = above_vwap and momentum and volume_ratio >= 0.8 and not negative_doji
+    move_capacity = 3.0 <= target_potential <= 5.0
+    confirmed = combo_count >= 4 and above_vwap and momentum and adx14 >= 20 and move_capacity and not negative_doji
     warnings = []
     if meta.is_delayed:
         warnings.append("Ücretsiz/gecikmeli veri; gerçek zaman garantisi yok")
@@ -118,8 +154,10 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         "Azami Adet": size["adet"], "Pozisyon Tutarı": size["pozisyon_tutari"], "Risk Tutarı": size["risk_tutari"],
         "Doji": doji["tur"], "Doji Bağlamı": context["baglam"], "Doji Teyidi": "EVET" if context["teyit"] else "HAYIR",
         "VWAP": vwap, "VWAP Konumu": "ÜSTÜNDE" if above_vwap else "ALTINDA", **piv,
-        "ATR": atr, "Stop Katsayısı": 1.5, "Hacim Oranı": volume_ratio,
-        "Gerekçe": f"VWAP={'üstü' if above_vwap else 'altı'}, momentum={'pozitif' if momentum else 'zayıf'}, hacim oranı={volume_ratio:.2f}",
+        "ATR": atr, "Stop Katsayısı": 1.5, "Hacim Oranı": volume_ratio, "ADX": adx14,
+        "EMA21": ema21, "EMA50": ema50, "RSI": rsi14, "MACD": float(macd_series.iloc[-1]),
+        "MACD Signal": float(macd_signal.iloc[-1]), "5'li Kombo": f"{combo_count}/5",
+        "Gerekçe": f"5'li kombo={combo_count}/5, ADX={adx14:.1f}, VWAP={'üstü' if above_vwap else 'altı'}, hacim oranı={volume_ratio:.2f}",
         "Uyarılar": "; ".join(warnings), "Kısa Özet": summary,
     }
 
