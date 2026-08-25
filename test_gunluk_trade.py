@@ -11,16 +11,52 @@ import pandas as pd
 from gunluk_trade_motoru import adaylari_tara, gunluk_trade_analiz, kagit_islem_kaydet
 from intraday_backtest import ampirik_kanit, islem_sonucu, walk_forward_tahminleri
 from intraday_gostergeler import klasik_pivot, pivot_serisi, pozisyon_boyutu, seans_vwap, wilder_atr
-from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
+from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir, mum_formasyonu_tespit
 from veri_saglayici import VeriMetadatasi
 from borsa_tarayici import gun_ici_yukselis_hesapla
-from gunluk_trade_gostergeleri import gunluk_trade_teyitleri, macd_v
+from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari, gunluk_trade_teyitleri, macd_v
 
 
 TZ = ZoneInfo("Europe/Istanbul")
 
 
 class DojiTests(unittest.TestCase):
+    @staticmethod
+    def pattern_frame(trend="down", last=None, count=10):
+        base = np.linspace(12, 9, count) if trend == "down" else np.linspace(9, 12, count)
+        frame = pd.DataFrame({"Open": base+.1, "High": base+.4, "Low": base-.4,
+                              "Close": base, "Volume": 1000.0})
+        for offset, candle in enumerate(last or []):
+            for key, value in candle.items():
+                frame.loc[len(frame)-len(last)+offset, key] = value
+        return frame
+
+    def test_hammer_and_hanging_man_use_trend_context(self):
+        hammer = {"Open": 9.5, "High": 9.65, "Low": 8.5, "Close": 9.6, "Volume": 1200}
+        self.assertIn("HAMMER", mum_formasyonu_tespit(self.pattern_frame("down", [hammer]))["mum_formasyonu"])
+        hanging = {"Open": 12.1, "High": 12.2, "Low": 11.0, "Close": 11.95, "Volume": 1200}
+        self.assertIn("HANGING MAN", mum_formasyonu_tespit(self.pattern_frame("up", [hanging]))["mum_formasyonu"])
+
+    def test_bullish_and_bearish_engulfing(self):
+        bull = [{"Open": 10.0, "High": 10.1, "Low": 9.5, "Close": 9.6},
+                {"Open": 9.5, "High": 10.3, "Low": 9.4, "Close": 10.2}]
+        self.assertIn("BULLISH ENGULFING", mum_formasyonu_tespit(self.pattern_frame("down", bull))["mum_formasyonu"])
+        bear = [{"Open": 11.8, "High": 12.3, "Low": 11.7, "Close": 12.2},
+                {"Open": 12.3, "High": 12.4, "Low": 11.5, "Close": 11.6}]
+        self.assertIn("BEARISH ENGULFING", mum_formasyonu_tespit(self.pattern_frame("up", bear))["mum_formasyonu"])
+
+    def test_morning_star_gravestone_and_cornering(self):
+        star = [{"Open": 10.3, "High": 10.4, "Low": 9.5, "Close": 9.6},
+                {"Open": 9.55, "High": 9.7, "Low": 9.45, "Close": 9.58},
+                {"Open": 9.6, "High": 10.4, "Low": 9.55, "Close": 10.3}]
+        self.assertIn("MORNING STAR", mum_formasyonu_tespit(self.pattern_frame("down", star))["mum_formasyonu"])
+        grave = {"Open": 12.0, "High": 13.0, "Low": 11.95, "Close": 12.02, "Volume": 1000}
+        self.assertIn("GRAVESTONE", mum_formasyonu_tespit(self.pattern_frame("up", [grave]))["mum_formasyonu"])
+        flat = self.pattern_frame("up", count=30)
+        flat.loc[:, "Open"] = 10.0; flat.loc[:, "Close"] = 10.0
+        flat.loc[:, "High"] = 10.1; flat.loc[:, "Low"] = 9.9; flat.loc[:, "Volume"] = 1000
+        self.assertIn("CORNERING", mum_formasyonu_tespit(flat)["mum_formasyonu"])
+
     def test_doji_types_are_exclusive(self):
         cases = [
             ((10, 11, 9.95, 10.02), "MEZAR TAŞI DOJİ"),
@@ -51,6 +87,15 @@ class DojiTests(unittest.TestCase):
 
 
 class IndicatorTests(unittest.TestCase):
+    def test_daily_trade_returns_only_top_five_valid_candidates(self):
+        frame = pd.DataFrame({"Hisse": list("ABCDEFG"), "Günlük Trade Skoru": [10,90,80,70,60,50,100],
+                              "Gün İçi Yükseliş %": [1,2,3,4,5,6,7],
+                              "Veri Durumu": ["GÜVENİLİR"]*6+["ESKİ VERİ - KARAR YOK"]})
+        result = en_iyi_gunluk_trade_adaylari(frame)
+        self.assertEqual(len(result), 5)
+        self.assertEqual(result.iloc[0]["Hisse"], "B")
+        self.assertNotIn("G", result["Hisse"].tolist())
+
     def test_macd_v_is_atr_normalized_and_trade_confirmation_has_four_filters(self):
         idx = pd.date_range("2025-01-01", periods=180, freq="B")
         close = pd.Series(np.linspace(50, 90, len(idx)) + np.sin(np.arange(len(idx))/4), index=idx)

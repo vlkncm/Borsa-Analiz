@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v9.1.0
+# Borsa Analiz Pro MAX v9.2.0
+
+## v9.2.0 mum formasyonları ve en iyi 5 Günlük Trade
+
+- Hammer, Hanging Man, Bullish Engulfing, Bearish Engulfing, Morning Star ve Cornering formasyonları ölçülebilir gövde/fitil, trend ve hacim kurallarıyla eklendi; mevcut Gravestone Doji korunur.
+- Aynı mum geometrisinin düşüş sonunda Hammer, yükseliş sonunda Hanging Man sayılması için trend bağlamı zorunludur.
+- Mum formasyonu tek başına AL üretmez; AlphaTrend, EMA20, BBW ve MACD-V birleşik skoruna en fazla 15 puan katkı verir. Düşüş formasyonu 25 puan risk cezası uygular.
+- Günlük Trade sayfası bütün hisseleri göstermez. Yalnız `GÜVENİLİR` veri durumundaki, pozitif gün içi hedefi bulunan sonuçlar `Günlük Trade Skoru`, ardından yükseliş yüzdesiyle sıralanır ve en güçlü 5 aday gösterilir.
+- Uygun veri yoksa listeyi zayıf veya eski hisselerle zorla doldurmaz.
 
 ## v9.1.0 dört teyitli sade Günlük Trade
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 import pandas as pd
+from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari
 from bist30 import normalize_bist_sembolu
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "9.1.0"
+APP_VERSION = "9.2.0"
 _CRASH_STREAM = None
 
 
@@ -1614,17 +1615,14 @@ class MainWindow(QMainWindow):
 
             trade_columns = [
                 "Hisse", "Yatırım Kararı", "Açılış Fiyatı", "Fiyat", "Gün İçi Hedef",
-                "Gün İçi Yükseliş %", "Günlük Trade Teyit", "AlphaTrend Yönü",
+                "Gün İçi Yükseliş %", "Günlük Trade Skoru", "Günlük Trade Teyit",
+                "Mum Formasyonu", "Mum Formasyon Yönü", "Mum Formasyon Teyidi", "AlphaTrend Yönü",
                 "EMA20 Durumu", "BBW %", "BBW Durumu", "MACD-V", "MACD-V Sinyal",
                 "MACD-V Durumu", "Önerilen Stop", "Veri Tarihi", "Veri Durumu",
             ]
             trade_columns = [c for c in trade_columns if c in all_results.columns]
             trade_frame = all_results[trade_columns].copy()
-            if "Günlük Trade Teyit" in trade_frame.columns:
-                rank = trade_frame["Günlük Trade Teyit"].astype(str).eq("4/4 TEYİTLİ").astype(int)
-                trade_frame = trade_frame.assign(_teyit_sira=rank).sort_values(
-                    ["_teyit_sira", "Gün İçi Yükseliş %"], ascending=[False, False]
-                ).drop(columns="_teyit_sira")
+            trade_frame = en_iyi_gunluk_trade_adaylari(trade_frame, limit=5)
             self.daily_trade.load(trade_frame)
 
             def numeric(name, default=0):
