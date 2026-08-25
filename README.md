@@ -1,4 +1,16 @@
-# Borsa Analiz Pro MAX v10.1.2
+# Borsa Analiz Pro MAX v10.2.0
+
+## v10.2.0 son büyük stabilizasyon
+
+- Teknik göstergeler `teknik_gostergeler/` altında tek matematiksel kaynağa bağlandı.
+- Canlı tarama, Günlük Trade, grafik ve backtest ortak RSI/MACD/ATR/ADX hesaplarını kullanır.
+- Veri metadata sözleşmesi ve strateji eklenti altyapısı sürümlendirildi.
+- Ayrıntılı kapsam için `ANALIZ_ENVANTERI.md` ve `CHANGELOG.md` dosyalarına bakın.
+- Formül geçişi ve test baseline'ı `BASELINE_KARSILASTIRMA.md` dosyasındadır.
+
+Zorunlu karar kapıları veri kalitesi, en az 30 zaman sıralı OOS örnek, uygun piyasa rejimi, likidite/maliyet, pozitif net beklenti, risk/getiri, BIST+sektör göreceli gücü ve aynı-saat RVOL/VWAP teyididir. Hiçbiri listeyi beş adaya tamamlamak için gevşetilmez.
+
+İsteğe bağlı analizlerin tek ayar kaynağı `uygulama_ayarlari.py` dosyasıdır: KAP güçlü ilk adaylarda açık; faaliyet toplu taramada kapalı; temettü normal trade taramasında kapalı; gecelik momentum deneysel/pasiftir.
 
 ## v10.1.2 görünür sonuç ve 50 TL uyumluluk düzeltmesi
 
