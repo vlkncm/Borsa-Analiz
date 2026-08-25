@@ -1,5 +1,11 @@
+import bistSymbolsText from "./bist_hisseleri_613_aktif.txt";
+
 const ALLOWED = /^[A-Z0-9_]{3,6}$/;
-const SCAN_SYMBOLS = "ASELS,DSTKF,QNBTR,BOSSA,ENPRA,HEDEF,GARAN,ENKAI,TUPRS,KCHOL,THYAO,BIMAS,ISBTR,ISCTR,ISKUR,KTLEV,AKBNK,ASTOR,VAKBN,YKBNK,HALKB,FROTO,EREGL,CCOLA,TCELL,ODINE,TTKOM,SAHOL,TRALT,ISDMR,TOASO,QNBFK,GUBRF,KLRHO,OZATD,SISE,SELEC,ENJSA,DOCO,TURSG,KENT,AEFES,MGROS,PKENT,INVES,TERA,AKSEN,MAGEN,TRGYO,KLNMA,SASA,OYAKC,TAVHL,AHGAZ,IEYHO,ENERY,PGSUS,ZRGYO,POLHO,TEHOL,MPARK,AGHOL,GUNDG,EKGYO,LIDER,BRSAN,PEKGY,UFUK,RALYH,LYDHO,RGYAS,RYGYO,PASEU,ARCLK,AKFIS,EUPWR,TABGD,YGGYO,ANSGR,BSOKE,DOHOL,CVKMD,ISMEN,GLRMK,BRYAT,AYGAZ,ECILC,ARMGD,PETKM,SKBNK,TKFEN,KOZAA,TRMET,AKCNS,CWENE,AKSA,TTRAK,CIMSA,TRHOL,BIGEN,AGESA,ANHYT,TBORG,OTKAR,KRDMA,KRDMB,KRDMD,GENIL,KLSER,ALKLC,ALARK,RYSAS,DOAS,MOGAN,CLEBI,GESAN,ULKER,ECZYT,GLYHO,NUHCM".split(",");
+const FORMULA_VERSION = "technical_indicators_v10_2";
+const STRATEGY_VERSION = "daily_trend_v10_2";
+const SCAN_SYMBOLS = [...new Set(bistSymbolsText.split(/\r?\n/)
+  .map(symbol => symbol.trim().toUpperCase().replace(/\.IS$/, ""))
+  .filter(symbol => ALLOWED.test(symbol)))];
 
 export default {
   async fetch(request, env, ctx) {
@@ -39,7 +45,8 @@ async function scanResponse(url, ctx) {
   const symbols = SCAN_SYMBOLS.slice(offset, offset + limit);
   const settled = await Promise.allSettled(symbols.map(symbol => fetchChart(symbol, ctx)));
   const candidates = settled.flatMap((item, index) => item.status === "fulfilled" ? [scoreCandidate(symbols[index], item.value)].filter(Boolean) : []);
-  return json({ candidates, processed: symbols.length, next: offset + symbols.length, total: SCAN_SYMBOLS.length });
+  return json({ candidates, processed: symbols.length, next: offset + symbols.length, total: SCAN_SYMBOLS.length,
+    formulaVersion: FORMULA_VERSION, strategyVersion: STRATEGY_VERSION });
 }
 
 async function fetchChart(symbol, ctx) {
@@ -66,12 +73,12 @@ function scoreCandidate(symbol, rows) {
   if (!(price > 1 && price <= 50)) return null;
   const turnover = average(rows.slice(-20).map(x => x.c * x.v));
   if (turnover < 5_000_000) return null;
-  const e20 = emaLast(closes, 20), e50 = emaLast(closes, 50), e200 = emaLast(closes, 200), r = rsiLast(closes, 14);
+  const e20 = emaLast(closes, 20), e50 = emaLast(closes, 50), e200 = emaLast(closes, 200), r = wilderRsiLast(closes, 14);
   const fast = emaSeries(closes, 12), slow = emaSeries(closes, 26), macd = fast.map((x, i) => x - slow[i]), signal = emaLast(macd, 9);
   const ret20 = (price / closes.at(-21) - 1) * 100, ret60 = (price / closes.at(-61) - 1) * 100;
   const volumeRatio = volumes.at(-1) / Math.max(average(volumes.slice(-20)), 1);
-  const tr = rows.slice(1).map((x, i) => Math.max(x.h - x.l, Math.abs(x.h - rows[i].c), Math.abs(x.l - rows[i].c)));
-  const atr = average(tr.slice(-14)), support = Math.min(...rows.slice(-20).map(x => x.l));
+  const tr = rows.map((x, i) => i === 0 ? x.h - x.l : Math.max(x.h - x.l, Math.abs(x.h - rows[i - 1].c), Math.abs(x.l - rows[i - 1].c)));
+  const atr = wilderRmaLast(tr, 14), support = Math.min(...rows.slice(-20).map(x => x.l));
   const stop = Math.min(price * .985, Math.max(price - atr * 1.5, support * .98));
   const target = price + Math.max(atr * 2.2, price * .08), rr = (target - price) / Math.max(price - stop, .01);
   let score = 0; const reasons = [], risks = [];
@@ -87,12 +94,28 @@ function scoreCandidate(symbol, rows) {
   score = Math.min(100, score);
   if (score < 48) return null;
   const status = score >= 75 && price <= e20 * 1.04 ? "ALIM BÖLGESİNDE" : price > e20 * 1.08 ? "GERİ ÇEKİLME BEKLE" : "TEYİT BEKLE";
-  return { symbol, price, score, status, buyLow: Math.min(price * .98, e20), buyHigh: price * 1.01, target, stop, rr, reasons, risks, turnover };
+  return { symbol, price, score, status, buyLow: Math.min(price * .98, e20), buyHigh: price * 1.01, target, stop, rr, reasons, risks, turnover,
+    formulaVersion: FORMULA_VERSION, strategyVersion: STRATEGY_VERSION };
 }
 
 function emaSeries(values, period) { const k = 2 / (period + 1), out = [values[0]]; for (let i = 1; i < values.length; i++) out.push(values[i] * k + out[i - 1] * (1 - k)); return out; }
 function emaLast(values, period) { return emaSeries(values, period).at(-1); }
-function rsiLast(values, period) { let gains = 0, losses = 0; for (let i = values.length - period; i < values.length; i++) { const d = values[i] - values[i - 1]; if (d > 0) gains += d; else losses -= d; } return losses ? 100 - 100 / (1 + gains / losses) : 100; }
+function wilderRmaLast(values, period) {
+  if (values.length < period) return NaN;
+  let value = average(values.slice(0, period));
+  for (let i = period; i < values.length; i++) value = (value * (period - 1) + values[i]) / period;
+  return value;
+}
+function wilderRsiLast(values, period) {
+  if (values.length <= period) return NaN;
+  const gains = [], losses = [];
+  for (let i = 1; i < values.length; i++) { const change = values[i] - values[i - 1]; gains.push(Math.max(change, 0)); losses.push(Math.max(-change, 0)); }
+  const gain = wilderRmaLast(gains, period), loss = wilderRmaLast(losses, period);
+  if (gain === 0 && loss === 0) return 50;
+  if (loss === 0) return 100;
+  if (gain === 0) return 0;
+  return 100 - 100 / (1 + gain / loss);
+}
 function average(values) { return values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1); }
 
 async function historyResponse(url, ctx) {
@@ -137,3 +160,6 @@ function json(value, status = 200) {
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
 }
+
+// Node tabanlı sözleşme testi için dışa açılır; Worker'ın varsayılan export'u değişmez.
+export { SCAN_SYMBOLS, scoreCandidate, wilderRmaLast, wilderRsiLast };

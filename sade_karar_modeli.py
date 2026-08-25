@@ -190,13 +190,18 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
 
 
 def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
-    """iPhone/PWA ile aynı 1 yıllık OHLCV formülünü tek hisseye uygular."""
+    """50 TL taramasını v10.2 kanonik günlük feature hattıyla hesaplar."""
     if frame is None or len(frame) < 200:
         return None
     data = frame.copy().dropna(subset=["Close", "High", "Low"])
     if len(data) < 200:
         return None
-    close = pd.to_numeric(data["Close"], errors="coerce")
+    # RSI, EMA, MACD ve ATR burada yeniden yazılmaz. Masaüstü tarama,
+    # backtest ve mobil sözleşmenin dayandığı tek kanonik motor kullanılır.
+    from sinyal_pipeline import FORMULA_VERSION, STRATEGY_VERSION, daily_features
+
+    features = daily_features(data)
+    close = pd.to_numeric(features["Close"], errors="coerce")
     high, low = pd.to_numeric(data["High"], errors="coerce"), pd.to_numeric(data["Low"], errors="coerce")
     volume = pd.to_numeric(data.get("Volume", 0), errors="coerce").fillna(0)
     price = float(close.iloc[-1])
@@ -205,21 +210,20 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     turnover = float((close * volume).tail(20).mean())
     if not math.isfinite(turnover) or turnover < 5_000_000:
         return None
-    ema = lambda period: close.ewm(span=period, adjust=False).mean()
-    e20, e50, e200 = float(ema(20).iloc[-1]), float(ema(50).iloc[-1]), float(ema(200).iloc[-1])
-    delta = close.diff(); gain = delta.clip(lower=0).tail(14).mean(); loss = (-delta.clip(upper=0)).tail(14).mean()
-    rsi = 100.0 if loss == 0 else float(100 - 100 / (1 + gain / loss))
-    macd_line = ema(12) - ema(26); macd_signal = macd_line.ewm(span=9, adjust=False).mean()
+    last = features.iloc[-1]
+    e20, e50, e200 = float(last["EMA20"]), float(last["EMA50"]), float(last["EMA200"])
+    rsi = float(last["RSI"])
+    macd_value, macd_signal_value = float(last["MACD"]), float(last["MACD_SIGNAL"])
     volume_ratio = float(volume.iloc[-1] / max(volume.tail(20).mean(), 1))
     ret20 = float((price / close.iloc[-21] - 1) * 100); ret60 = float((price / close.iloc[-61] - 1) * 100)
-    previous = close.shift(1)
-    tr = pd.concat([(high-low), (high-previous).abs(), (low-previous).abs()], axis=1).max(axis=1)
-    atr = float(tr.tail(14).mean()); support = float(low.tail(20).min())
+    atr = float(last["ATR"]); support = float(low.tail(20).min())
+    if not all(math.isfinite(value) for value in (e20, e50, e200, rsi, macd_value, macd_signal_value, atr)):
+        return None
     stop = min(price*.985, max(price-atr*1.5, support*.98))
     target = price + max(atr*2.2, price*.08)
     rr = (target-price) / max(price-stop, .01)
     score = (12*(price>e20) + 18*(e20>e50) + 15*(price>e200) + 18*(45<=rsi<=68) +
-             15*(macd_line.iloc[-1]>macd_signal.iloc[-1]) + 12*(volume_ratio>=1.15) +
+             15*(macd_value>macd_signal_value) + 12*(volume_ratio>=1.15) +
              5*(0<ret20<20) + 5*(ret60>0) + 5*(rr>=1.5))
     if score < 48:
         return None
@@ -227,7 +231,8 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     return {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
             "Alım Bölgesi": f"{min(price*.98, e20):.2f} – {price*1.01:.2f} TL", "Hedef": round(target, 2),
             "Stop": round(stop, 2), "Potansiyel %": round((target/price-1)*100, 2), "Skor": int(score),
-            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover)}
+            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover),
+            "Formül Sürümü": FORMULA_VERSION, "Strateji Sürümü": STRATEGY_VERSION}
 
 
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:
