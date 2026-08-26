@@ -25,55 +25,12 @@ if not exist "%PYTHON%" (
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist SetupOutput rmdir /s /q SetupOutput
-if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 
-"%PYTHON%" -m PyInstaller ^
---noconfirm ^
---clean ^
---onedir ^
---windowed ^
---name BorsaAnalizProMAX ^
---icon=logo.ico ^
---add-data "logo.png;." ^
---add-data "logo.ico;." ^
---add-data "assets;assets" ^
---hidden-import main ^
---hidden-import bist30 ^
---hidden-import veri_saglayici ^
---hidden-import bist_bulteni ^
---hidden-import borsa_tarayici ^
---hidden-import gunluk_trade_gostergeleri ^
---hidden-import rsi_supertrend_stratejisi ^
---hidden-import pro_moduller ^
---hidden-import kap_modulu ^
---hidden-import backtest ^
---hidden-import mtf_grafik ^
---hidden-import olasilik_temettu ^
---hidden-import faaliyet_raporu ^
---hidden-import sirket_arastirmasi ^
---hidden-import fon_analizi ^
---hidden-import piyasa_guncelleme ^
---hidden-import sistem_kontrol ^
---hidden-import v4_puanlama ^
---hidden-import formasyon_motoru ^
---hidden-import takip_modulu ^
---hidden-import fibonacci_motoru ^
---hidden-import karar_motoru ^
---hidden-import satis_karar_motoru ^
---hidden-import vade_motoru ^
---hidden-import profesyonel_analiz ^
-app_qt.py
+"%PYTHON%" -m PyInstaller --noconfirm --clean BorsaAnalizProMAX.spec
 
 if errorlevel 1 goto :pyinstaller_hatasi
 
-"%PYTHON%" -m PyInstaller ^
---noconfirm ^
---clean ^
---onedir ^
---console ^
---name BorsaTaramaMotoru ^
---hidden-import main ^
-scan_runner.py
+"%PYTHON%" -m PyInstaller --noconfirm --clean BorsaTaramaMotoru.spec
 
 if errorlevel 1 goto :pyinstaller_hatasi
 

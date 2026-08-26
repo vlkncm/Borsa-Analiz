@@ -207,8 +207,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.8.0 kurulum dosyasını indir](downloads/v8.8.0/Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe)
-- SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
+- [Borsa Analiz Pro MAX v10.1.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.1.2/Setup_Borsa_Analiz_Pro_MAX_v10.1.2.exe)
+- SHA-256: `67948CBA9A22619261E5CA9FCA210063D54B0AF311E1C87A5B6F8F1928C766C2`
 
 ## v7.2 merkezi veri katmanı
 
