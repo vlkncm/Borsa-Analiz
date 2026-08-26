@@ -11,7 +11,17 @@ from strateji_kalibrasyon import olasilik_kalibrasyonu
 def denetim_tablosu(results: Iterable[Dict[str, Any]]) -> pd.DataFrame:
     rows = []
     for item in results:
-        rows.append({"Hisse": item.get("symbol", ""), "Karar": item.get("yatirim_karari", ""), "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0), "Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0), "Strateji": item.get("strateji", ""), "Canlı Kanıt": item.get("canli_kanit_durumu", ""), "Canlı Kanıt İşlem": item.get("canli_kanit_islem", 0), "Net Canlı Getiri %": item.get("canli_kanit_net_getiri", 0), "Kilit Nedeni": item.get("canli_kanit_kilit_nedeni", ""), "Likidite": item.get("likidite_seviyesi", ""), "Temel Risk": item.get("temel_risk_notu", ""), "Uyarılar": item.get("canli_uyarilar", ""), "Neden": item.get("karar_nedenleri", "")})
+        row = {"Hisse": item.get("symbol", ""), "Karar": item.get("yatirim_karari", ""), "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0), "Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0), "Strateji": item.get("strateji", ""), "Canlı Kanıt": item.get("canli_kanit_durumu", ""), "Canlı Kanıt İşlem": item.get("canli_kanit_islem", 0), "Net Canlı Getiri %": item.get("canli_kanit_net_getiri", 0), "Kilit Nedeni": item.get("canli_kanit_kilit_nedeni", ""), "Likidite": item.get("likidite_seviyesi", ""), "Temel Risk": item.get("temel_risk_notu", ""), "Uyarılar": item.get("canli_uyarilar", ""), "Neden": item.get("karar_nedenleri", "")}
+        horizons = item.get("probability_by_horizon", {}) or {}
+        for day in (1, 3, 5):
+            value = horizons.get(day, horizons.get(str(day), {})) or {}
+            row.update({f"{day} Gün Olasılık %": value.get("probability"),
+                        f"{day} Gün OOS Örnek": value.get("sample_size", 0),
+                        f"{day} Gün GA Alt %": value.get("ci_low"), f"{day} Gün GA Üst %": value.get("ci_high")})
+        row.update({"Olasılık Tarihi": item.get("probability_as_of"),
+                    "Başarılılarda Medyan Süre": item.get("median_target_time_success_days"),
+                    "Brier Skoru": item.get("brier_skoru"), "Strateji Sürümü": item.get("strategy_version")})
+        rows.append(row)
     return pd.DataFrame(rows)
 
 

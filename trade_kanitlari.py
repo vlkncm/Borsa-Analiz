@@ -155,6 +155,72 @@ def three_way_oos_evidence(outcomes: Any, min_samples: int = 30) -> dict[str, An
     }
 
 
+def trading_days_elapsed(signal_at: Any, as_of: Any, trading_dates: Any = None) -> int:
+    """Sinyal gününden sonraki tamamlanmış işlem günlerini sayar.
+
+    ``trading_dates`` verilirse BIST tatilleri dahil yalnız sağlanan seanslar sayılır;
+    verilmezse hafta sonlarını dışlayan iş günü takvimi kullanılır.
+    """
+    start, end = pd.Timestamp(signal_at).normalize(), pd.Timestamp(as_of).normalize()
+    if pd.isna(start) or pd.isna(end) or end <= start:
+        return 0
+    if trading_dates is not None:
+        sessions = pd.DatetimeIndex(pd.to_datetime(list(trading_dates), errors="coerce")).dropna().normalize().unique()
+        return int(((sessions > start) & (sessions <= end)).sum())
+    return int(np.busday_count(start.date(), end.date()))
+
+
+def horizon_probability_evidence(outcomes: Any, horizons: tuple[int, ...] = (1, 3, 5),
+                                 primary_horizon: int = 3, min_samples: int = 30,
+                                 strategy_version: str | None = None,
+                                 formula_version: str | None = None) -> dict[str, Any]:
+    """Tam gözlenmiş sabit ufuklarda hedef-önce ampirik olasılığı.
+
+    Beklenen satır sözleşmesi: ``olay``, ``olay_islem_gunu`` ve
+    ``gozlenen_islem_gunu``. Ufuktan sonra gerçekleşen olay o ufuk için
+    ``SURE_DOLDU`` sayılır; henüz ufku tamamlamayan satır paydaya girmez.
+    """
+    rows = pd.DataFrame(outcomes).copy()
+    records: dict[int, dict[str, Any]] = {}
+    successful_days: list[float] = []
+    if not rows.empty and "olay" in rows:
+        event_days = pd.to_numeric(rows.get("olay_islem_gunu", pd.Series(index=rows.index, dtype=float)), errors="coerce")
+        observed_days = pd.to_numeric(rows.get("gozlenen_islem_gunu", pd.Series(index=rows.index, dtype=float)), errors="coerce")
+        successful_days = event_days[rows["olay"].eq(Outcome.HEDEF_ONCE.value)].dropna().astype(float).tolist()
+    else:
+        event_days = pd.Series(float("nan"), index=rows.index, dtype=float)
+        observed_days = pd.Series(float("nan"), index=rows.index, dtype=float)
+    dates = pd.to_datetime(rows.get("sinyal_zamani", pd.Series(dtype="datetime64[ns]")), errors="coerce").dropna()
+    for horizon in sorted(set(int(value) for value in horizons if int(value) > 0)):
+        mature = observed_days.ge(horizon)
+        sample = rows.loc[mature].copy() if len(rows) else rows
+        sample_event_days = event_days.loc[mature] if len(event_days) else event_days
+        sample_events = sample.get("olay", pd.Series("", index=sample.index, dtype=str))
+        target_hits = sample_events.eq(Outcome.HEDEF_ONCE.value) & sample_event_days.le(horizon)
+        successes, total = int(target_hits.sum()), int(len(sample))
+        low, high = wilson_interval(successes, total)
+        sufficient = total >= min_samples
+        records[horizon] = {
+            "probability": successes / total * 100 if sufficient else None,
+            "sample_size": total,
+            "ci_low": low * 100 if sufficient and low is not None else None,
+            "ci_high": high * 100 if sufficient and high is not None else None,
+            "status": "Yeterli" if sufficient else "Yetersiz örnek",
+        }
+    primary = records.get(primary_horizon, {"probability": None, "sample_size": 0, "ci_low": None, "ci_high": None})
+    return {
+        "probability_target_before_stop": primary["probability"],
+        "probability_horizon_days": primary_horizon,
+        "probability_sample_size": primary["sample_size"],
+        "probability_ci_low": primary["ci_low"], "probability_ci_high": primary["ci_high"],
+        "probability_as_of": dates.max().isoformat() if not dates.empty else None,
+        "median_target_time_success_days": float(np.median(successful_days)) if successful_days else None,
+        "probability_by_horizon": records, "strategy_version": strategy_version,
+        "formula_version": formula_version,
+        "method": "Tam gözlenmiş sabit ufukta ampirik oran; Wilson %95 güven aralığı",
+    }
+
+
 def _insufficient(n: int) -> dict[str, Any]:
     return {"n": n, "yeterli": False, "olasiliklar": None, "guven_araliklari": None,
             "hedef_olasiligi_pct": None, "hedef_guven_araligi_pct": None,

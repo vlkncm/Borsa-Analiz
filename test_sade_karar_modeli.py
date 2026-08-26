@@ -51,7 +51,9 @@ class SadeKararModeliTests(unittest.TestCase):
 
     def test_excel_ana_raporu_teknik_jargon_gostermez(self):
         report = sade_ana_rapor(self.frame)
-        self.assertEqual(["Hisse", "Analiz Tarihi", "Karar", "Alım Bölgesi", "Referans Fiyat", "Hedef", "Stop", "Potansiyel %", "Tahmini Süre", "Güven Skoru", "Sonuç / Durum"], list(report.columns))
+        self.assertEqual(["Hisse", "Analiz Tarihi", "Karar", "Alım Bölgesi", "Referans Fiyat", "Hedef", "Stop", "Potansiyel %", "Tahmini Süre",
+                          "Hedef Olasılığı %", "Olasılık Ufku — İşlem Günü", "Başarılılarda Medyan Süre",
+                          "OOS Örnek Sayısı", "Güven Aralığı", "Güven Skoru", "Sonuç / Durum"], list(report.columns))
         self.assertNotIn("RSI", report.columns)
 
 

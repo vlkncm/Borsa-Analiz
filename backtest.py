@@ -6,7 +6,7 @@ import pandas as pd
 from veri_saglayici import veri as yf
 from teknik_gostergeler import atr, ema, macd, rsi
 from sinyal_pipeline import FORMULA_VERSION, STRATEGY_VERSION, daily_features, daily_raw_signal
-from trade_kanitlari import label_trade_outcome, mfe_mae
+from trade_kanitlari import horizon_probability_evidence, label_trade_outcome, mfe_mae
 
 
 def rsi_hesapla(df, period=14):
@@ -115,7 +115,7 @@ def backtest_hisse(
                 brut_getiri = ((cikis - giris) / giris) * 100 if giris > 0 else 0
                 getiri = brut_getiri - (2 * komisyon_bps / 100)
                 evaluated_bars = df.iloc[entry_i:j+1]
-                event, _ = label_trade_outcome(evaluated_bars, hedef, stop)
+                event, event_day = label_trade_outcome(evaluated_bars, hedef, stop)
                 excursions = mfe_mae(evaluated_bars, giris)
 
                 islemler.append({
@@ -131,6 +131,8 @@ def backtest_hisse(
                     "Brut Getiri %": round(brut_getiri, 2),
                     "Tahmini Maliyet %": round(2 * komisyon_bps / 100, 3),
                     "Holding Gün": holding_days, "Olay": event.value,
+                    "olay": event.value, "olay_islem_gunu": event_day,
+                    "gozlenen_islem_gunu": len(evaluated_bars), "sinyal_zamani": df.index[i],
                     "MFE %": excursions["mfe_pct"], "MAE %": excursions["mae_pct"],
                     "Formül Sürümü": FORMULA_VERSION, "Strateji Sürümü": STRATEGY_VERSION,
                 })
@@ -162,6 +164,10 @@ def backtest_hisse(
         stop_sayisi = int((islem_df["Sonuç"] == "STOP").sum())
         kazanan = int((islem_df["Getiri %"] > 0).sum())
         toplam = len(islem_df)
+        horizon_evidence = horizon_probability_evidence(
+            islem_df, horizons=(1, 3, 5), primary_horizon=3, min_samples=30,
+            strategy_version=STRATEGY_VERSION, formula_version=FORMULA_VERSION,
+        )
 
         ozet = {
             "Hisse": symbol,
@@ -173,12 +179,18 @@ def backtest_hisse(
             "En İyi İşlem %": round(float(islem_df["Getiri %"].max()), 2),
             "En Kötü İşlem %": round(float(islem_df["Getiri %"].min()), 2),
             "Hedef Sayısı": hedef_sayisi,
-            "Stop Sayısı": stop_sayisi
+            "Stop Sayısı": stop_sayisi,
+            "Hedef Olasılığı %": horizon_evidence["probability_target_before_stop"],
+            "Olasılık Ufku — İşlem Günü": horizon_evidence["probability_horizon_days"],
+            "OOS Örnek Sayısı": horizon_evidence["probability_sample_size"],
+            "Güven Aralığı Alt %": horizon_evidence["probability_ci_low"],
+            "Güven Aralığı Üst %": horizon_evidence["probability_ci_high"],
+            "Başarılılarda Medyan Süre": horizon_evidence["median_target_time_success_days"],
         }
 
         return {
             "ozet": ozet,
-            "islemler": islemler
+            "islemler": islemler, "olasilik_kaniti": horizon_evidence
         }
 
     except Exception as e:

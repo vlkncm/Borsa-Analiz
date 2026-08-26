@@ -1,10 +1,12 @@
 import unittest
+import inspect
 import numpy as np
 import pandas as pd
 
 from trade_kanitlari import (CostConfig, MarketRegime, Outcome, classify_market_regime,
     decision_gates, expected_value, label_trade_outcome, mfe_mae, relative_strength,
-    grouped_mfe_mae_summary, ranking_score, same_time_rvol, three_way_oos_evidence, wilson_interval)
+    grouped_mfe_mae_summary, horizon_probability_evidence, ranking_score, same_time_rvol,
+    three_way_oos_evidence, trading_days_elapsed, wilson_interval)
 from sinyal_pipeline import daily_features, daily_raw_signal
 from veri_saglayici import _normalize
 
@@ -39,6 +41,35 @@ class TradeEvidenceTests(unittest.TestCase):
         self.assertLess(low, 60); self.assertGreater(high, 60)
         self.assertIsNotNone(evidence["brier_skoru"]); self.assertIsNotNone(evidence["log_loss"])
         self.assertFalse(three_way_oos_evidence(rows.iloc[:29])["yeterli"])
+
+    def test_horizon_probabilities_use_separate_mature_denominators(self):
+        rows = []
+        for index in range(35):
+            observed = 1 if index < 2 else (3 if index < 5 else 5)
+            event = Outcome.HEDEF_ONCE.value if index % 2 == 0 else Outcome.STOP_ONCE.value
+            rows.append({"olay": event, "olay_islem_gunu": 1 if event == Outcome.HEDEF_ONCE.value else 2,
+                         "gozlenen_islem_gunu": observed, "sinyal_zamani": pd.Timestamp("2026-01-01") + pd.offsets.BDay(index)})
+        evidence = horizon_probability_evidence(rows, strategy_version="10.2.0", formula_version="v10.2")
+        self.assertEqual(evidence["probability_by_horizon"][1]["sample_size"], 35)
+        self.assertEqual(evidence["probability_by_horizon"][3]["sample_size"], 33)
+        self.assertEqual(evidence["probability_by_horizon"][5]["sample_size"], 30)
+        self.assertIsNotNone(evidence["probability_by_horizon"][5]["probability"])
+        self.assertEqual(evidence["probability_horizon_days"], 3)
+
+    def test_immature_horizon_is_hidden_and_exchange_sessions_are_counted(self):
+        rows = [{"olay": Outcome.HEDEF_ONCE.value, "olay_islem_gunu": 1,
+                 "gozlenen_islem_gunu": 5} for _ in range(29)]
+        evidence = horizon_probability_evidence(rows)
+        self.assertIsNone(evidence["probability_by_horizon"][5]["probability"])
+        sessions = pd.to_datetime(["2026-08-28", "2026-08-31", "2026-09-02"])
+        self.assertEqual(trading_days_elapsed("2026-08-28", "2026-09-02", sessions), 2)
+        self.assertEqual(trading_days_elapsed("2026-08-28", "2026-08-31"), 1)
+
+    def test_live_and_backtest_use_same_horizon_probability_function(self):
+        import backtest
+        import gunluk_trade_motoru
+        self.assertIn("horizon_probability_evidence", inspect.getsource(backtest))
+        self.assertIn("horizon_probability_evidence", inspect.getsource(gunluk_trade_motoru))
 
     def test_relative_strength_aligns_timestamps_and_missing_sector(self):
         index = pd.date_range("2026-01-01", periods=70)

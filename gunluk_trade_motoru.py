@@ -16,8 +16,9 @@ from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
 from veri_saglayici import PiyasaVeriAdapteri, get_daily_ohlcv, get_intraday_ohlcv
 from teknik_gostergeler import adx as canonical_adx, ema as canonical_ema, macd as canonical_macd, rsi as canonical_rsi
 from teknik_gostergeler.ayarlar import StrategyConfig
+from sinyal_pipeline import FORMULA_VERSION
 from trade_kanitlari import (CostConfig, classify_market_regime, decision_gates,
-                             expected_value, mfe_mae_summary, relative_strength,
+                             expected_value, horizon_probability_evidence, mfe_mae_summary, relative_strength,
                              ranking_score, same_time_rvol)
 
 STRATEGY_CONFIG = StrategyConfig()
@@ -117,6 +118,12 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     rr = (target-price)/risk if risk > 0 else 0.0
     target_potential = (target/price-1)*100
     evidence = ampirik_kanit([] if historical_outcomes is None else historical_outcomes)
+    horizon_evidence = horizon_probability_evidence(
+        [] if historical_outcomes is None else historical_outcomes,
+        horizons=STRATEGY_CONFIG.probability_horizons_days,
+        primary_horizon=STRATEGY_CONFIG.primary_probability_horizon_days, min_samples=30,
+        strategy_version=STRATEGY_CONFIG.version, formula_version=FORMULA_VERSION,
+    )
     stop_loss_pct = (price-stop)/price*100
     expectancy = None
     if evidence.get("yeterli"):
@@ -133,13 +140,14 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
              and rs["rs_sektor_5"] > 0 and rs["rs_sektor_20"] > 0)
     rvol_ok = rvol["rvol"] is not None and rvol["rvol"] >= .8
     net_expectancy = None if expectancy is None else expectancy["net_beklenti_pct"]
-    gates = decision_gates(data_ok=not meta.is_stale, evidence=evidence, regime=regime,
+    probability_gate_evidence = {"yeterli": horizon_evidence["probability_target_before_stop"] is not None}
+    gates = decision_gates(data_ok=not meta.is_stale, evidence=probability_gate_evidence, regime=regime,
                            liquid=bool(session["Volume"].median() > 0),
                            net_expectancy_pct=net_expectancy, risk_reward=rr,
                            relative_strength_ok=rs_ok,
                            volume_confirmation=rvol_ok and above_vwap,
                            min_risk_reward=min_risk_getiri)
-    probability_lower = (evidence["guven_araligi"][0] if evidence.get("guven_araligi") else 0.0)
+    probability_lower = horizon_evidence["probability_ci_low"] or 0.0
     rank = (ranking_score(net_expectancy_pct=net_expectancy, probability_lower_pct=probability_lower,
                           relative_strength_pct=min(rs["rs_bist_5"], rs["rs_sektor_5"]),
                           rvol=rvol["rvol"], risk_reward=rr, reliability_pct=100)
@@ -150,8 +158,9 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     warnings = []
     if meta.is_delayed:
         warnings.append("Ücretsiz/gecikmeli veri; gerçek zaman garantisi yok")
-    if evidence["olasilik"] is None:
-        warnings.append(f"Hedef olasılığı için yetersiz out-of-sample örnek (n={evidence['n']})")
+    if horizon_evidence["probability_target_before_stop"] is None:
+        warnings.append(f"{STRATEGY_CONFIG.primary_probability_horizon_days} işlem günlük hedef olasılığı için yetersiz olgunlaşmış out-of-sample örnek "
+                        f"(n={horizon_evidence['probability_sample_size']})")
     if rvol["rvol"] is None:
         warnings.append(rvol["durum"])
     if rs.get("uyari"):
@@ -174,14 +183,16 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         result = "AL ADAYI"
     size = pozisyon_boyutu(hesap_buyuklugu, risk_yuzdesi, price, stop)
     delay = "bilinmiyor" if meta.delay_minutes is None else f"{meta.delay_minutes:.0f} dk"
-    probability = "Yetersiz örnek" if evidence["olasilik"] is None else f"%{evidence['olasilik']:.1f}"
-    confidence_interval = ("Yetersiz örnek" if evidence.get("guven_araligi") is None
-                           else f"%{evidence['guven_araligi'][0]:.1f} – %{evidence['guven_araligi'][1]:.1f}")
+    horizon_probability = horizon_evidence["probability_target_before_stop"]
+    probability = "Yetersiz örnek" if horizon_probability is None else f"%{horizon_probability:.0f}"
+    confidence_interval = ("Yetersiz örnek" if horizon_evidence["probability_ci_low"] is None
+                           else f"%{horizon_evidence['probability_ci_low']:.0f} – %{horizon_evidence['probability_ci_high']:.0f}")
     expected = "Bilinmiyor" if evidence["medyan_hareket"] is None else f"%{evidence['medyan_hareket']:.2f}"
     interval_range = "Bilinmiyor" if evidence["p10"] is None else f"%{evidence['p10']:.2f} – %{evidence['p90']:.2f}"
     summary = (f"{symbol.replace('.IS','')} — {entry_low:.2f}–{entry_high:.2f} TL alış; {target:.2f} TL hedef; "
                f"{stop:.2f} TL stop; hedef potansiyeli %{target_potential:.2f}; geçmiş medyan hareket {expected}; "
-               f"hedefe stop'tan önce ulaşma olasılığı {probability} (n={evidence['n']})")
+               f"{STRATEGY_CONFIG.primary_probability_horizon_days} işlem günü içinde hedefe stop'tan önce ulaşma olasılığı {probability} "
+               f"(n={horizon_evidence['probability_sample_size']})")
     return {
         "Hisse": symbol.replace(".IS", ""), "Sonuç": result, "Sinyal": "VWAP+momentum" + ("+doji" if positive_doji else ""),
         "Veri Zamanı": _fmt_time(meta.last_bar_at), "Veri Kaynağı": meta.source, "Veri Gecikmesi": delay,
@@ -189,6 +200,12 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         "Alış Alt": entry_low, "Alış Üst": entry_high, "Hedef": target, "Stop": stop,
         "Hedef Potansiyeli %": target_potential, "Beklenen Gün Sonu Hareketi %": expected,
         "Tahmin Aralığı %": interval_range, "Hedef Önce Olasılığı %": probability,
+        "Olasılık Ufku — İşlem Günü": horizon_evidence["probability_horizon_days"],
+        "OOS Örnek Sayısı": horizon_evidence["probability_sample_size"],
+        "Başarılılarda Medyan Süre": horizon_evidence["median_target_time_success_days"],
+        "Olasılık Tarihi": horizon_evidence["probability_as_of"],
+        "Ufuk Olasılıkları": horizon_evidence["probability_by_horizon"],
+        "Formül Sürümü": FORMULA_VERSION,
         "Olasılık %95 Güven Aralığı": confidence_interval,
         "Örnek": evidence["n"], "Kalibrasyon": evidence["kalibrasyon"],
         "Kalibrasyon Başlangıcı": evidence.get("baslangic"), "Kalibrasyon Bitişi": evidence.get("bitis"),

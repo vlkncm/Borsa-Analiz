@@ -1359,6 +1359,8 @@ class DailyTradePage(QWidget):
         self.worker = None
         self.results = pd.DataFrame()
         self.report_fallback = pd.DataFrame()
+        self._detail_records = []
+        self.setMinimumWidth(760)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         title = QLabel("GÜNLÜK TRADE")
@@ -1371,6 +1373,15 @@ class DailyTradePage(QWidget):
         warning.setWordWrap(True)
         warning.setObjectName("riskBanner")
         layout.addWidget(warning)
+        summary = QHBoxLayout()
+        self.regime_summary = QLabel("PİYASA REJİMİ\nUNKNOWN")
+        self.candidate_summary = QLabel("UYGUN ADAY\n0")
+        self.data_summary = QLabel("VERİ DURUMU\nHenüz güncellenmedi")
+        for widget in (self.regime_summary, self.candidate_summary, self.data_summary):
+            widget.setObjectName("topMetric")
+            widget.setAlignment(Qt.AlignCenter)
+            summary.addWidget(widget, 1)
+        layout.addLayout(summary)
         controls = QHBoxLayout()
         self.scan_button = QPushButton("TÜM BIST GÜNLÜK TRADE TARAMASINI BAŞLAT")
         self.scan_button.setObjectName("primary")
@@ -1388,8 +1399,14 @@ class DailyTradePage(QWidget):
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
         self.table = SimpleTable("Adaylar", "Uygun aday yoksa liste boş bırakılır.")
-        self.table.row_selected.connect(self.show_detail)
+        self.table.table.cellClicked.connect(self._show_inline_detail)
         layout.addWidget(self.table, 1)
+        self.detail = QLabel("Bir aday seçildiğinde net beklenti, risk/getiri, göreceli güç, RVOL ve olasılık kanıtı burada gösterilir.")
+        self.detail.setObjectName("analysisText")
+        self.detail.setWordWrap(True)
+        self.detail.setMinimumHeight(112)
+        self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.detail)
         self.paper_button = QPushButton("SEÇİLİ SATIRI KÂĞIT İŞLEM OLARAK KAYDET")
         self.paper_button.clicked.connect(self.save_selected)
         layout.addWidget(self.paper_button)
@@ -1429,16 +1446,19 @@ class DailyTradePage(QWidget):
         if not display.empty:
             priority = {"AL ADAYI": 3, "TEYİT BEKLE": 2, "FİYAT KOVALAMA": 1, "İŞLEM YOK": 0}
             display["_öncelik"] = display["Sonuç"].map(priority).fillna(0)
-            display["_pot"] = pd.to_numeric(display.get("Hedef Potansiyeli %", 0), errors="coerce").fillna(0)
-            display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", 0), errors="coerce").fillna(0)
-            display = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
-            columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop",
-                       "Hedef Potansiyeli %", "Net Beklenti %", "Hedef Önce Olasılığı %",
-                       "Olasılık %95 Güven Aralığı", "Örnek", "Risk/Getiri", "Piyasa Rejimi", "Veri Zamanı", "Gerekçe"]
-            display = display[[c for c in columns if c in display.columns]].reset_index(drop=True)
+            display["_pot"] = pd.to_numeric(display.get("Hedef Potansiyeli %", pd.Series(0, index=display.index)), errors="coerce").fillna(0)
+            display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", pd.Series(0, index=display.index)), errors="coerce").fillna(0)
+            selected = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
+            self._detail_records = selected.drop(columns=["_öncelik", "_pot", "_rr"], errors="ignore").to_dict("records")
+            display = self._compact_display(self._detail_records)
         if display.empty and not self.report_fallback.empty:
-            display = self.report_fallback.copy()
+            self._detail_records = self.report_fallback.head(5).to_dict("records")
+            display = self._compact_display(self._detail_records)
+        elif display.empty:
+            self._detail_records = []
         self.table.load(display)
+        self._update_summary(display)
+        self._resize_trade_columns()
         if not ok:
             self.status.setText("Tarama hatası: " + message.splitlines()[-1])
         elif display.empty:
@@ -1446,8 +1466,82 @@ class DailyTradePage(QWidget):
         elif "Karar" in display.columns and display["Karar"].astype(str).eq("GÜNCEL FİYATLA DOĞRULA").any():
             self.status.setText("Canlı intraday veri alınamadı. Son güvenilir günlük analiz gösteriliyor; işlem öncesinde güncel fiyatı doğrulayın.")
         else:
-            counts = display["Sonuç"].value_counts().to_dict()
-            self.status.setText(f"Tarama tamamlandı: {counts} | Çift tıklayarak ayrıntıları açın.")
+            counts = pd.Series([item.get("Sonuç", item.get("Karar", "—")) for item in self._detail_records]).value_counts().to_dict()
+            self.status.setText(f"Tarama tamamlandı: {counts} | Satıra tıklayarak ayrıntıları inceleyin.")
+
+    @staticmethod
+    def _compact_display(records):
+        def number(value):
+            try:
+                result = float(value)
+                return result if pd.notna(result) else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+        rows = []
+        for record in records:
+            probability = record.get("Hedef Önce Olasılığı %", "Yetersiz örnek")
+            horizon = int(record.get("Olasılık Ufku — İşlem Günü", 3) or 3)
+            probability_text = str(probability) if "Yetersiz" in str(probability) else str(probability).replace(".0", "")
+            rows.append({
+                "Hisse / Karar": f"{record.get('Hisse', '-')}\n{record.get('Sonuç', '-')}",
+                "Alış Bandı": f"{number(record.get('Alış Alt')):.2f} – {number(record.get('Alış Üst')):.2f}",
+                "Hedef": f"{number(record.get('Hedef')):.2f}", "Stop": f"{number(record.get('Stop')):.2f}",
+                "Yükseliş %": f"%{number(record.get('Hedef Potansiyeli %')):.1f}",
+                "Olasılık / Süre": f"{probability_text}\n{horizon} gün içinde",
+            })
+        return pd.DataFrame(rows, columns=["Hisse / Karar", "Alış Bandı", "Hedef", "Stop", "Yükseliş %", "Olasılık / Süre"])
+
+    def _show_inline_detail(self, row, _column=0):
+        if not 0 <= row < len(self._detail_records):
+            return
+        record = self._detail_records[row]
+        horizons = record.get("Ufuk Olasılıkları") or {}
+        horizon_parts = []
+        for day in (1, 3, 5):
+            value = horizons.get(day, horizons.get(str(day), {})) or {}
+            probability = value.get("probability")
+            label = "Yetersiz örnek" if probability is None else f"%{probability:.0f}"
+            ci = ("—" if value.get("ci_low") is None else f"%{value['ci_low']:.0f}–%{value['ci_high']:.0f}")
+            horizon_parts.append(f"{day} günde hedef olasılığı: {label} (n={value.get('sample_size', 0)}, %95 GA {ci})")
+        median = record.get("Başarılılarda Medyan Süre")
+        median_text = "Yetersiz örnek" if pd.isna(median) or median is None else f"{float(median):.1f} işlem günü"
+        self.detail.setText(
+            f"{record.get('Hisse', '-')} — {record.get('Sonuç', '-')}\n" + "  |  ".join(horizon_parts) +
+            f"\nBaşarılılarda medyan süre: {median_text}  |  Net beklenti: {record.get('Net Beklenti %', '—')}  |  "
+            f"Risk/getiri: {record.get('Risk/Getiri', '—')}  |  RVOL: {record.get('RVOL', 'Kullanılamıyor')}  |  "
+            f"RS BIST/Sektör: {record.get('RS BIST 5', '—')} / {record.get('RS Sektör 5', '—')}\n"
+            f"Veri: {record.get('Veri Zamanı', 'bilinmiyor')}  |  Strateji: {record.get('Strateji Sürümü', '—')}  |  "
+            f"Formül: {record.get('Formül Sürümü', '—')}\nGerekçe: {record.get('Gerekçe', '—')}"
+        )
+
+    def _update_summary(self, display):
+        source = self._detail_records
+        regimes = {str(item.get("Piyasa Rejimi", "UNKNOWN")) for item in source}
+        regime = next(iter(regimes)) if len(regimes) == 1 else ("KARMA" if regimes else "UNKNOWN")
+        suitable = sum(str(item.get("Sonuç")) == "AL ADAYI" for item in source)
+        times = [str(item.get("Veri Zamanı")) for item in source if item.get("Veri Zamanı")]
+        stale = any(str(item.get("Tazelik", "")).upper() == "ESKİ" for item in source)
+        self.regime_summary.setText(f"PİYASA REJİMİ\n{regime}")
+        self.candidate_summary.setText(f"UYGUN ADAY\n{suitable}")
+        self.data_summary.setText(f"VERİ DURUMU\n{'ESKİ' if stale else 'GÜNCEL' if times else 'VERİ YOK'} · {max(times) if times else '—'}")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._resize_trade_columns()
+
+    def _resize_trade_columns(self):
+        table = self.table.table
+        if table.columnCount() != 6:
+            return
+        width = max(600, table.viewport().width() - 10)
+        ratios = (.20, .20, .13, .13, .14, .20)
+        table.horizontalHeader().setMinimumSectionSize(40)
+        for column, ratio in enumerate(ratios):
+            table.setColumnHidden(column, False)
+            table.setColumnWidth(column, int(width * ratio))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        table.setWordWrap(True)
+        table.verticalHeader().setDefaultSectionSize(44)
 
     def _selected_record(self):
         row = self.table.table.currentRow()

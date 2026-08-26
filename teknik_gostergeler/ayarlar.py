@@ -21,3 +21,5 @@ class StrategyConfig:
     commission_bps: float = 10.0
     slippage_bps: float = 5.0
     min_risk_reward: float = 1.8
+    probability_horizons_days: tuple[int, ...] = (1, 3, 5)
+    primary_probability_horizon_days: int = 3
