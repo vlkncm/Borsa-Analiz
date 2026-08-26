@@ -31,7 +31,7 @@ from ui_components import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.2.0"
+APP_VERSION = "10.2.1"
 _CRASH_STREAM = None
 
 
@@ -2074,6 +2074,7 @@ class MainWindow(QMainWindow):
 
     def scan_daily_trade(self):
         self._scan_target = self.daily_trade
+        self._scan_universe = "ALL"
         self.scan()
 
     def scan_all_market(self, target):

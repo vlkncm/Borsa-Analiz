@@ -1,4 +1,9 @@
-# Borsa Analiz Pro MAX v10.2.0
+# Borsa Analiz Pro MAX v10.2.1
+
+## v10.2.1 Günlük Trade evren düzeltmesi
+
+- Günlük Trade taraması BIST30 yerine aktif tüm BIST evrenini kullanır.
+- Tarama evreninin yeniden BIST30'a dönmesini önleyen arayüz testi eklendi.
 
 ## v10.2.0 ortak sade arayüz sistemi
 
@@ -216,7 +221,7 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v10.2.0 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.2.0/Setup_Borsa_Analiz_Pro_MAX_v10.2.0.exe)
+- [Borsa Analiz Pro MAX v10.2.1 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.2.1/Setup_Borsa_Analiz_Pro_MAX_v10.2.1.exe)
 - SHA-256: `6F40DDACC742744489C10165976A1DB0820A70525D340E11B5D2C64FD2B940AD`
 
 ## v7.2 merkezi veri katmanı

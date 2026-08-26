@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -25,6 +26,15 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
         self.assertFalse(hasattr(window, "kap"))
         self.assertTrue(hasattr(window.daily_trade, "scan_button"))
         self.assertFalse(hasattr(window, "activity"))
+        window.close()
+
+    def test_daily_trade_scans_the_active_bist_universe(self):
+        window = MainWindow()
+        with patch.object(window, "scan") as scan:
+            window.scan_daily_trade()
+        self.assertIs(window._scan_target, window.daily_trade)
+        self.assertEqual(window._scan_universe, "ALL")
+        scan.assert_called_once_with()
         window.close()
 
 
