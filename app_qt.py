@@ -1355,6 +1355,7 @@ class DailyTradePage(QWidget):
     """Gecikme ve kanıt durumunu gizlemeden sunan günlük trade karar-destek sayfası."""
     def __init__(self):
         super().__init__()
+        self.setObjectName("dailyTradePage")
         self.thread = None
         self.worker = None
         self.results = pd.DataFrame()
@@ -1363,9 +1364,20 @@ class DailyTradePage(QWidget):
         self.setMinimumWidth(760)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("GÜNLÜK TRADE")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        header = QFrame(); header.setObjectName("dailyHeader")
+        header_layout = QVBoxLayout(header); header_layout.setContentsMargins(16, 12, 16, 12)
+        eyebrow = QLabel("CODEX İÇİN KOYU ARAYÜZ TASARIMI"); eyebrow.setObjectName("eyebrow")
+        heading = QLabel("Borsa Analiz Pro MAX"); heading.setObjectName("dailyHeading")
+        subtitle = QLabel("Günlük Trade  ·  Karar destek ve kâğıt işlem ekranı"); subtitle.setObjectName("dailySubtitle")
+        header_layout.addWidget(eyebrow); header_layout.addWidget(heading); header_layout.addWidget(subtitle)
+        nav = QHBoxLayout(); nav.addStretch()
+        for caption, target in (("Günlük Trade", self), ("Kısa Vade", None), ("Orta Vade", None), ("Tek Hisse", None)):
+            button = QPushButton(caption); button.setObjectName("dailyNavActive" if target is self else "dailyNav")
+            if caption == "Kısa Vade": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().short_term))
+            elif caption == "Orta Vade": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().medium_term))
+            elif caption == "Tek Hisse": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().single))
+            nav.addWidget(button)
+        header_layout.addLayout(nav); layout.addWidget(header)
         warning = QLabel(
             "Karar-destek ve kâğıt işlem ekranıdır; gerçek emir göndermez. Yahoo intraday veri ücretsizdir, "
             "gecikmesi garanti edilmez. Geçmiş performans gelecekteki sonucu garanti etmez."
@@ -1373,14 +1385,15 @@ class DailyTradePage(QWidget):
         warning.setWordWrap(True)
         warning.setObjectName("riskBanner")
         layout.addWidget(warning)
-        summary = QHBoxLayout()
+        summary = QHBoxLayout(); summary.setSpacing(10)
         self.regime_summary = QLabel("PİYASA REJİMİ\nUNKNOWN")
         self.candidate_summary = QLabel("UYGUN ADAY\n0")
         self.data_summary = QLabel("VERİ DURUMU\nHenüz güncellenmedi")
         for widget in (self.regime_summary, self.candidate_summary, self.data_summary):
-            widget.setObjectName("topMetric")
-            widget.setAlignment(Qt.AlignCenter)
-            summary.addWidget(widget, 1)
+            card = QFrame(); card.setObjectName("dailyMetricCard")
+            box = QVBoxLayout(card); box.setContentsMargins(14, 10, 14, 10)
+            widget.setObjectName("dailyMetricValue"); widget.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            box.addWidget(widget); summary.addWidget(card, 1)
         layout.addLayout(summary)
         controls = QHBoxLayout()
         self.scan_button = QPushButton("TÜM BIST GÜNLÜK TRADE TARAMASINI BAŞLAT")
@@ -1394,11 +1407,19 @@ class DailyTradePage(QWidget):
         self.cancel_button = QPushButton("İPTAL"); self.cancel_button.clicked.connect(self.cancel_scan)
         for widget in (self.scan_button, self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             controls.addWidget(widget)
+        self.scan_button.setText("Taramayı yenile")
+        self.options_button = QPushButton("Filtreler")
+        self.options_button.setObjectName("dailyNav")
+        self.options_button.clicked.connect(self._toggle_options)
+        controls.addWidget(self.options_button)
+        for widget in (self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
+            widget.setVisible(False)
         layout.addLayout(controls)
         self.status = QLabel("Henüz tarama yapılmadı.")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
         self.table = SimpleTable("Adaylar", "Uygun aday yoksa liste boş bırakılır.")
+        self.table.info.hide()
         self.table.table.cellClicked.connect(self._show_inline_detail)
         layout.addWidget(self.table, 1)
         self.detail = QLabel("Bir aday seçildiğinde net beklenti, risk/getiri, göreceli güç, RVOL ve olasılık kanıtı burada gösterilir.")
@@ -1411,6 +1432,11 @@ class DailyTradePage(QWidget):
         self.paper_button.clicked.connect(self.save_selected)
         layout.addWidget(self.paper_button)
         self.scan_button.clicked.connect(self.start_scan)
+
+    def _toggle_options(self):
+        visible = not self.interval.isVisible()
+        for widget in (self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
+            widget.setVisible(visible)
 
     def start_scan(self):
         if self.thread and self.thread.isRunning():
@@ -1839,6 +1865,15 @@ class MainWindow(QMainWindow):
             #primary {{ background:#45a839; color:#ffffff; font-weight:800; text-align:center; border:1px solid #6ad75b; }}
             #heroButton {{ background:#4daf3d; border:1px solid #6ad75b; color:white; font-size:16px; min-height:86px; text-align:center; font-weight:800; border-radius:10px; }}
             #topStrip, #dashboardPanel {{ background:#0d1d2b; border:1px solid #21384b; border-radius:11px; }}
+            #dailyTradePage {{ background:#0a1220; }}
+            #dailyHeader {{ background:#0b1524; border:1px solid #23354d; border-radius:16px; }}
+            #eyebrow {{ color:#e6edf7; font-size:14px; font-weight:800; padding-bottom:6px; border-bottom:1px solid #23354d; }}
+            #dailyHeading {{ color:#f1f5fb; font-size:27px; font-weight:800; padding-top:4px; }}
+            #dailySubtitle {{ color:#96a6ba; font-size:13px; }}
+            #dailyNav, #dailyNavActive {{ background:#131e32; color:#d9e2ee; border:1px solid #263650; border-radius:10px; padding:8px 14px; font-weight:500; }}
+            #dailyNavActive {{ background:#2563eb; border-color:#3678f2; color:#ffffff; font-weight:800; }}
+            #dailyMetricCard {{ background:#111a2a; border:1px solid #2a3a55; border-radius:14px; min-height:82px; }}
+            #dailyMetricValue {{ color:#f1f5fb; font-size:19px; font-weight:800; line-height:1.25; }}
             #topMetric {{ color:#e7edf5; padding:6px 14px; border-right:1px solid #203648; }}
             #sectionTitle, #tableTitle {{ color:#f8fafc; font-weight:800; font-size:13px; }}
             #summaryMetric {{ color:#65dc57; font-size:15px; font-weight:800; padding:5px 16px; border-right:1px solid #21384b; }}
@@ -1853,6 +1888,9 @@ class MainWindow(QMainWindow):
             QLineEdit, QTextEdit, QDoubleSpinBox, QComboBox {{ background:#091622; color:#ffffff; border:1px solid #29465d; border-radius:6px; padding:6px; }}
             QTableWidget {{ background:#0b1926; color:#f4f7fb; border:1px solid #21384b; border-radius:7px; alternate-background-color:#0f2130; gridline-color:#203648; font-size:12px; }}
             QTableWidget::item {{ color:#f4f7fb; padding:4px; }} QTableWidget::item:selected {{ background:#24503c; color:#ffffff; }}
+            #dailyTradePage QTableWidget {{ background:#0b1523; border:0; gridline-color:#1f2c40; font-size:13px; }}
+            #dailyTradePage QHeaderView::section {{ background:#0b1523; color:#dce6ef; border-bottom:1px solid #24344b; padding:9px 8px; }}
+            #dailyTradePage #analysisText {{ background:#111a2a; border:1px solid #2a3a55; border-radius:12px; padding:12px; color:#dce6ef; }}
             QHeaderView::section {{ background:#102434; color:#dce6ef; padding:7px; border:0; border-right:1px solid #203648; font-weight:600; font-size:12px; }}
         """
         self.setStyleSheet(
