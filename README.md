@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v10.2.0
+# Borsa Analiz Pro MAX v10.2.2
+
+## v10.2.2 dashboard ve kayıt güvenilirliği güncellemesi
+
+- Ortak koyu lacivert finans dashboardu ve yeniden kullanılabilir sayfa bileşenleri eklendi.
+- Ertesi Gün Tavan ve 50 TL Altı taramaları 613 aktif BIST hissesini paketli yedek evrenden de okuyabilir.
+- Sütunsuz sonuçların SQLite `CREATE TABLE ()` hatası üretmesi engellendi; önceki geçerli kayıt korunur.
+- CSV yedekleme ile SQLite kayıt sonuçları birbirinden bağımsız ve açık biçimde raporlanır.
+- Windows kurulum paketi başka bilgisayarlara doğrudan kurulabilecek biçimde GitHub sürümüne eklenir.
 
 ## v10.2.0 son büyük stabilizasyon
 

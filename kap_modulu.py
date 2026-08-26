@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime
 from typing import Dict, Any, List
 
 import pandas as pd
@@ -112,11 +113,37 @@ def kap_olayi_sinifla(metin: str) -> str:
         "SOZLESME/IHALE": ("sözleşme", "sozlesme", "ihale", "sipariş", "siparis"),
         "HUKUKI/RISK": ("dava", "soruşturma", "sorusturma", "ceza", "iflas", "konkordato"),
         "FAALIYET": ("faaliyet durdur", "üretim durdu", "uretim durdu", "kapasite"),
+        "YATIRIM": ("yeni yatırım", "yatırım kararı", "tesis yatırımı"),
+        "ORTAKLIK/SATIN ALMA": ("ortaklık", "satın alma", "devralma", "birleşme"),
+        "PAY GERI ALIMI/TEKLIFI": ("pay geri al", "geri alım", "pay alım teklifi"),
+        "IZIN/RESMI ONAY": ("izin", "ruhsat", "resmi onay", "kurul onayı"),
+        "IHRACAT/YENI PAZAR": ("ihracat", "yeni pazar", "yurt dışı satış"),
+        "ORTAK SATISI": ("ortak satışı", "pay satışı", "hisse satışı"),
+        "BORC/NAKIT": ("borç azalış", "borç azal", "nakit artış"),
     }
     for label, terms in categories.items():
         if any(term in text for term in terms):
             events.append(label)
     return " | ".join(events) if events else "SINIFLANDIRILACAK OLAY YOK"
+
+
+def yayin_anina_gore_aciklamalar(aciklamalar: list[dict], cutoff: datetime) -> list[dict]:
+    """Yalnızca gerçekten yayımlandığı anda bilinen KAP kayıtlarını döndürür."""
+    result = []
+    for item in aciklamalar:
+        raw = item.get("published_at")
+        if not raw:
+            continue
+        try:
+            published = raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+            comparable_cutoff = cutoff
+            if published.tzinfo is not None and comparable_cutoff.tzinfo is None:
+                comparable_cutoff = comparable_cutoff.replace(tzinfo=published.tzinfo)
+            if published <= comparable_cutoff:
+                result.append({**item, "olay_sinifi": kap_olayi_sinifla(str(item.get("text", "")))})
+        except (TypeError, ValueError):
+            continue
+    return sorted(result, key=lambda x: str(x["published_at"]))
 
 
 def kap_web_deneme(symbol: str, gun: int = 14) -> Dict[str, Any]:

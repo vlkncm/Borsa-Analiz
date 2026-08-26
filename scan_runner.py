@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import faulthandler
+import logging
 import sys
 import warnings
 from pathlib import Path
@@ -19,6 +20,13 @@ def main() -> int:
 
     data_root = Path.home() / "Documents" / "Borsa Analiz Pro MAX"
     data_root.mkdir(parents=True, exist_ok=True)
+    log_path = data_root / "logs" / "tarama_kayit.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=log_path, level=logging.INFO, encoding="utf-8",
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger("analiz_deposu").setLevel(logging.DEBUG)
     with (data_root / "tarama_cokme.log").open("a", encoding="utf-8") as crash_stream:
         faulthandler.enable(file=crash_stream, all_threads=True)
         import main as analiz_main

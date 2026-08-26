@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 from gunluk_trade_gostergeleri import en_iyi_gunluk_trade_adaylari
 from sade_karar_modeli import (
-    elli_tl_adaylari, elli_tl_ohlcv_adayi, en_iyi_vade, gunluk_rapor_adaylari, on_x_senaryosu,
+    elli_tl_adaylari, elli_tl_ohlcv_adayi, en_iyi_vade, gunluk_rapor_adaylari,
     orta_vadeden_kisa_adaylari_cikar, sade_firsatlar, sure_metni, vade_rapor_adaylari,
 )
 from bist_evreni import likit_120_sec
@@ -25,9 +25,13 @@ from PySide6.QtWidgets import (
     QDialog, QGridLayout, QScrollArea, QSizePolicy, QComboBox, QDoubleSpinBox,
     QCheckBox
 )
+from dashboard_ui import (
+    APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
+    Sidebar, TopHeader,
+)
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.2.0"
+APP_VERSION = "10.2.2"
 _CRASH_STREAM = None
 
 
@@ -45,11 +49,7 @@ def veri_klasoru() -> Path:
 
 def rapor_yolu() -> Path:
     output = veri_klasoru() / "output"
-    primary = output / "Borsa_Analiz_Pro_MAX_Rapor.xlsx"
-    if primary.exists():
-        return primary
-    alternatives = sorted(output.glob("Borsa_Analiz_Pro_MAX_Rapor_*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return alternatives[0] if alternatives else primary
+    return output / "analiz_sonuclari.sqlite3"
 
 
 def tarama_alt_sureci_komutu():
@@ -1748,13 +1748,94 @@ class Under50Page(FullMarketPage):
         self.info.setText("Tüm BIST 50 TL altı taraması başlatılıyor…")
         self.thread = QThread(self); self.worker = Under50Worker(); self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.info.setText)
-        self.worker.finished.connect(self.done); self.worker.finished.connect(self.thread.quit)
-        self.thread.finished.connect(self.worker.deleteLater); self.thread.finished.connect(self._clear)
+        self.worker.finished.connect(self.done); self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self._clear); self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
     def done(self, ok, frame, message):
         if ok: self.load(frame); self.info.setText(message)
         else: self.info.setText("Tarama hatası: " + message.splitlines()[-1])
+
+    def _clear(self):
+        self.worker = None; self.thread = None
+
+
+class NextDayWorker(QObject):
+    finished = Signal(bool, object, str)
+    progress = Signal(str)
+
+    def run(self):
+        try:
+            from bist_evreni import tum_bist_hisseleri
+            from ertesi_gun_motoru import erken_aday
+            from tahmin_deposu import TahminDeposu
+            from veri_saglayici import get_daily_ohlcv
+            symbols, rows = tum_bist_hisseleri(), []
+            if not symbols:
+                raise RuntimeError("Aktif BIST evreni yuklenemedi.")
+            store = TahminDeposu(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+            # Endeks/breadth kaynağı doğrulanamadığında rejim uydurulmaz.
+            regime = "VERİ YETERSİZ"
+            for index, symbol in enumerate(symbols, 1):
+                if QThread.currentThread().isInterruptionRequested():
+                    break
+                self.progress.emit(f"{index}/{len(symbols)} aktif BIST hissesi T+1 için inceleniyor · {len(rows)} güçlü/erken aday")
+                try:
+                    history, _meta = get_daily_ohlcv(symbol, "2y")
+                    row = erken_aday(symbol, history, regime, kap=None)
+                    if row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}:
+                        rows.append(row)
+                        cutoff = row["Veri Zamanı"]
+                        try:
+                            store.tahmin_ekle({
+                                "prediction_key": f"{cutoff}|{symbol}|{row['Model Sürümü']}",
+                                "predicted_at": datetime.now().isoformat(timespec="seconds"),
+                                "session_date": str(pd.Timestamp(cutoff).date()), "symbol": symbol,
+                                "previous_close": row["Önceki Kapanış"], "ceiling_price": row["Tavan Fiyatı"],
+                                "p_intraday_8": row["%8+ Olasılığı"], "p_ceiling": row["Tavan Olasılığı"],
+                                "p_close_8": row["Kapanış %8+ Olasılığı"], "market_regime": row["Piyasa Rejimi"],
+                                "sector_score": row["Sektör Puanı"], "status": row["Durum"],
+                                "reasons_json": row["Aday Nedenleri"], "risks_json": row["Riskler"],
+                                "cutoff_at": cutoff, "model_version": row["Model Sürümü"],
+                                "probability_reliable": int(row["Olasılık Güvenilir"]),
+                            })
+                        except Exception:
+                            # Aynı kesim/sembol yeniden taranırsa eski tahmin asla ezilmez.
+                            pass
+                except Exception:
+                    continue
+            frame = pd.DataFrame(rows)
+            if not frame.empty:
+                frame = frame.sort_values("Referans Skor", ascending=False).head(20).reset_index(drop=True)
+            message = (f"{len(symbols)} aktif BIST hissesi tarandı; {len(frame)} katı eşik adayı bulundu. "
+                       "Kalibre örnek-dışı model yoksa olasılıklar bilinçli olarak boş gösterilir.")
+            if frame.empty:
+                message += " Bugün güvenilir güçlü hareket adayı bulunamadı."
+            self.finished.emit(True, frame, message)
+        except Exception:
+            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+
+
+class NextDayPage(NextDayDashboard):
+    def __init__(self):
+        super().__init__(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+        self.thread = None; self.worker = None; self.scan_requested.connect(self.start_scan)
+
+    def start_scan(self):
+        if self.thread and self.thread.isRunning(): return
+        self.set_loading("T+1 erken aday taraması başlatılıyor…")
+        self.thread = QThread(self); self.worker = NextDayWorker(); self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.stats.setText)
+        self.worker.finished.connect(self.done); self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self._clear); self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.start()
+
+    def done(self, ok, frame, message):
+        if ok:
+            self.load_results(frame, message)
+        else: self.set_error(message.splitlines()[-1])
 
     def _clear(self):
         self.worker = None; self.thread = None
@@ -1789,126 +1870,105 @@ class MainWindow(QMainWindow):
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
         self.under_50 = Under50Page()
-        self.ten_x = FullMarketPage("10X POTANSİYEL SENARYOSU", "Tüm BIST taranır. Senaryo çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
+        self.next_day = NextDayPage()
         self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
+        self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.home, self.daily_trade, self.short_term, self.medium_term,
-                  self.under_50, self.ten_x, self.track, self.sale, self.single,
-                  self.history, self.log]:
+        for p in [self.home, self.next_day, self.daily_trade, self.short_term, self.medium_term,
+                  self.under_50, self.funds, self.track, self.history, self.settings_page,
+                  self.sale, self.single, self.terminal, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
         central.setObjectName("appRoot")
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
+        self.top_header = TopHeader()
+        self.top_header.scan_requested.connect(self.scan)
+        self.top_header.search_requested.connect(self._search_symbol)
+        outer.addWidget(self.top_header)
+        root = QHBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
-
-        side = QFrame()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(232)
-        side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v" + APP_VERSION)
-        brand.setObjectName("brand")
-        brand.setAlignment(Qt.AlignCenter)
-        side_layout.addWidget(brand)
-
-        menu = [
-            ("BUGÜN", self.home), ("  Günlük Trade", self.daily_trade),
-            ("KISA VADE", self.short_term), ("ORTA VADE", self.medium_term),
-            ("BÜYÜME · 50 TL Altı", self.under_50), ("  10X Potansiyel", self.ten_x),
-            ("TAKİP LİSTEM", self.track), ("  Satış / Çıkış Kararı", self.sale),
-            ("DETAY · Hisse İncele", self.single), ("GEÇMİŞ", self.history),
-        ]
-        for text, page in menu:
-            button = QPushButton(text)
-            button.clicked.connect(lambda checked=False, p=page: self.pages.setCurrentWidget(p))
-            side_layout.addWidget(button)
-        side_layout.addStretch()
-
-        self.scan_button = QPushButton("YENİ ANALİZ YAP")
-        self.scan_button.setObjectName("primary")
-        self.scan_button.clicked.connect(self.scan)
-        side_layout.addWidget(self.scan_button)
-
-        self.reload_button = QPushButton("SON RAPORU YÜKLE")
-        self.reload_button.clicked.connect(self.load_report)
-        side_layout.addWidget(self.reload_button)
-
-
-        self.open_report_button = QPushButton("EXCEL RAPORUNU AÇ")
-        self.open_report_button.clicked.connect(self.open_report)
-        side_layout.addWidget(self.open_report_button)
-
-        self.open_folder_button = QPushButton("RAPOR KLASÖRÜNÜ AÇ")
-        self.open_folder_button.clicked.connect(self.open_report_folder)
-        side_layout.addWidget(self.open_folder_button)
-
-        self.report_path_label = QLabel(str(rapor_yolu()))
-        self.report_path_label.setWordWrap(True)
-        self.report_path_label.setObjectName("pathText")
-        side_layout.addWidget(self.report_path_label)
-
-        root.addWidget(side)
-        root.addWidget(self.pages, 1)
-
-        bg_path = (uygulama_klasoru() / "assets" / "terminal-background-v1.png").as_posix()
-        style_sheet = """
-            QMainWindow, QWidget {{ background:#071521; color:#f4f7fb; font-family:Segoe UI, Arial; font-size:12px; }}
-            #appRoot {{ background:#071521; }}
-            #sidebar {{ background:#06111c; border-right:1px solid #203648; }}
-            QStackedWidget {{ background:#0a1825; border-left:1px solid #203648; }}
-            #brand {{ font-size:20px; font-weight:800; color:#ffffff; padding:14px 8px; }}
-            QPushButton {{ background:transparent; color:#cbd5e1; border:0; border-bottom:1px solid #172a3a; padding:6px 10px; border-radius:6px; text-align:left; font-weight:600; }}
-            QPushButton:hover {{ background:#102535; color:#68e05f; }}
-            #primary {{ background:#45a839; color:#ffffff; font-weight:800; text-align:center; border:1px solid #6ad75b; }}
-            #heroButton {{ background:#4daf3d; border:1px solid #6ad75b; color:white; font-size:16px; min-height:86px; text-align:center; font-weight:800; border-radius:10px; }}
-            #topStrip, #dashboardPanel {{ background:#0d1d2b; border:1px solid #21384b; border-radius:11px; }}
-            #dailyTradePage {{ background:#0a1220; }}
-            #dailyHeader {{ background:#0b1524; border:1px solid #23354d; border-radius:16px; }}
-            #eyebrow {{ color:#e6edf7; font-size:14px; font-weight:800; padding-bottom:6px; border-bottom:1px solid #23354d; }}
-            #dailyHeading {{ color:#f1f5fb; font-size:27px; font-weight:800; padding-top:4px; }}
-            #dailySubtitle {{ color:#96a6ba; font-size:13px; }}
-            #dailyNav, #dailyNavActive {{ background:#131e32; color:#d9e2ee; border:1px solid #263650; border-radius:10px; padding:8px 14px; font-weight:500; }}
-            #dailyNavActive {{ background:#2563eb; border-color:#3678f2; color:#ffffff; font-weight:800; }}
-            #dailyMetricCard {{ background:#111a2a; border:1px solid #2a3a55; border-radius:14px; min-height:82px; }}
-            #dailyMetricValue {{ color:#f1f5fb; font-size:19px; font-weight:800; line-height:1.25; }}
-            #topMetric {{ color:#e7edf5; padding:6px 14px; border-right:1px solid #203648; }}
-            #sectionTitle, #tableTitle {{ color:#f8fafc; font-weight:800; font-size:13px; }}
-            #summaryMetric {{ color:#65dc57; font-size:15px; font-weight:800; padding:5px 16px; border-right:1px solid #21384b; }}
-            #sidePanel {{ background:#0d1d2b; color:#e5edf6; border:1px solid #21384b; border-radius:10px; padding:15px; line-height:1.5; }}
-            #footerText, #subText, #pathText {{ color:#95a7b8; }}
-            #pageTitle {{ font-size:20px; font-weight:800; color:#ffffff; }}
-            #riskBanner {{ background:#102535; border:1px solid #29465d; color:#d8e4ee; padding:8px; border-radius:6px; }}
-            #terminalSummary, #metricCard, #chartSummary, #chartCanvas, #analysisText {{ background:#0d1d2b; border:1px solid #21384b; color:#ffffff; border-radius:7px; }}
-            #metricCaption {{ color:#9fb0c0; font-size:11px; font-weight:bold; }} #metricValue {{ color:#65dc57; font-size:20px; font-weight:bold; }}
-            #analysisTitle {{ color:#65dc57; font-size:16px; font-weight:bold; }}
-            QTabBar::tab {{ background:#0d1d2b; color:#cbd5e1; padding:8px 18px; border:1px solid #21384b; }} QTabBar::tab:selected {{ background:#18354a; color:#65dc57; }}
-            QLineEdit, QTextEdit, QDoubleSpinBox, QComboBox {{ background:#091622; color:#ffffff; border:1px solid #29465d; border-radius:6px; padding:6px; }}
-            QTableWidget {{ background:#0b1926; color:#f4f7fb; border:1px solid #21384b; border-radius:7px; alternate-background-color:#0f2130; gridline-color:#203648; font-size:12px; }}
-            QTableWidget::item {{ color:#f4f7fb; padding:4px; }} QTableWidget::item:selected {{ background:#24503c; color:#ffffff; }}
-            #dailyTradePage QTableWidget {{ background:#0b1523; border:0; gridline-color:#1f2c40; font-size:13px; }}
-            #dailyTradePage QHeaderView::section {{ background:#0b1523; color:#dce6ef; border-bottom:1px solid #24344b; padding:9px 8px; }}
-            #dailyTradePage #analysisText {{ background:#111a2a; border:1px solid #2a3a55; border-radius:12px; padding:12px; color:#dce6ef; }}
-            QHeaderView::section {{ background:#102434; color:#dce6ef; padding:7px; border:0; border-right:1px solid #203648; font-weight:600; font-size:12px; }}
-        """
-        self.setStyleSheet(
-            style_sheet.replace("__BACKGROUND__", bg_path).replace("{{", "{").replace("}}", "}")
-        )
+        self.sidebar = Sidebar(); self.sidebar.page_requested.connect(self._show_page); root.addWidget(self.sidebar)
+        content = QVBoxLayout(); content.setContentsMargins(8, 6, 8, 6); content.setSpacing(6)
+        markets = QHBoxLayout(); markets.setSpacing(6); self.market_cards = {}
+        for name in ("BIST 100", "BIST 30", "BIST TÜM", "DOLAR/TL", "EURO/TL", "ONS ALTIN"):
+            market_card = MarketCard(name); self.market_cards[name] = market_card; markets.addWidget(market_card, 1)
+        content.addLayout(markets); content.addWidget(self.pages, 1); root.addLayout(content, 1); outer.addLayout(root, 1)
+        self.scan_button = self.top_header.scan
+        self.reload_button = QPushButton("Son veriyi yükle"); self.reload_button.clicked.connect(self.load_report)
+        self.report_path_label = QLabel("Tahminler sürümlü SQLite geçmişinde saklanır.")
+        self.setStyleSheet(APP_STYLE)
+        self._page_map = {"home":self.home,"next":self.next_day,"daily":self.daily_trade,"short":self.short_term,
+                          "medium":self.medium_term,"under50":self.under_50,"funds":self.funds,"portfolio":self.track,
+                          "performance":self.history,"settings":self.settings_page}
+        self.pages.currentChanged.connect(self._sync_active_page)
+        self._market_thread = None; self._market_worker = None
+        if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+            QTimer.singleShot(100, self._load_market_cards)
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
-        self.ten_x.scan_requested.connect(lambda: self.scan_all_market(self.ten_x))
         self.pages.setCurrentWidget(self.home)
 
         self.load_report()
+
+    def _show_page(self, key):
+        page = self._page_map.get(key)
+        if page is not None:
+            self.pages.setCurrentWidget(page)
+            self.sidebar.set_active(key)
+
+    def _sync_active_page(self, _index):
+        current = self.pages.currentWidget()
+        for key, page in self._page_map.items():
+            if page is current:
+                self.sidebar.set_active(key)
+                break
+
+    def _search_symbol(self, text):
+        symbol = normalize_symbol(text)
+        if not symbol:
+            return
+        self.single.symbol.setText(symbol.replace(".IS", ""))
+        self.pages.setCurrentWidget(self.single)
+
+    def _load_market_cards(self):
+        if self._market_thread and self._market_thread.isRunning():
+            return
+        self._market_thread = QThread(self)
+        self._market_worker = MarketDataWorker()
+        self._market_worker.moveToThread(self._market_thread)
+        self._market_thread.started.connect(self._market_worker.run)
+        self._market_worker.finished.connect(self._market_data_done)
+        self._market_worker.finished.connect(self._market_thread.quit)
+        self._market_thread.finished.connect(self._market_worker.deleteLater)
+        self._market_thread.finished.connect(self._clear_market_worker)
+        self._market_thread.start()
+
+    def _market_data_done(self, payload):
+        for name, widget in self.market_cards.items():
+            widget.update_data(payload.get(name))
+        bist = payload.get("BIST 100")
+        if bist:
+            is_positive = bist["value"] >= bist["previous"]
+            self.top_header.market.setText("● Piyasa Açık" if datetime.now().weekday() < 5 and 10 <= datetime.now().hour < 18 else "● Piyasa Kapalı")
+            self.top_header.market.setObjectName("positive" if is_positive else "negative")
+
+    def _clear_market_worker(self):
+        if self._market_thread:
+            self._market_thread.deleteLater()
+        self._market_worker = None; self._market_thread = None
 
     def load_report(self):
         path = rapor_yolu()
         if not path.exists():
             return
         try:
-            sheets = pd.read_excel(path, sheet_name=None)
+            from analiz_deposu import anlik_goruntu_oku
+            sheets = anlik_goruntu_oku(path)
             all_results = sheets.get("Tum Sonuclar", pd.DataFrame()).copy()
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
@@ -1965,9 +2025,7 @@ class MainWindow(QMainWindow):
             self.medium_term.load(medium_frame)
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
-            ten_frame = on_x_senaryosu(all_results, limit=5)
             self.under_50.load(under_frame)
-            self.ten_x.load(ten_frame)
             self.history.load(sheets.get("Sinyal Gecmisi", pd.DataFrame()).tail(30))
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
@@ -1982,7 +2040,7 @@ class MainWindow(QMainWindow):
             market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
             self.home.index_value.setText(f"BIST EVRENİ\n{len(all_results)} hisse analiz edildi")
             self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
-            self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame) + len(ten_frame))
+            self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame))
 
             def numeric(name, default=0):
                 if name not in all_results.columns:
@@ -2028,7 +2086,7 @@ class MainWindow(QMainWindow):
                 total=len(all_results),
                 conviction=len(high_conviction),
             )
-            self.report_path_label.setText(str(path))
+            self.report_path_label.setText("Tahminler sürümlü SQLite geçmişinde saklanır.")
         except Exception as exc:
             QMessageBox.warning(self, "Rapor", str(exc))
 
@@ -2072,6 +2130,11 @@ class MainWindow(QMainWindow):
         self.scan_process.errorOccurred.connect(self._scan_process_error)
         self.scan_process.finished.connect(self._scan_process_finished)
         self.scan_process.start()
+        # Tam tarama isteği özel evrenli sayfaları da birbirinden bağımsız worker'larla başlatır.
+        if getattr(self, "_scan_target", self.home) is self.home:
+            self.daily_trade.start_scan()
+            self.under_50.start_scan()
+            self.next_day.start_scan()
 
     def scan_daily_trade(self):
         self._scan_target = self.daily_trade
@@ -2135,7 +2198,7 @@ class MainWindow(QMainWindow):
         if ok:
             self.log.append("\nTARAMA TAMAMLANDI.")
             self.load_report()
-            self.log.append(f"Excel raporu: {rapor_yolu()}")
+            self.log.append("Tarama tamamlandı; tahmin geçmişi SQLite içinde korunur.")
             self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home))
             self._scan_target = self.home
             self._scan_universe = "BIST30"

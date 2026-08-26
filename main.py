@@ -3,12 +3,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import time
 import os
+import logging
+import traceback
 from uygulama_ayarlari import SETTINGS
 import sys
 
 import pandas as pd
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+
+logger = logging.getLogger(__name__)
 
 from borsa_tarayici import teknik_analiz, rapor_yazdir
 from backtest import backtest_toplu
@@ -982,13 +984,42 @@ def sade_ana_rapor(df: pd.DataFrame) -> pd.DataFrame:
         "Sonuç / Durum": work.get("Veri Durumu", "İZLE"),
     })
 
+def analiz_ciktilarini_kaydet(df, frames, output_dir):
+    """Metin/CSV ve SQLite kayıtlarını birbirinden bağımsız yürütür."""
+    output_dir = Path(output_dir); output_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = output_dir / "Borsa_Analiz_Pro_MAX_Rapor.txt"
+    with txt_path.open("w", encoding="utf-8-sig") as stream:
+        stream.write(YASAL_UYARI_KISA + "\n\n"); df.to_csv(stream, index=False, sep=";")
+    print(f"Metin/CSV raporu başarıyla kaydedildi: {txt_path}")
+
+    from analiz_deposu import anlik_goruntu_yaz
+    sqlite_path = output_dir / "analiz_sonuclari.sqlite3"
+    sqlite_result = anlik_goruntu_yaz(sqlite_path, frames)
+    csv_backup = None
+    if sqlite_result and not sqlite_result.errors:
+        print(f"SQLite analiz kaydı başarıyla oluşturuldu: {sqlite_path}")
+    else:
+        reasons = "; ".join(f"{key}: {value}" for key, value in sqlite_result.errors.items()) or "bilinmeyen kayıt hatası"
+        logger.error("SQLite analiz kaydı oluşturulamadı: %s", reasons)
+        print(f"SQLite analiz kaydı oluşturulamadı: {reasons}")
+        csv_backup = output_dir / ("Borsa_Analiz_Pro_MAX_ACIL_YEDEK_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".csv")
+        df.to_csv(csv_backup, index=False, encoding="utf-8-sig")
+        print(f"CSV yedeği başarıyla kaydedildi: {csv_backup}")
+        print("Tarama tamamlandı; veritabanı kayıt hatası nedeniyle sonuçlar CSV yedeğinde korundu.")
+    for logical, reason in sqlite_result.skipped.items():
+        logger.info("SQLite isteğe bağlı tablo atlandı: %s: %s", logical, reason)
+    return {"sqlite": sqlite_result, "text": txt_path, "csv_backup": csv_backup}
+
+
 def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None):
     results = [
         item for item in results
         if pd.notna(item.get("price")) and float(item.get("price", 0)) > 0
     ]
     if not results:
-        raise ValueError("Geçerli kapanış fiyatı bulunan sonuç yok; rapor oluşturulmadı.")
+        message = "Geçerli kapanış fiyatı bulunan sonuç yok; önceki SQLite anlık görüntüsü korundu."
+        logger.info(message); print(message)
+        return {"sqlite": None, "text": None, "csv_backup": None, "skipped": True}
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
     kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
@@ -1011,9 +1042,6 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
 
     output_dir = output_klasoru()
 
-    excel_path = output_dir / "Borsa_Analiz_Pro_MAX_Rapor.xlsx"
-    txt_path = output_dir / "Borsa_Analiz_Pro_MAX_Rapor.txt"
-
     portfoy = portfoy_onerisi_uret(df, sermaye=100000)
     faaliyet_df = faaliyet_dataframe(results)
     sinyal_gecmisi_df, sinyal_performans_df = sinyal_gecmisini_guncelle(results)
@@ -1024,120 +1052,12 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     usta_portfoy_df = usta_model_portfoyu(results, adet=10)
     gunluk_ozet_yaz(output_dir, results, sinyal_gecmisi_df)
 
-    excel_path_fallback = None
-    try:
-        writer_context = pd.ExcelWriter(excel_path, engine="openpyxl")
-    except PermissionError:
-        zaman = datetime.now().strftime("%Y%m%d_%H%M%S")
-        excel_path_fallback = output_dir / f"Borsa_Analiz_Pro_MAX_Rapor_{zaman}.xlsx"
-        writer_context = pd.ExcelWriter(excel_path_fallback, engine="openpyxl")
-
-    with writer_context as writer:
-        pd.DataFrame(YASAL_UYARI_UZUN, columns=["UYARI"]).to_excel(writer, index=False, sheet_name="Yasal Uyari")
-        sade_ana_rapor(df).to_excel(writer, index=False, sheet_name="Ana Rapor")
-        dashboard_olustur(writer, df, baslangic_zamani, temettu_df)
-        kisa_df.to_excel(writer, index=False, sheet_name="Kisa Vade")
-        orta_df.to_excel(writer, index=False, sheet_name="Orta Vade")
-        uzun_df.to_excel(writer, index=False, sheet_name="Uzun Vade")
-        firsatlar_df.to_excel(writer, index=False, sheet_name="Bugunun Firsatlari")
-        df.to_excel(writer, index=False, sheet_name="Tum Sonuclar")
-        karar_kolonlari = [
-            "Hisse", "Yatırım Kararı", "Önerilen Alış Alt", "Önerilen Alış Üst",
-            "Önerilen Satış", "Önerilen Stop", "Beklenen Getiri %",
-            "Beklenen Süre", "Model Olasılığı %", "Karar Risk/Getiri",
-            "v4 Güven Puanı", "Fibonacci Puanı", "Formasyon",
-            "Karar Nedenleri", "Karar Uyarısı"
-        ]
-        karar_kolonlari = [c for c in karar_kolonlari if c in df.columns]
-        df[karar_kolonlari].head(20).to_excel(
-            writer, index=False, sheet_name="Bugunun Kararlari"
-        )
-        if not formasyon_df.empty:
-            formasyon_df.to_excel(writer, index=False, sheet_name="Formasyonlar")
-        df[df["Broker Aksiyon"] == "GÜÇLÜ AL"].head(50).to_excel(writer, index=False, sheet_name="Guclu AL")
-        df[df["Broker Aksiyon"] == "AL"].head(50).to_excel(writer, index=False, sheet_name="AL")
-        df[df["Broker Aksiyon"] == "TUT"].head(50).to_excel(writer, index=False, sheet_name="TUT")
-        df[df["Broker Aksiyon"] == "SAT"].head(50).to_excel(writer, index=False, sheet_name="SAT")
-        if not portfoy.empty:
-            portfoy.to_excel(writer, index=False, sheet_name="Portfoy Onerisi")
-
-        if backtest_ozet is not None and not backtest_ozet.empty:
-            backtest_ozet.to_excel(writer, index=False, sheet_name="Backtest Ozet")
-
-        if backtest_islemler is not None and not backtest_islemler.empty:
-            backtest_islemler.to_excel(writer, index=False, sheet_name="Backtest Islemler")
-
-        if temettu_df is not None and not temettu_df.empty:
-            temettu_df.to_excel(writer, index=False, sheet_name="Temettu Takip")
-
-        # Katı filtre sonucu boş olsa bile sayfa oluşturulur.
-        potansiyel_df.to_excel(writer, index=False, sheet_name="2-6 Hafta Potansiyel")
-        yakin_adaylar_df.to_excel(writer, index=False, sheet_name="2-6 Hafta Yakin")
-
-        if not faaliyet_df.empty:
-            faaliyet_df.to_excel(writer, index=False, sheet_name="Faaliyet Raporlari")
-        sinyal_performans_df.to_excel(writer, index=False, sheet_name="Sinyal Performansi")
-        sinyal_gecmisi_df.tail(1000).to_excel(writer, index=False, sheet_name="Sinyal Gecmisi")
-        denetim_df.to_excel(writer, index=False, sheet_name="Denetim")
-        kalibrasyon_df.to_excel(writer, index=False, sheet_name="Kalibrasyon")
-        gun_sonu_df.to_excel(writer, index=False, sheet_name="Gun Sonu Plani")
-        faktor_portfoy_df.to_excel(writer, index=False, sheet_name="Faktor Model Portfoyu")
-        usta_portfoy_df.to_excel(writer, index=False, sheet_name="Usta Model Portfoyu")
-
-        # Bütün Excel sayfalarında boş hücreleri anlaşılır metinle göster.
-        # Birleştirilmiş hücrelerin MergedCell nesneleri salt okunurdur.
-        from openpyxl.cell.cell import MergedCell
-
-        for ws in writer.book.worksheets:
-            # Dashboard'daki boşluklar tasarım amaçlıdır; "Veri yok" ile doldurulmaz.
-            if ws.title == "Dashboard":
-                continue
-
-            for row in ws.iter_rows():
-                for cell in row:
-                    if isinstance(cell, MergedCell):
-                        continue
-                    # Yalnızca gerçek veri tablosunun içinde kalan boş hücreleri doldur.
-                    if cell.value is None and cell.row >= 2 and cell.column <= ws.max_column:
-                        cell.value = "Veri yok"
-
-        excel_stil_uygula(writer.book)
-        # Analiz motorunun yüzlerce girdisi korunur ancak sıradan kullanıcıya ana raporda gösterilmez.
-        if "Tum Sonuclar" in writer.book.sheetnames:
-            writer.book["Tum Sonuclar"].sheet_state = "hidden"
-
-        # Temettü tarih ve kalan gün kolonlarını okunaklı biçimlendir.
-        if "Temettu Takip" in writer.book.sheetnames:
-            tws = writer.book["Temettu Takip"]
-            basliklar = {cell.value: cell.column for cell in tws[1]}
-            tarih_col = basliklar.get("Yaklaşan Temettü/Ex-Date")
-            kalan_col = basliklar.get("Kalan Gün")
-
-            if tarih_col:
-                for row in range(2, tws.max_row + 1):
-                    tws.cell(row, tarih_col).number_format = "dd.mm.yyyy"
-
-            if kalan_col:
-                for row in range(2, tws.max_row + 1):
-                    cell = tws.cell(row, kalan_col)
-                    try:
-                        kalan = int(cell.value)
-                        if kalan == 0:
-                            cell.fill = PatternFill("solid", fgColor="FDE68A")
-                        elif 0 < kalan <= 7:
-                            cell.fill = PatternFill("solid", fgColor="DCFCE7")
-                        elif kalan < 0:
-                            cell.fill = PatternFill("solid", fgColor="F1F5F9")
-                    except (TypeError, ValueError):
-                        pass
-
-    with txt_path.open("w", encoding="utf-8-sig") as f:
-        f.write(YASAL_UYARI_KISA + "\n\n")
-        df.to_csv(f, index=False, sep=";")
-
-    print("\nDosyalar oluşturuldu:")
-    print(f"- {excel_path_fallback or excel_path}")
-    print(f"- {txt_path}")
+    frames = {
+        "Tum Sonuclar": df, "Kisa Vade": kisa_df, "Orta Vade": orta_df,
+        "Backtest Ozet": backtest_ozet if backtest_ozet is not None else pd.DataFrame(),
+        "Sinyal Gecmisi": sinyal_gecmisi_df, "Sinyal Performansi": sinyal_performans_df,
+    }
+    return analiz_ciktilarini_kaydet(df, frames, output_dir)
 
 
 def ozet_yazdir(results, baslangic_zamani):
@@ -1241,7 +1161,8 @@ def main():
             temettu_df
         )
     except Exception as exc:
-        print(f"Excel raporu oluşturulamadı: {exc}")
+        logger.error("Analiz kayıt akışı başarısız:\n%s", traceback.format_exc())
+        print(f"Analiz raporu kayıt akışı tamamlanamadı: {exc}")
         print("Sonuçlar acil CSV yedeğine kaydediliyor...")
         try:
             acil_df = tabloya_cevir(results)
@@ -1251,10 +1172,10 @@ def main():
                 + ".csv"
             )
             acil_df.to_csv(acil_yol, index=False, encoding="utf-8-sig")
-            print(f"Acil yedek kaydedildi: {acil_yol}")
+            print(f"CSV yedeği başarıyla kaydedildi: {acil_yol}")
         except Exception as yedek_exc:
             print(f"Acil yedek de oluşturulamadı: {yedek_exc}")
-        raise
+        print("Tarama tamamlandı; kayıt hatası nedeniyle sonuçlar CSV yedeğinde korundu.")
 
     ozet_yazdir(results, baslangic_zamani)
     print("\nPro MAX tarama tamamen bitti.")

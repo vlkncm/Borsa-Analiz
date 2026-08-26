@@ -37,6 +37,7 @@ if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 --add-data "logo.png;." ^
 --add-data "logo.ico;." ^
 --add-data "assets;assets" ^
+--add-data "bist_hisseleri_613_aktif.txt;." ^
 --hidden-import main ^
 --hidden-import bist30 ^
 --hidden-import veri_saglayici ^
@@ -62,6 +63,12 @@ if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 --hidden-import satis_karar_motoru ^
 --hidden-import vade_motoru ^
 --hidden-import profesyonel_analiz ^
+--hidden-import dashboard_ui ^
+--hidden-import analiz_deposu ^
+--hidden-import ertesi_gun_motoru ^
+--hidden-import fiyat_limitleri ^
+--hidden-import tahmin_deposu ^
+--hidden-import t1_etiketleri ^
 app_qt.py
 
 if errorlevel 1 goto :pyinstaller_hatasi

@@ -5,7 +5,7 @@ a = Analysis(
     ['scan_runner.py'],
     pathex=[],
     binaries=[],
-    datas=[('bist_hisseleri_613_aktif.txt', '.'), ('bist_hisseleri_dogrulanmis.txt', '.')],
+    datas=[],
     hiddenimports=['main'],
     hookspath=[],
     hooksconfig={},

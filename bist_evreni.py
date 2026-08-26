@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -13,10 +14,22 @@ KAP_URL = "https://kap.org.tr/tr/bist-sirketler"
 
 
 def _yerel_liste() -> list[str]:
-    source = Path(__file__).resolve().parent / "bist_hisseleri_613_aktif.txt"
-    if not source.exists():
-        return []
-    return sorted({line.strip().upper() for line in source.read_text(encoding="utf-8").splitlines() if re.fullmatch(r"[A-Z0-9]{2,12}\.IS", line.strip().upper())})
+    """Kaynak kodda ve PyInstaller paketinde gelen sabit geri dönüş evrenini oku."""
+    roots = [Path(__file__).resolve().parent]
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        roots.insert(0, Path(bundle_root))
+    if getattr(sys, "frozen", False):
+        roots.insert(0, Path(sys.executable).resolve().parent)
+    for root in dict.fromkeys(roots):
+        source = root / "bist_hisseleri_613_aktif.txt"
+        if source.is_file():
+            return sorted({
+                line.strip().upper()
+                for line in source.read_text(encoding="utf-8").splitlines()
+                if re.fullmatch(r"[A-Z0-9]{2,12}\.IS", line.strip().upper())
+            })
+    return []
 
 
 def tum_bist_hisseleri(cache_dir: str | Path | None = None, refresh=False) -> list[str]:

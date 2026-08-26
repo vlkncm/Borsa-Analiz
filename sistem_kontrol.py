@@ -9,7 +9,6 @@ REQUIRED_MODULES = [
     "pandas",
     "numpy",
     "yfinance",
-    "openpyxl",
     "requests",
     "matplotlib",
     "PIL",

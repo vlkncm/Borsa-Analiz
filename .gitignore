@@ -13,6 +13,7 @@ release_*/
 .vscode/
 output/
 logs/
+artifacts/*.log
 *.xlsx
 *.csv
 .wrangler/
