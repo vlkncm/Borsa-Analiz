@@ -25,9 +25,13 @@ from PySide6.QtWidgets import (
     QDialog, QGridLayout, QScrollArea, QSizePolicy, QComboBox, QDoubleSpinBox,
     QCheckBox
 )
+from ui_components import (
+    AppSidebar, DARK_THEME, EmptyState, PageHeader, PrimaryActionButton,
+    ResponsiveResultTable, SelectedRowDetailPanel, SummaryCard,
+)
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.1.2"
+APP_VERSION = "10.2.0"
 _CRASH_STREAM = None
 
 
@@ -424,30 +428,35 @@ class SimpleTable(QWidget):
     def __init__(self, title, subtitle=""):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title_label = QLabel(title)
-        title_label.setObjectName("pageTitle")
-        layout.addWidget(title_label)
-        if subtitle:
-            sub = QLabel(subtitle)
-            sub.setWordWrap(True)
-            sub.setObjectName("subText")
-            layout.addWidget(sub)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(title.title(), subtitle)
+        layout.addWidget(self.page_header)
         self.info = QLabel("Henüz analiz yapılmadı.")
         self.info.setObjectName("subText")
+        self.info.setWordWrap(True)
         layout.addWidget(self.info)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.setWordWrap(False)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.empty_state = EmptyState(
+            "Henüz uygun sonuç yok",
+            "Analiz ölçütlerini geçen sonuç bulunmadığında liste güvenli biçimde boş bırakılır.",
+        )
+        layout.addWidget(self.empty_state)
+        self.table = ResponsiveResultTable()
         self.table.cellDoubleClicked.connect(self._emit_selected_row)
+        self.table.currentCellChanged.connect(self._show_selected_row)
         layout.addWidget(self.table, 1)
+        self.detail_panel = SelectedRowDetailPanel()
+        layout.addWidget(self.detail_panel)
         self._data = pd.DataFrame()
+
+    def _show_selected_row(self, row, _column, _previous_row, _previous_column):
+        if row < 0 or row >= len(self._data):
+            self.detail_panel.set_data({})
+            return
+        marker = self.table.item(row, 0)
+        source_row = marker.data(Qt.UserRole) if marker is not None else row
+        if source_row is not None and 0 <= int(source_row) < len(self._data):
+            self.detail_panel.set_data(self._data.iloc[int(source_row)].to_dict())
 
     def _emit_selected_row(self, row, _column):
         marker = self.table.item(row, 0)
@@ -455,16 +464,19 @@ class SimpleTable(QWidget):
         if source_row is not None and 0 <= int(source_row) < len(self._data):
             self.row_selected.emit(self._data.iloc[int(source_row)].to_dict())
 
-    def load(self, df):
+    def load(self, df, detail_df=None):
         if df is None:
             df = pd.DataFrame()
-        self._data = df.reset_index(drop=True).copy()
+        if detail_df is None:
+            detail_df = df
+        self._data = detail_df.reset_index(drop=True).copy()
         self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         self.table.clear()
         self.table.setRowCount(len(df))
         self.table.setColumnCount(len(df.columns))
         self.table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        self.table.set_column_names(df.columns)
         for r, (_, row) in enumerate(df.iterrows()):
             for c, value in enumerate(row):
                 if pd.isna(value):
@@ -492,10 +504,15 @@ class SimpleTable(QWidget):
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.verticalHeader().setDefaultSectionSize(42)
         self.table.setUpdatesEnabled(True)
         self.table.viewport().update()
-        self.info.setText(f"Gösterilen hisse: {len(df)}")
+        self.empty_state.setVisible(df.empty)
+        self.table.setVisible(not df.empty)
+        self.detail_panel.setVisible(not df.empty)
+        self.info.setText(f"Gösterilen sonuç: {len(df)}")
+        if not df.empty:
+            self.table.selectRow(0)
 
 
 class StockDetailDialog(QDialog):
@@ -791,17 +808,14 @@ class SingleAnalysisPage(QWidget):
         self.research_worker = None
         self.last_result = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Hisse Karar Merkezi")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
-        sub = QLabel(
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        sub_text = (
             "Bir hissenin ne zaman alınabileceğini, hangi durumda beklenmesi gerektiğini, hedef/stop seviyelerini "
             "ve şirketin temel araştırmasını tek ekranda birleştirir."
         )
-        sub.setWordWrap(True)
-        sub.setObjectName("subText")
-        layout.addWidget(sub)
+        self.page_header = PageHeader("Tek Hisse", sub_text)
+        layout.addWidget(self.page_header)
 
         top = QHBoxLayout()
         self.symbol = QLineEdit()
@@ -998,10 +1012,13 @@ class SalePage(QWidget):
         self.thread = None
         self.worker = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Satış Kararı")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Satış Kararı",
+            "Maliyet ve güncel teknik koşullara göre açık eylem ve pozisyon riskini gösterir.",
+        )
+        layout.addWidget(self.page_header)
         top = QHBoxLayout()
         self.symbol = QLineEdit()
         self.symbol.setPlaceholderText("Hisse: ASELS")
@@ -1148,10 +1165,13 @@ class TrackPage(QWidget):
         self.get_prices = takip_fiyatlarini_getir
         self.symbols = self.read_list()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Takip Listem")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Takip Listem",
+            "Kaydettiğiniz hisseleri ve güncel fiyatlarını kullanıcı verisini koruyarak izleyin.",
+        )
+        layout.addWidget(self.page_header)
         top = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setPlaceholderText("Hisse ekle: ASELS")
@@ -1164,12 +1184,19 @@ class TrackPage(QWidget):
         top.addWidget(add)
         top.addWidget(refresh)
         layout.addLayout(top)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table = ResponsiveResultTable()
+        self.empty_state = EmptyState("Takip listesi boş", "Hisse kodu eklediğinizde kayıtlar burada görünür.")
+        layout.addWidget(self.empty_state)
         layout.addWidget(self.table, 1)
+        self.detail_panel = SelectedRowDetailPanel()
+        layout.addWidget(self.detail_panel)
+        self.table.currentCellChanged.connect(self._show_detail)
+        self._display_frame = pd.DataFrame()
         self.show_symbols()
+
+    def _show_detail(self, row, _column, _previous_row, _previous_column):
+        if 0 <= row < len(self._display_frame):
+            self.detail_panel.set_data(self._display_frame.iloc[row].to_dict())
 
     def add(self):
         symbol = normalize_symbol(self.input.text())
@@ -1195,10 +1222,13 @@ class TrackPage(QWidget):
         self.show_symbols()
 
     def load(self, df):
+        self._display_frame = df.reset_index(drop=True).copy()
         self.table.clear()
         self.table.setRowCount(len(df))
         self.table.setColumnCount(len(df.columns) + 1)
-        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns] + ["İşlem"])
+        names = [str(c) for c in df.columns] + ["İşlem"]
+        self.table.setHorizontalHeaderLabels(names)
+        self.table.set_column_names(names)
         for r, (_, row) in enumerate(df.iterrows()):
             for c, value in enumerate(row):
                 self.table.setItem(r, c, QTableWidgetItem(str(value)))
@@ -1210,6 +1240,11 @@ class TrackPage(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             len(df.columns), QHeaderView.ResizeToContents
         )
+        self.empty_state.setVisible(df.empty)
+        self.table.setVisible(not df.empty)
+        self.detail_panel.setVisible(not df.empty)
+        if not df.empty:
+            self.table.selectRow(0)
 
 
 class FundWorker(QObject):
@@ -1235,10 +1270,13 @@ class FundAnalysisPage(QWidget):
         self.thread = None
         self.worker = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        title = QLabel("Fon Karar Merkezi")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Fon Karar Merkezi",
+            "Fonları kendi kategorisi, dönem getirisi, dalgalanma ve risk ölçüleriyle karşılaştırır.",
+        )
+        layout.addWidget(self.page_header)
         warning = QLabel(
             "TEFAS'ta işlem gören fonları aynı kategori, çok dönemli momentum ve riskle karşılaştırır. "
             "%20–30 aylık getiri garanti edilmez; yalnızca yüksek getiri potansiyeli taşıyan riskli adaylar işaretlenir."
@@ -1360,10 +1398,13 @@ class DailyTradePage(QWidget):
         self.results = pd.DataFrame()
         self.report_fallback = pd.DataFrame()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("GÜNLÜK TRADE")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Günlük Trade",
+            "Tamamlanmış intraday veriden en güçlü adayları olasılık ufku ve risk seviyeleriyle gösterir.",
+        )
+        layout.addWidget(self.page_header)
         warning = QLabel(
             "Karar-destek ve kâğıt işlem ekranıdır; gerçek emir göndermez. Yahoo intraday veri ücretsizdir, "
             "gecikmesi garanti edilmez. Geçmiş performans gelecekteki sonucu garanti etmez."
@@ -1371,7 +1412,9 @@ class DailyTradePage(QWidget):
         warning.setWordWrap(True)
         warning.setObjectName("riskBanner")
         layout.addWidget(warning)
-        controls = QHBoxLayout()
+        controls = QGridLayout()
+        controls.setHorizontalSpacing(10)
+        controls.setVerticalSpacing(8)
         self.scan_button = QPushButton("TÜM BIST GÜNLÜK TRADE TARAMASINI BAŞLAT")
         self.scan_button.setObjectName("primary")
         self.interval = QComboBox()
@@ -1381,13 +1424,19 @@ class DailyTradePage(QWidget):
         self.min_rr = QDoubleSpinBox(); self.min_rr.setRange(1.0, 5.0); self.min_rr.setValue(1.8); self.min_rr.setSingleStep(0.1); self.min_rr.setPrefix("Min R/G ")
         self.confirmed = QCheckBox("Yalnızca teyitli sinyaller")
         self.cancel_button = QPushButton("İPTAL"); self.cancel_button.clicked.connect(self.cancel_scan)
-        for widget in (self.scan_button, self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
-            controls.addWidget(widget)
+        controls.addWidget(self.scan_button, 0, 0, 1, 3)
+        controls.addWidget(self.cancel_button, 0, 3)
+        controls.addWidget(self.interval, 1, 0)
+        controls.addWidget(self.account, 1, 1)
+        controls.addWidget(self.risk, 1, 2)
+        controls.addWidget(self.min_rr, 1, 3)
+        controls.addWidget(self.confirmed, 2, 0, 1, 4)
         layout.addLayout(controls)
         self.status = QLabel("Henüz tarama yapılmadı.")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
         self.table = SimpleTable("Adaylar", "Uygun aday yoksa liste boş bırakılır.")
+        self.info = self.table.info
         self.table.row_selected.connect(self.show_detail)
         layout.addWidget(self.table, 1)
         self.paper_button = QPushButton("SEÇİLİ SATIRI KÂĞIT İŞLEM OLARAK KAYDET")
@@ -1422,6 +1471,39 @@ class DailyTradePage(QWidget):
             self.thread.requestInterruption()
             self.status.setText("Tarama güvenli biçimde durduruluyor…")
 
+    def format_display(self, frame):
+        """Motor sonucunu değiştirmeden kritik alanları öne alır; ayrıntıları tabloda saklar."""
+        if frame is None or frame.empty:
+            return pd.DataFrame() if frame is None else frame.copy()
+        display = frame.copy()
+        if "Alış Bandı" not in display:
+            if "Alış Alt" in display and "Alış Üst" in display:
+                display["Alış Bandı"] = display.apply(
+                    lambda row: f"{guvenli_sayi(row.get('Alış Alt')):.2f}–{guvenli_sayi(row.get('Alış Üst')):.2f}", axis=1
+                )
+            elif "Alım Bölgesi" in display:
+                display["Alış Bandı"] = display["Alım Bölgesi"]
+        probability_column = next(
+            (name for name in ("Hedef Önce Olasılığı %", "Hedef Olasılığı %", "Model Olasılığı %") if name in display),
+            None,
+        )
+        probability = display[probability_column].astype(str) if probability_column else pd.Series("Yetersiz örnek", index=display.index)
+        horizon_column = next((name for name in ("Tahmini Süre", "Süre", "Ufuk") if name in display), None)
+        horizon = display[horizon_column].astype(str) if horizon_column else pd.Series("Gün içi", index=display.index)
+        display["Olasılık / Süre"] = probability + "\n" + horizon
+        preferred = [
+            "Hisse", "Sonuç", "Karar", "Alış Bandı", "Hedef", "Stop",
+            "Hedef Potansiyeli %", "Potansiyel %", "Olasılık / Süre",
+        ]
+        ordered = [name for name in preferred if name in display]
+        ordered.extend(name for name in display.columns if name not in ordered)
+        return display[ordered]
+
+    def load_display(self, frame):
+        complete = self.format_display(frame)
+        visible = complete.iloc[:, :10].copy()
+        self.table.load(visible, detail_df=complete)
+
     def scan_done(self, ok, frame, message):
         self.scan_button.setEnabled(True)
         self.results = frame if ok else pd.DataFrame()
@@ -1432,11 +1514,10 @@ class DailyTradePage(QWidget):
             display["_pot"] = pd.to_numeric(display.get("Hedef Potansiyeli %", 0), errors="coerce").fillna(0)
             display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", 0), errors="coerce").fillna(0)
             display = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
-            columns = ["Hisse", "Sonuç", "Referans Fiyat", "Alış Alt", "Alış Üst", "Hedef", "Stop", "Hedef Potansiyeli %", "Risk/Getiri"]
-            display = display[[c for c in columns if c in display.columns]].reset_index(drop=True)
+            display = display.drop(columns=["_öncelik", "_pot", "_rr"], errors="ignore").reset_index(drop=True)
         if display.empty and not self.report_fallback.empty:
             display = self.report_fallback.copy()
-        self.table.load(display)
+        self.load_display(display)
         if not ok:
             self.status.setText("Tarama hatası: " + message.splitlines()[-1])
         elif display.empty:
@@ -1474,53 +1555,116 @@ class HomePage(QWidget):
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self); layout.setContentsMargins(16, 12, 16, 12); layout.setSpacing(10)
-        top = QFrame(); top.setObjectName("topStrip"); top_box = QHBoxLayout(top)
-        self.index_value = QLabel("BIST 100\nVeri bekleniyor"); self.index_value.setObjectName("topMetric")
-        self.market = QLabel("PİYASA DURUMU\nVERİ BEKLENİYOR"); self.market.setObjectName("topMetric")
-        self.source = QLabel("VERİ KAYNAĞI\nGecikmeli (15 dk)"); self.source.setObjectName("topMetric")
-        self.clock = QLabel(datetime.now().strftime("%d.%m.%Y\n%H:%M")); self.clock.setObjectName("topMetric")
-        for widget in (self.index_value, self.market, self.source): top_box.addWidget(widget, 1)
-        top_box.addStretch(); top_box.addWidget(self.clock); layout.addWidget(top)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(16)
+        self.trade_button = PrimaryActionButton("Taramayı yenile")
+        self.trade_button.clicked.connect(self.trade_requested.emit)
+        self.page_header = PageHeader(
+            "Ana ekran", "Piyasa özeti ve karar için en önemli adaylar", self.trade_button,
+        )
+        layout.addWidget(self.page_header)
+        self.clock = self.page_header.freshness
 
-        summary = QFrame(); summary.setObjectName("dashboardPanel"); summary_box = QHBoxLayout(summary)
-        left = QVBoxLayout(); title = QLabel("BUGÜNÜN DURUMU"); title.setObjectName("sectionTitle"); left.addWidget(title)
-        cards = QHBoxLayout(); self.counts = {}
-        for key, caption in (("trade", "Günlük Trade"), ("short", "Kısa Vade"), ("medium", "Orta Vade"), ("growth", "Büyüme Adayları")):
-            value = QLabel(f"{caption}\n0\nuygun aday"); value.setObjectName("summaryMetric"); cards.addWidget(value); self.counts[key] = value
-        left.addLayout(cards); summary_box.addLayout(left, 2)
-        self.trade_button = QPushButton("BUGÜNÜN TRADE\nADAYLARINI BUL\nEn iyi 5 hisseyi analiz et"); self.trade_button.setObjectName("heroButton")
-        self.trade_button.clicked.connect(self.trade_requested.emit); summary_box.addWidget(self.trade_button, 1); layout.addWidget(summary)
+        cards = QHBoxLayout()
+        cards.setSpacing(16)
+        self.market_card = SummaryCard("Piyasa rejimi", "Veri bekleniyor", "Yeni işlem kararı için veri yükleniyor")
+        self.candidate_card = SummaryCard("Uygun aday", "0", "Henüz rapor yüklenmedi")
+        self.warning_card = SummaryCard("Portföy / veri uyarısı", "—", "Kritik uyarı bulunmuyor")
+        for card in (self.market_card, self.candidate_card, self.warning_card):
+            cards.addWidget(card, 1)
+        layout.addLayout(cards)
+        self.market = self.market_card.value
+        self.index_value = self.candidate_card.note
+        self.source = self.warning_card.note
+        self.counts = {
+            "trade": self.candidate_card.value,
+            "short": QLabel("0"),
+            "medium": QLabel("0"),
+            "growth": QLabel("0"),
+        }
 
-        content = QHBoxLayout(); tables = QGridLayout(); tables.setSpacing(8); self.preview_tables = {}
-        for column, (key, caption) in enumerate((("trade", "GÜNLÜK TRADE – EN İYİ 5"), ("short", "KISA VADE – EN İYİ 5"), ("medium", "ORTA VADE – EN İYİ 5"))):
-            panel = QFrame(); panel.setObjectName("dashboardPanel"); box = QVBoxLayout(panel)
-            label = QLabel(caption); label.setObjectName("tableTitle"); box.addWidget(label)
-            table = QTableWidget(0, 6); table.setHorizontalHeaderLabels(["Hisse", "Alım", "Hedef", "Stop", "Potansiyel", "Skor"])
-            table.verticalHeader().setVisible(False); table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            box.addWidget(table); self.preview_tables[key] = table; tables.addWidget(panel, 0, column)
-        content.addLayout(tables, 4)
-        rail = QVBoxLayout()
-        self.portfolio_summary = QLabel("TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: 0\nGüncel değer: —"); self.portfolio_summary.setObjectName("sidePanel")
-        self.performance = QLabel("SON PERFORMANS (30 İŞLEM)\n\nHenüz sonuçlanmış işlem yok"); self.performance.setObjectName("sidePanel")
-        rail.addWidget(self.portfolio_summary); rail.addWidget(self.performance); rail.addStretch(); content.addLayout(rail, 1)
-        layout.addLayout(content, 1)
-        footer = QLabel("Veriler yaklaşık 15 dakika gecikmeli olabilir. Bu uygulama yatırım tavsiyesi değildir."); footer.setObjectName("footerText"); layout.addWidget(footer)
+        section = QHBoxLayout()
+        copy = QVBoxLayout()
+        title = QLabel("Bugünün işlem adayları")
+        title.setObjectName("sectionTitle")
+        note = QLabel("Karar için gerekli alanlar görünür; diğer bilgiler seçilen satır ayrıntısında kalır.")
+        note.setObjectName("subText")
+        copy.addWidget(title)
+        copy.addWidget(note)
+        section.addLayout(copy)
+        section.addStretch()
+        layout.addLayout(section)
+
+        self.candidate_table = ResponsiveResultTable()
+        columns = ["Hisse / Karar", "Alış", "Hedef", "Stop", "Yükseliş", "Olasılık / Süre"]
+        self.candidate_table.setColumnCount(len(columns))
+        self.candidate_table.setHorizontalHeaderLabels(columns)
+        self.candidate_table.set_column_names(columns)
+        self.candidate_table.currentCellChanged.connect(self._candidate_selected)
+        layout.addWidget(self.candidate_table, 1)
+        self.candidate_detail = SelectedRowDetailPanel()
+        layout.addWidget(self.candidate_detail)
+        self._candidate_rows = []
+        self.preview_tables = {"trade": self.candidate_table}
+
+        lower = QHBoxLayout()
+        self.portfolio_summary = QLabel("Takip listesi: 0 hisse")
+        self.portfolio_summary.setObjectName("sidePanel")
+        self.portfolio_summary.setWordWrap(True)
+        self.performance = QLabel("Son performans: Henüz sonuçlanmış işlem yok")
+        self.performance.setObjectName("sidePanel")
+        self.performance.setWordWrap(True)
+        lower.addWidget(self.portfolio_summary, 1)
+        lower.addWidget(self.performance, 1)
+        layout.addLayout(lower)
+        footer = QLabel("Veriler gecikmeli olabilir. Bu uygulama yatırım tavsiyesi değildir.")
+        footer.setObjectName("footerText")
+        layout.addWidget(footer)
 
     def _load_preview(self, key, frame):
-        table = self.preview_tables[key]; table.setRowCount(0)
-        if frame is None: return
+        if key != "trade":
+            return
+        table = self.candidate_table
+        table.setRowCount(0)
+        self._candidate_rows = []
+        if frame is None or frame.empty:
+            self.candidate_detail.set_data({})
+            return
         for _, row in frame.head(5).iterrows():
-            r = table.rowCount(); table.insertRow(r)
-            values = [row.get("Hisse", "-"), row.get("Alım Bölgesi", "-"), row.get("Hedef", "-"), row.get("Stop", "-"), f"+%{float(row.get('Potansiyel %', 0)):.1f}", row.get("Güven Skoru", "-")]
-            for c, value in enumerate(values): table.setItem(r, c, QTableWidgetItem(str(value)))
+            data = row.to_dict()
+            self._candidate_rows.append(data)
+            decision = data.get("Karar", data.get("Yatırım Kararı", data.get("Sonuç", "Bekle")))
+            symbol = data.get("Hisse", "-")
+            probability = data.get("Hedef Olasılığı %", data.get("Model Olasılığı %", "—"))
+            duration = data.get("Tahmini Süre", data.get("Süre", "Süre bilinmiyor"))
+            potential = data.get("Potansiyel %", data.get("Hedef Potansiyeli %", 0))
+            values = [
+                f"{symbol} · {decision}", data.get("Alım Bölgesi", data.get("Alış", "-")),
+                data.get("Hedef", "-"), data.get("Stop", "-"),
+                f"%{guvenli_sayi(potential):.1f}", f"%{guvenli_sayi(probability):.0f}\n{duration}",
+            ]
+            row_index = table.rowCount()
+            table.insertRow(row_index)
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setData(Qt.UserRole, row_index)
+                table.setItem(row_index, column, item)
+        table.selectRow(0)
+
+    def _candidate_selected(self, row, _column, _previous_row, _previous_column):
+        if 0 <= row < len(self._candidate_rows):
+            self.candidate_detail.set_data(self._candidate_rows[row])
 
     def update_state(self, trade, short, medium, market: str, growth_count=0):
-        self.market.setText(f"PİYASA DURUMU\n{market}")
-        for key, caption, frame in (("trade", "Günlük Trade", trade), ("short", "Kısa Vade", short), ("medium", "Orta Vade", medium)):
-            self.counts[key].setText(f"{caption}\n{len(frame)}\nuygun aday"); self._load_preview(key, frame)
-        self.counts["growth"].setText(f"Büyüme Adayları\n{growth_count}\nuygun aday")
+        self.market_card.set_value(market, "Yeni işlem için piyasa koşulunu ayrıca doğrulayın")
+        total = len(trade) + len(short) + len(medium)
+        self.candidate_card.set_value(total, f"Günlük {len(trade)} · Kısa {len(short)} · Orta {len(medium)}")
+        self.warning_card.set_value("1" if market == "RİSKLİ" else "0", "Riskli piyasa rejimi" if market == "RİSKLİ" else "Kritik piyasa uyarısı yok")
+        self.counts["short"].setText(str(len(short)))
+        self.counts["medium"].setText(str(len(medium)))
+        self.counts["growth"].setText(str(growth_count))
+        self._load_preview("trade", trade)
 
 
 class DecisionPage(SimpleTable):
@@ -1581,6 +1725,14 @@ class FullMarketPage(SimpleTable):
         button.setObjectName("primary")
         button.clicked.connect(self.scan_requested.emit)
         self.layout().insertWidget(3, button)
+        if "10X" in title:
+            warning = QLabel(
+                "Bu uzun dönem ve yüksek belirsizlikli bir senaryodur; garanti veya kesin fiyat hedefi değildir. "
+                "Finansal kalite, borçluluk, seyrelme ve likidite riskleri seçilen satır ayrıntısında gösterilir."
+            )
+            warning.setObjectName("riskBanner")
+            warning.setWordWrap(True)
+            self.layout().insertWidget(1, warning)
 
 
 class Under50Worker(QObject):
@@ -1620,6 +1772,10 @@ class Under50Page(FullMarketPage):
         button.clicked.disconnect()
         button.setText("613 BIST HİSSESİNİ TARA")
         button.clicked.connect(self.start_scan)
+        warning = QLabel("Ucuz fiyat, düşük risk anlamına gelmez. Likidite ve veri kalitesi koşullarını geçmeyen hisseler uygun sayılmaz.")
+        warning.setObjectName("riskBanner")
+        warning.setWordWrap(True)
+        self.layout().insertWidget(1, warning)
 
     def start_scan(self):
         if self.thread and self.thread.isRunning(): return
@@ -1643,6 +1799,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME + " v" + APP_VERSION)
         self.resize(1366, 768)
+        self.setMinimumSize(960, 700)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
             self.setWindowIcon(QIcon(str(icon)))
@@ -1669,12 +1826,15 @@ class MainWindow(QMainWindow):
         self.under_50 = Under50Page()
         self.ten_x = FullMarketPage("10X POTANSİYEL SENARYOSU", "Tüm BIST taranır. Senaryo çok yüksek belirsizlik içerir ve kesin getiri tahmini değildir.")
         self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
+        self.history_export_button = PrimaryActionButton("Excel oluştur")
+        self.history_export_button.clicked.connect(self.scan)
+        self.history.page_header.set_action(self.history_export_button)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
         for p in [self.home, self.daily_trade, self.short_term, self.medium_term,
-                  self.under_50, self.ten_x, self.track, self.sale, self.single,
-                  self.history, self.log]:
+                  self.single, self.sale, self.track, self.under_50, self.ten_x,
+                  self.funds, self.history, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -1683,91 +1843,56 @@ class MainWindow(QMainWindow):
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
 
-        side = QFrame()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(232)
-        side_layout = QVBoxLayout(side)
-        brand = QLabel("BORSA ANALİZ\nPRO MAX v" + APP_VERSION)
-        brand.setObjectName("brand")
-        brand.setAlignment(Qt.AlignCenter)
-        side_layout.addWidget(brand)
-
         menu = [
-            ("BUGÜN", self.home), ("  Günlük Trade", self.daily_trade),
-            ("KISA VADE", self.short_term), ("ORTA VADE", self.medium_term),
-            ("BÜYÜME · 50 TL Altı", self.under_50), ("  10X Potansiyel", self.ten_x),
-            ("TAKİP LİSTEM", self.track), ("  Satış / Çıkış Kararı", self.sale),
-            ("DETAY · Hisse İncele", self.single), ("GEÇMİŞ", self.history),
+            ("Ana ekran", self.home), ("Günlük Trade", self.daily_trade),
+            ("Kısa Vade", self.short_term), ("Orta Vade", self.medium_term),
+            ("Tek Hisse", self.single), ("Satış Kararı", self.sale),
+            ("Takip Listem", self.track), ("50 TL Altı", self.under_50),
+            ("10X Senaryosu", self.ten_x), ("Fon Karar Merkezi", self.funds),
+            ("Sinyal Geçmişi ve Raporlar", self.history),
         ]
-        for text, page in menu:
-            button = QPushButton(text)
-            button.clicked.connect(lambda checked=False, p=page: self.pages.setCurrentWidget(p))
-            side_layout.addWidget(button)
-        side_layout.addStretch()
+        self.sidebar = AppSidebar(APP_VERSION, menu)
+        self.sidebar.page_requested.connect(self.pages.setCurrentWidget)
+        self.pages.currentChanged.connect(self._page_changed)
 
         self.scan_button = QPushButton("YENİ ANALİZ YAP")
-        self.scan_button.setObjectName("primary")
         self.scan_button.clicked.connect(self.scan)
-        side_layout.addWidget(self.scan_button)
 
         self.reload_button = QPushButton("SON RAPORU YÜKLE")
         self.reload_button.clicked.connect(self.load_report)
-        side_layout.addWidget(self.reload_button)
-
 
         self.open_report_button = QPushButton("EXCEL RAPORUNU AÇ")
         self.open_report_button.clicked.connect(self.open_report)
-        side_layout.addWidget(self.open_report_button)
 
         self.open_folder_button = QPushButton("RAPOR KLASÖRÜNÜ AÇ")
         self.open_folder_button.clicked.connect(self.open_report_folder)
-        side_layout.addWidget(self.open_folder_button)
+        report_tools = QHBoxLayout()
+        report_tools.addWidget(self.reload_button)
+        report_tools.addWidget(self.open_report_button)
+        report_tools.addWidget(self.open_folder_button)
+        self.history.layout().insertLayout(1, report_tools)
 
         self.report_path_label = QLabel(str(rapor_yolu()))
         self.report_path_label.setWordWrap(True)
         self.report_path_label.setObjectName("pathText")
-        side_layout.addWidget(self.report_path_label)
+        sidebar_note = QLabel("Bütün sayfalarda aynı tema, tablo ve kart sistemi")
+        sidebar_note.setObjectName("brandSubtitle")
+        sidebar_note.setWordWrap(True)
+        self.sidebar.footer_layout.addWidget(sidebar_note)
 
-        root.addWidget(side)
+        root.addWidget(self.sidebar)
         root.addWidget(self.pages, 1)
+        self.setStyleSheet(DARK_THEME)
 
-        bg_path = (uygulama_klasoru() / "assets" / "terminal-background-v1.png").as_posix()
-        style_sheet = """
-            QMainWindow, QWidget {{ background:#071521; color:#f4f7fb; font-family:Segoe UI, Arial; font-size:12px; }}
-            #appRoot {{ background:#071521; }}
-            #sidebar {{ background:#06111c; border-right:1px solid #203648; }}
-            QStackedWidget {{ background:#0a1825; border-left:1px solid #203648; }}
-            #brand {{ font-size:20px; font-weight:800; color:#ffffff; padding:14px 8px; }}
-            QPushButton {{ background:transparent; color:#cbd5e1; border:0; border-bottom:1px solid #172a3a; padding:6px 10px; border-radius:6px; text-align:left; font-weight:600; }}
-            QPushButton:hover {{ background:#102535; color:#68e05f; }}
-            #primary {{ background:#45a839; color:#ffffff; font-weight:800; text-align:center; border:1px solid #6ad75b; }}
-            #heroButton {{ background:#4daf3d; border:1px solid #6ad75b; color:white; font-size:16px; min-height:86px; text-align:center; font-weight:800; border-radius:10px; }}
-            #topStrip, #dashboardPanel {{ background:#0d1d2b; border:1px solid #21384b; border-radius:11px; }}
-            #topMetric {{ color:#e7edf5; padding:6px 14px; border-right:1px solid #203648; }}
-            #sectionTitle, #tableTitle {{ color:#f8fafc; font-weight:800; font-size:13px; }}
-            #summaryMetric {{ color:#65dc57; font-size:15px; font-weight:800; padding:5px 16px; border-right:1px solid #21384b; }}
-            #sidePanel {{ background:#0d1d2b; color:#e5edf6; border:1px solid #21384b; border-radius:10px; padding:15px; line-height:1.5; }}
-            #footerText, #subText, #pathText {{ color:#95a7b8; }}
-            #pageTitle {{ font-size:20px; font-weight:800; color:#ffffff; }}
-            #riskBanner {{ background:#102535; border:1px solid #29465d; color:#d8e4ee; padding:8px; border-radius:6px; }}
-            #terminalSummary, #metricCard, #chartSummary, #chartCanvas, #analysisText {{ background:#0d1d2b; border:1px solid #21384b; color:#ffffff; border-radius:7px; }}
-            #metricCaption {{ color:#9fb0c0; font-size:11px; font-weight:bold; }} #metricValue {{ color:#65dc57; font-size:20px; font-weight:bold; }}
-            #analysisTitle {{ color:#65dc57; font-size:16px; font-weight:bold; }}
-            QTabBar::tab {{ background:#0d1d2b; color:#cbd5e1; padding:8px 18px; border:1px solid #21384b; }} QTabBar::tab:selected {{ background:#18354a; color:#65dc57; }}
-            QLineEdit, QTextEdit, QDoubleSpinBox, QComboBox {{ background:#091622; color:#ffffff; border:1px solid #29465d; border-radius:6px; padding:6px; }}
-            QTableWidget {{ background:#0b1926; color:#f4f7fb; border:1px solid #21384b; border-radius:7px; alternate-background-color:#0f2130; gridline-color:#203648; font-size:12px; }}
-            QTableWidget::item {{ color:#f4f7fb; padding:4px; }} QTableWidget::item:selected {{ background:#24503c; color:#ffffff; }}
-            QHeaderView::section {{ background:#102434; color:#dce6ef; padding:7px; border:0; border-right:1px solid #203648; font-weight:600; font-size:12px; }}
-        """
-        self.setStyleSheet(
-            style_sheet.replace("__BACKGROUND__", bg_path).replace("{{", "{").replace("}}", "}")
-        )
-
-        self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
+        self.home.trade_requested.connect(self.scan)
         self.ten_x.scan_requested.connect(lambda: self.scan_all_market(self.ten_x))
         self.pages.setCurrentWidget(self.home)
+        self.sidebar.set_active(self.home)
 
         self.load_report()
+
+    def _page_changed(self, index):
+        self.sidebar.set_active(self.pages.widget(index))
 
     def load_report(self):
         path = rapor_yolu()
@@ -1775,6 +1900,15 @@ class MainWindow(QMainWindow):
             return
         try:
             sheets = pd.read_excel(path, sheet_name=None)
+            report_time = datetime.fromtimestamp(path.stat().st_mtime)
+            freshness_text = f"Veri güncel · {report_time:%d.%m %H:%M}"
+            stale = (datetime.now() - report_time).total_seconds() > 36 * 3600
+            for page in (
+                self.home, self.daily_trade, self.short_term, self.medium_term,
+                self.single, self.sale, self.track, self.under_50, self.ten_x,
+                self.funds, self.history,
+            ):
+                page.page_header.freshness.set_freshness(freshness_text, stale=stale)
             all_results = sheets.get("Tum Sonuclar", pd.DataFrame()).copy()
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
@@ -1796,7 +1930,7 @@ class MainWindow(QMainWindow):
             if trade_frame.empty:
                 trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
             self.daily_trade.report_fallback = trade_frame.copy()
-            self.daily_trade.table.load(trade_frame)
+            self.daily_trade.load_display(trade_frame)
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
@@ -1847,7 +1981,6 @@ class MainWindow(QMainWindow):
             market_score = pd.to_numeric(all_results.get("v4 Güven Puanı", pd.Series(dtype=float)), errors="coerce").median()
             market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
             self.home.index_value.setText(f"BIST EVRENİ\n{len(all_results)} hisse analiz edildi")
-            self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
             self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame) + len(ten_frame))
 
             def numeric(name, default=0):
