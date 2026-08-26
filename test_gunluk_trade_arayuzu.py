@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from app_qt import MainWindow
+from tarama_evreni import ALL_BIST
 
 
 class DailyTradeUiSmokeTests(unittest.TestCase):
@@ -33,7 +34,7 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
         with patch.object(window, "scan") as scan:
             window.scan_daily_trade()
         self.assertIs(window._scan_target, window.daily_trade)
-        self.assertEqual(window._scan_universe, "ALL")
+        self.assertEqual(window._scan_universe, ALL_BIST)
         scan.assert_called_once_with()
         window.close()
 

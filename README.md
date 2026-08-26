@@ -4,6 +4,9 @@
 
 - Günlük Trade taraması BIST30 yerine aktif tüm BIST evrenini kullanır.
 - Tarama evreninin yeniden BIST30'a dönmesini önleyen arayüz testi eklendi.
+- Ana ekrandaki `Tüm Hisse Analizlerini Başlat` düğmesi Kısa Vade, Orta Vade, Günlük Trade, 50 TL Altı ve Tavan Potansiyeli analizlerini yönetir.
+- Kısa ve Orta Vade BIST 30; diğer üç hisse analizi Tüm Aktif BIST kullanır.
+- Fon analizi kendi düğmesi, veri kaynağı ve worker thread'iyle hisse taramasından bağımsızdır.
 
 ## v10.2.0 ortak sade arayüz sistemi
 
@@ -11,7 +14,7 @@
 - Ana ekran üç özet kart, kritik aday tablosu ve seçili satır ayrıntısı düzenine geçirildi.
 - Dar pencerelerde ikincil kolonlar otomatik gizlenir; tam veri seçili satır ayrıntısında korunur.
 - Günlük Trade olasılığı süre ufkuyla birlikte gösterilir; yetersiz örnek ve eski veri durumları gizlenmez.
-- Fon Merkezi menüye eklendi; 50 TL Altı ve 10X sayfalarına belirgin risk açıklamaları yerleştirildi.
+- Fon Merkezi menüye eklendi; risk açıklamaları ilgili analiz sayfalarında gösterilir.
 - 1920×1080, 1366×768, 1280×720 ve 1024×768 çözünürlükleri için offscreen UI regresyon testleri eklendi.
 
 ## v10.1.2 görünür sonuç ve 50 TL uyumluluk düzeltmesi
@@ -25,7 +28,7 @@
 
 - Genel, kısa ve orta vade taraması BIST 30 evrenine döndürüldü.
 - Günlük Trade bağımsız olarak tüm aktif BIST evrenini tarar.
-- 50 TL Altı ve 10X ekranlarına tüm BIST tarama düğmesi eklendi.
+- Tüm BIST kullanan analiz ekranlarına açık tarama kapsamı bilgisi eklendi.
 - Ayarlar, Yardım, Erken Büyüme ve Uzun Büyüme ekranları kaldırıldı.
 - Paketlere çevrimdışı 613 hisselik evren dosyası eklendi.
 
@@ -49,7 +52,7 @@
 - Ana sayfa yalnızca piyasa durumunu ve günlük/kısa/orta vade aday sayılarını gösterir.
 - Günlük Trade, Kısa Vade ve Orta Vade listeleri en fazla 5 aday ve sade fiyat/risk bilgileriyle sınırlandırılmıştır.
 - Teknik göstergeler analiz motorunda korunmuş, ana ekrandan ve ana Excel raporundan çıkarılmıştır.
-- Erken Büyüme, 50 TL Altı Büyüme ve belirsizliği açıkça belirtilen 10X Senaryosu eklenmiştir.
+- Erken Büyüme ve 50 TL Altı Büyüme analizleri bu sürümde eklenmiştir.
 - Ana tablolar 1366×768 ekran için yatay kaydırmasız, PWA ise mobilde tek sütun olacak şekilde düzenlenmiştir.
 
 ## v9.2.0 mum formasyonları ve en iyi 5 Günlük Trade

@@ -32,15 +32,21 @@ class CommonUiSystemTests(unittest.TestCase):
         required = [
             self.window.home, self.window.daily_trade, self.window.short_term,
             self.window.medium_term, self.window.single, self.window.sale,
-            self.window.track, self.window.under_50, self.window.ten_x,
-            self.window.funds, self.window.history,
+            self.window.track, self.window.under_50, self.window.ceiling_potential,
+            self.window.funds, self.window.history, self.window.prediction_performance,
         ]
-        self.assertEqual(len(self.window.sidebar._buttons), 11)
+        self.assertEqual(len(self.window.sidebar._buttons), 12)
         for page in required:
             self.assertIsInstance(page.page_header, PageHeader)
             self.window.pages.setCurrentWidget(page)
             self.app.processEvents()
             self.assertTrue(self.window.sidebar._buttons[page].isChecked())
+
+    def test_prediction_performance_page_is_separate_and_refreshable(self):
+        page = self.window.prediction_performance
+        self.assertEqual(page.page_id, "prediction_performance")
+        page.refresh()
+        self.assertIn("Kayıt zinciri", page.summary.text())
 
     def test_supported_resolutions_keep_horizontal_scroll_disabled(self):
         pages = list(self.window.sidebar._buttons)

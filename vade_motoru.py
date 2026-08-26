@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bist30 import BIST30_KUMESI
+from tarama_evreni import strategy_symbol_mask
 
 
 GORUNEN_KOLONLAR = [
@@ -41,11 +41,8 @@ def vade_listeleri_uret(df: pd.DataFrame):
         return bos, bos.copy(), bos.copy()
 
     work = df.copy()
-    # Kısa/orta/uzun toplu listeler yalnızca resmi dönemsel BIST 30 evrenidir.
-    if "Hisse" in work.columns:
-        symbols = work["Hisse"].astype(str).str.strip().str.upper()
-        symbols = symbols.where(symbols.str.endswith(".IS"), symbols + ".IS")
-        work = work[symbols.isin(BIST30_KUMESI)].copy()
+    short_mask = strategy_symbol_mask(work.get("Hisse", pd.Series("", index=work.index)), "short_term")
+    medium_mask = strategy_symbol_mask(work.get("Hisse", pd.Series("", index=work.index)), "medium_term")
 
     guven = _num(work, "v4 Güven Puanı", 50)
     olasilik = _num(work, "Model Olasılığı %", 50)
@@ -110,7 +107,8 @@ def vade_listeleri_uret(df: pd.DataFrame):
 
     def sec(score_col: str, sure: str, min_score: float, min_rr: float) -> pd.DataFrame:
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
-        kalite = temel_kalite & (work[score_col] >= min_score) & (rr >= min_rr) & (kanit >= 50) & (vade_kaniti >= 35)
+        universe_mask = {"_kisa": short_mask, "_orta": medium_mask}.get(score_col, pd.Series(True, index=work.index))
+        kalite = universe_mask & temel_kalite & (work[score_col] >= min_score) & (rr >= min_rr) & (kanit >= 50) & (vade_kaniti >= 35)
         aday = work[kalite].copy()
         if aday.empty:
             return pd.DataFrame(columns=["Hisse", "Vade", "Vade Skoru"] + GORUNEN_KOLONLAR[1:])

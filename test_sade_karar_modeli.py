@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from sade_karar_modeli import buyume_adaylari, en_iyi_vade, on_x_senaryosu, orta_vadeden_kisa_adaylari_cikar, sade_firsatlar
+from sade_karar_modeli import buyume_adaylari, en_iyi_vade, orta_vadeden_kisa_adaylari_cikar, sade_firsatlar
 from main import sade_ana_rapor
 
 
@@ -42,12 +42,6 @@ class SadeKararModeliTests(unittest.TestCase):
         result = buyume_adaylari(self.frame, fiyat_limiti=50, limit=20, min_score=45)
         self.assertTrue((result["Mevcut Fiyat"] < 50).all())
         self.assertIn("Büyüme Skoru", result)
-
-    def test_10x_market_cap_senaryosu_var(self):
-        result = on_x_senaryosu(self.frame)
-        self.assertIn("Gerekli 10X Piyasa Değeri", result.columns)
-        if not result.empty:
-            self.assertTrue((result["Belirsizlik"] == "ÇOK YÜKSEK").all())
 
     def test_excel_ana_raporu_teknik_jargon_gostermez(self):
         report = sade_ana_rapor(self.frame)

@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 from profesyonel_analiz import profesyonel_analiz
 from uluslararasi_faktorler import faktorleri_hesapla
-from bist30 import BIST30_SEMBOLLERI
+from tarama_evreni import get_scan_universe
 from rsi_supertrend_stratejisi import hesapla as rsi_supertrend_hesapla
 
 _BENCHMARK_LOCK = threading.Lock()
@@ -27,7 +27,8 @@ def bist100_verisi():
             _BENCHMARK_CACHE = temiz_fiyat_verisi(data) if data is not None else pd.DataFrame()
     return _BENCHMARK_CACHE.copy()
 
-WATCHLIST = list(BIST30_SEMBOLLERI)
+# Teknik/formasyon taraması da merkezi kurala göre tüm aktif BIST'i kullanır.
+WATCHLIST = get_scan_universe("technical_scan")
 SURPRISE_LIST = []
 
 
