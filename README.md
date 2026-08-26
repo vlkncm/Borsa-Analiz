@@ -1,4 +1,13 @@
-# Borsa Analiz Pro MAX v10.1.2
+# Borsa Analiz Pro MAX v10.2.0
+
+## v10.2.0 ortak sade arayüz sistemi
+
+- Bütün masaüstü sayfaları aynı koyu tema, sol menü, sayfa başlığı, kart, tablo ve durum diliyle birleştirildi.
+- Ana ekran üç özet kart, kritik aday tablosu ve seçili satır ayrıntısı düzenine geçirildi.
+- Dar pencerelerde ikincil kolonlar otomatik gizlenir; tam veri seçili satır ayrıntısında korunur.
+- Günlük Trade olasılığı süre ufkuyla birlikte gösterilir; yetersiz örnek ve eski veri durumları gizlenmez.
+- Fon Merkezi menüye eklendi; 50 TL Altı ve 10X sayfalarına belirgin risk açıklamaları yerleştirildi.
+- 1920×1080, 1366×768, 1280×720 ve 1024×768 çözünürlükleri için offscreen UI regresyon testleri eklendi.
 
 ## v10.1.2 görünür sonuç ve 50 TL uyumluluk düzeltmesi
 
@@ -207,8 +216,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v10.1.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.1.2/Setup_Borsa_Analiz_Pro_MAX_v10.1.2.exe)
-- SHA-256: `67948CBA9A22619261E5CA9FCA210063D54B0AF311E1C87A5B6F8F1928C766C2`
+- [Borsa Analiz Pro MAX v10.2.0 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.2.0/Setup_Borsa_Analiz_Pro_MAX_v10.2.0.exe)
+- SHA-256: `6F40DDACC742744489C10165976A1DB0820A70525D340E11B5D2C64FD2B940AD`
 
 ## v7.2 merkezi veri katmanı
 
