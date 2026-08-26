@@ -18,6 +18,7 @@ from tarama_evreni import (
     metadata_frame_to_dict, normalize_symbols, report_cache_key, report_scope_is_compatible,
 )
 from tahmin_defteri import performans_ozeti, zinciri_dogrula
+from ertesi_gun_tavan import tavan_performans_ozeti
 from profesyonel_karar_sistemi import RiskLimits, risk_ayarlari_kaydet, risk_ayarlari_oku
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
@@ -83,36 +84,28 @@ def guvenli_sayi(value, default=0.0):
         return default
 
 
-def tavan_potansiyeli_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
-    """Mevcut 2-6 hafta model çıktısını garanti içermeyen güvenli adlarla sunar."""
+def ertesi_gun_tavan_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
+    """Yalnız ertesi seans hedefli, point-in-time aday tablosunu gösterir."""
     columns = [
-        "Hisse", "Güncel Fiyat", "Potansiyel Puanı", "Yükseliş Olasılığı",
-        "Beklenen Hareket Aralığı", "Tahmini Gerçekleşme Süresi", "Hacim Değişimi",
-        "Teknik Sinyal Özeti", "Destek", "Hedef", "Stop-loss", "Risk Seviyesi",
-        "Sinyal Güven Seviyesi", "Son Veri Zamanı",
+        "Hisse", "Aday Grubu", "Önceki Kapanış", "Tavan Fiyatı", "Tavan İçin Gereken %",
+        "Ertesi Gün Tavan Olasılığı", "Ertesi Gün %8+ Olasılığı", "Tavan Aday Puanı",
+        "Para Akışı", "Göreceli Hacim", "Sıkışma/Kırılım", "KAP Katalizörü",
+        "Piyasa Rejimi", "Sektör Gücü", "Risk Seviyesi", "Veri Zamanı",
+        "Aday Olma Nedenleri", "Riskler", "Kalibrasyon Örneği",
     ]
     if frame is None or frame.empty:
         return pd.DataFrame(columns=columns)
     work = frame.copy()
-    def series(*names, default="Veri yok"):
-        name = next((item for item in names if item in work.columns), None)
-        return work[name] if name else pd.Series(default, index=work.index)
-    h1 = pd.to_numeric(series("Hedef 1 Potansiyel %", default=0), errors="coerce").fillna(0)
-    h2 = pd.to_numeric(series("Hedef 2 Potansiyel %", default=0), errors="coerce").fillna(0)
-    probability = pd.to_numeric(series("20 Gün %20+ Olasılık", "Model Olasılığı %", default=0), errors="coerce").fillna(0)
-    score = pd.to_numeric(series("2-6 Hafta Potansiyel Skor", "v4 Güven Puanı", default=0), errors="coerce").fillna(0)
-    risk = pd.cut(score, [-1, 59, 74, 100], labels=["YÜKSEK", "ORTA", "DÜŞÜK"]).astype(str)
-    return pd.DataFrame({
-        "Hisse": series("Hisse"), "Güncel Fiyat": series("Fiyat"),
-        "Potansiyel Puanı": score.round(1), "Yükseliş Olasılığı": probability.round(1),
-        "Beklenen Hareket Aralığı": [f"%{a:.1f} - %{b:.1f}" for a, b in zip(h1, h2)],
-        "Tahmini Gerçekleşme Süresi": "2-6 hafta", "Hacim Değişimi": series("Hacim Oranı"),
-        "Teknik Sinyal Özeti": series("Broker Yorum", "Formasyon", "Seçilme Nedenleri"),
-        "Destek": series("Alış Alt", "Önerilen Alış Alt"), "Hedef": series("Hedef 1", "Önerilen Satış"),
-        "Stop-loss": series("Stop Loss", "Önerilen Stop"), "Risk Seviyesi": risk,
-        "Sinyal Güven Seviyesi": series("v4 Güven Puanı", "AI Güven Puanı"),
-        "Son Veri Zamanı": series("Veri Tarihi", "Analiz Tarihi"),
-    })[columns]
+    for column in columns:
+        if column not in work:
+            work[column] = "Veri yok"
+    return work[columns].copy()
+
+
+# Eski dış çağrılar için yalnız isim uyumluluğu; eski 2-6 haftalık veri artık
+# ertesi gün adayı gibi dönüştürülmez.
+def tavan_potansiyeli_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
+    return ertesi_gun_tavan_gorunumu(frame)
 
 
 def hata_gunlugune_yaz(context: str, details: str) -> None:
@@ -2009,6 +2002,7 @@ class PredictionPerformancePage(SimpleTable):
 
     def refresh(self):
         summary, detail = performans_ozeti()
+        ceiling_summary, ceiling_detail = tavan_performans_ozeti()
         chain_ok, chain_message = zinciri_dogrula()
         row = summary.iloc[0].to_dict() if not summary.empty else {}
         brier = row.get("Brier")
@@ -2020,8 +2014,31 @@ class PredictionPerformancePage(SimpleTable):
             f"Stop önce %{float(row.get('Stop Önce %', 0)):.1f} · Net %{float(row.get('Ortalama Net %', 0)):.2f} · "
             f"Brier {brier_text} · Kayıt zinciri: {'GEÇERLİ' if chain_ok else 'HATALI'}"
         )
+        if not ceiling_summary.empty:
+            ceiling = ceiling_summary.iloc[0].to_dict()
+            precision = ceiling.get("Precision")
+            precision_text = "Yetersiz örnek" if pd.isna(precision) or precision is None else f"%{float(precision)*100:.1f}"
+            self.summary.setText(
+                self.summary.text()+
+                f"\nErtesi Gün Tavan: toplam {int(ceiling.get('Toplam Tahmin', 0))} · "
+                f"tamamlanan {int(ceiling.get('Tamamlanan', 0))} · tavan {int(ceiling.get('Tavan', 0))} · "
+                f"%8+ {int(ceiling.get('%8+', 0))} · yanlış pozitif {int(ceiling.get('Yanlış Pozitif', 0))} · "
+                f"precision {precision_text}"
+            )
+        if not ceiling_detail.empty:
+            ceiling_view = pd.DataFrame({
+                "Hisse": ceiling_detail.get("symbol"), "Strateji": "Ertesi Gün Tavan",
+                "Durum": ceiling_detail.get("status"), "Net Sonuç %": ceiling_detail.get("close_return_pct"),
+                "En Yüksek Yükseliş %": ceiling_detail.get("max_rise_pct"),
+                "En Yüksek Düşüş %": ceiling_detail.get("max_decline_pct"),
+                "Tavan Saati": ceiling_detail.get("ceiling_hit_time"),
+                "Piyasa Rejimi": ceiling_detail.get("market_regime"),
+                "Sektör": ceiling_detail.get("sector_strength"),
+            })
+        else:
+            ceiling_view = pd.DataFrame()
         if detail.empty:
-            self.load(pd.DataFrame(columns=["Hisse", "Strateji", "Durum", "Net Sonuç %", "Hedef Önce", "Süre Doğru"])); return
+            self.load(ceiling_view if not ceiling_view.empty else pd.DataFrame(columns=["Hisse", "Strateji", "Durum", "Net Sonuç %", "Hedef Önce", "Süre Doğru"])); return
         view = pd.DataFrame({
             "Hisse": detail.get("symbol"), "Strateji": detail.get("strategy_id"),
             "Durum": detail.get("status"), "Net Sonuç %": detail.get("net_return_pct"),
@@ -2029,7 +2046,8 @@ class PredictionPerformancePage(SimpleTable):
             "Hedefe/Stopa Gün": detail.get("hit_day"), "Süre Doğru": detail.get("duration_accurate"),
             "Piyasa Rejimi": detail.get("market_regime"), "Sektör": detail.get("sector"),
         })
-        self.load(view.tail(200), detail_df=detail.tail(200))
+        combined = pd.concat([view, ceiling_view], ignore_index=True, sort=False)
+        self.load(combined.tail(200), detail_df=combined.tail(200))
 
 
 class MainWindow(QMainWindow):
@@ -2068,8 +2086,8 @@ class MainWindow(QMainWindow):
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Tarama Evreni: BIST 30 · Model hedefi ve süre tahmindir.", page_id="medium_term")
         self.under_50 = Under50Page()
         self.ceiling_potential = SimpleTable(
-            "TAVAN POTANSİYELİ",
-            "Tarama Evreni: Tüm Aktif BIST · Sonuçlar teknik aday ve olasılık ifadesidir; garanti değildir.",
+            "Ertesi Gün Tavan Adayları",
+            "Tarama Evreni: Tüm Aktif BIST · Son tamamlanmış günlük kapanıştan bir sonraki seans adayı; garanti değildir.",
             page_id="ceiling_potential", strategy_id="ceiling_potential",
         )
         self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
@@ -2096,7 +2114,7 @@ class MainWindow(QMainWindow):
             ("Kısa Vade", self.short_term), ("Orta Vade", self.medium_term),
             ("Tek Hisse", self.single), ("Satış Kararı", self.sale),
             ("Takip Listem", self.track), ("50 TL Altı", self.under_50),
-            ("Tavan Potansiyeli", self.ceiling_potential), ("Fon Karar Merkezi", self.funds),
+            ("Ertesi Gün Tavan Adayları", self.ceiling_potential), ("Fon Karar Merkezi", self.funds),
             ("Sinyal Geçmişi ve Raporlar", self.history),
             ("Tahmin Performansı", self.prediction_performance),
         ]
@@ -2233,10 +2251,8 @@ class MainWindow(QMainWindow):
             self.medium_term.result_cache[report_cache_key("medium_term", SCAN_UNIVERSE["medium_term"])] = medium_frame.copy()
             self.medium_term.info.setText(f"Tarama Evreni: BIST 30 · {len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
-            ceiling_source = sheets.get("2-6 Hafta Potansiyel", pd.DataFrame())
-            if ceiling_source.empty:
-                ceiling_source = sheets.get("2-6 Hafta Yakin", pd.DataFrame())
-            ceiling_frame = tavan_potansiyeli_gorunumu(ceiling_source)
+            ceiling_source = sheets.get("Ertesi Gun Tavan Adaylari", pd.DataFrame())
+            ceiling_frame = ertesi_gun_tavan_gorunumu(ceiling_source)
             if all_bist_report and not self.under_50.result_cache and not self.under_50._loading:
                 self.under_50.load(under_frame)
                 self.under_50.result_cache[report_cache_key("under_50_tl", ALL_BIST)] = under_frame.copy()
@@ -2244,7 +2260,9 @@ class MainWindow(QMainWindow):
                 self.ceiling_potential.load(ceiling_frame)
                 self.ceiling_potential.result_cache[report_cache_key("ceiling_potential", ALL_BIST)] = ceiling_frame.copy()
                 self.ceiling_potential.info.setText(
-                    f"Tarama Evreni: Tüm Aktif BIST · {len(all_results)} hisse incelendi · {len(ceiling_frame)} teknik aday."
+                    f"Tarama Evreni: Tüm Aktif BIST · {len(all_results)} hisse incelendi · {len(ceiling_frame)} ertesi seans adayı."
+                    if len(ceiling_frame) else
+                    "Bu taramada ertesi gün için gerekli koşulları geçen aday bulunamadı. Eşikler düşürülmedi."
                 )
             self.history.load(sheets.get("Sinyal Gecmisi", pd.DataFrame()).tail(30))
             self.prediction_performance.refresh()
@@ -2361,7 +2379,7 @@ class MainWindow(QMainWindow):
                 "errors": 0 if ok else 1,
             }
         self.home.scan_progress.setText(
-            "Kısa Vade tamamlandı · Orta Vade tamamlandı · Tavan Potansiyeli tamamlandı · "
+            "Kısa Vade tamamlandı · Orta Vade tamamlandı · Ertesi Gün Tavan Adayları tamamlandı · "
             "Günlük Trade taranıyor · 50 TL Altı taranıyor…"
         )
         daily = self._central_requests["daily_trade"]

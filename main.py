@@ -35,6 +35,10 @@ from tarama_evreni import (
 from profesyonel_karar_sistemi import birinci_asama_uygula, karar_kapilarini_toplu_uygula, risk_ayarlari_oku
 from tahmin_defteri import acik_tahminleri_sonuclandir, model_sagligi, performans_ozeti, sinyal_kaydet, varsayilan_yol
 from saglam_backtest import veri_butunlugu_kontrolu
+from ertesi_gun_tavan import (
+    acik_tavan_tahminlerini_sonuclandir, adaylari_tabloya_cevir,
+    tavan_performans_ozeti, tavan_tahminlerini_kaydet,
+)
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -1017,7 +1021,11 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
     kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
-    potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
+    # Eski 2-6 haftalık potansiyel tablosu bu stratejinin hedefi değildir.
+    # Ertesi seans adayları, hisse taranırken yalnız t kapanışına kadar hesaplanan
+    # günlük özelliklerden üretilir.
+    ertesi_gun_tavan_df = adaylari_tabloya_cevir(results)
+    tavan_tahminlerini_kaydet(ertesi_gun_tavan_df, varsayilan_yol())
     firsatlar_df = bugunun_firsatlari_hazirla(df)
     from bist_evreni import likit_120_sec
     from sade_karar_modeli import elli_tl_adaylari
@@ -1048,6 +1056,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     denetim_df = denetim_tablosu(results)
     kalibrasyon_df = olasilik_kalibrasyonu(sinyal_gecmisi_df)
     tahmin_performans_df, tahmin_detay_df = performans_ozeti()
+    tavan_performans_df, tavan_performans_detay_df = tavan_performans_ozeti()
     backtest_veri_denetimi_df = pd.DataFrame([veri_butunlugu_kontrolu(backtest_islemler)])
     gun_sonu_df = gun_sonu_plani(results)
     faktor_portfoy_df = faktor_model_portfoyu(results, adet=10)
@@ -1068,7 +1077,7 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         strategy_frames = {
             "short_term": kisa_df, "medium_term": orta_df,
             "daily_trade": firsatlar_df, "under_50_tl": under_50_df,
-            "ceiling_potential": potansiyel_df,
+            "ceiling_potential": ertesi_gun_tavan_df,
         }
         strategy_rows = []
         for strategy, scope in SCAN_UNIVERSE.items():
@@ -1112,9 +1121,8 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         if temettu_df is not None and not temettu_df.empty:
             temettu_df.to_excel(writer, index=False, sheet_name="Temettu Takip")
 
-        # Katı filtre sonucu boş olsa bile sayfa oluşturulur.
-        potansiyel_df.to_excel(writer, index=False, sheet_name="2-6 Hafta Potansiyel")
-        yakin_adaylar_df.to_excel(writer, index=False, sheet_name="2-6 Hafta Yakin")
+        # Aday olmasa da açık boş durum gösterebilmek için sayfa oluşturulur.
+        ertesi_gun_tavan_df.to_excel(writer, index=False, sheet_name="Ertesi Gun Tavan Adaylari")
 
         if not faaliyet_df.empty:
             faaliyet_df.to_excel(writer, index=False, sheet_name="Faaliyet Raporlari")
@@ -1124,6 +1132,8 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         kalibrasyon_df.to_excel(writer, index=False, sheet_name="Kalibrasyon")
         tahmin_performans_df.to_excel(writer, index=False, sheet_name="Tahmin Performansi")
         tahmin_detay_df.tail(5000).to_excel(writer, index=False, sheet_name="Tahmin Detay")
+        tavan_performans_df.to_excel(writer, index=False, sheet_name="Tavan Performansi")
+        tavan_performans_detay_df.tail(5000).to_excel(writer, index=False, sheet_name="Tavan Performans Detay")
         backtest_veri_denetimi_df.to_excel(writer, index=False, sheet_name="Backtest Veri Denetimi")
         gun_sonu_df.to_excel(writer, index=False, sheet_name="Gun Sonu Plani")
         faktor_portfoy_df.to_excel(writer, index=False, sheet_name="Faktor Model Portfoyu")
@@ -1208,6 +1218,7 @@ def main():
     baslangic_zamani = time.time()
     # Önce geçmiş açık tahminler yeni verilerle hedef/stop sırasına göre ölçülür.
     acik_tahminleri_sonuclandir()
+    acik_tavan_tahminlerini_sonuclandir()
     print("Borsa Analiz Pro MAX v6.5 PROFESSIONAL TERMINAL başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     scan_scope = normalize_scan_scope(os.getenv("BORSA_TARAMA_EVRENI", ALL_BIST))
