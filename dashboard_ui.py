@@ -172,6 +172,8 @@ class NextDayDashboard(QWidget):
     scan_requested = Signal()
     COLUMNS=["Hisse","Önceki Kapanış","Güncel Fiyat","Günlük Değişim %","Tavan Fiyatı","Tavana Kalan %","%8+ Olasılığı","Tavan Olasılığı","Tahmini En Yüksek Fiyat","Durum"]
     HEADERS=["Hisse","Önceki Kapanış","Güncel","Günlük %","Tavan","Tavana Kalan","%8+ Olasılık","Tavan Olasılığı","Tahmini En Yüksek","Durum"]
+    IPO_COLUMNS=["Hisse","Kotasyon Tarihi","İşlem Günü Sayısı","Halka Arz Fiyatı","Güncel Fiyat","Halka Arzdan Beri Getiri %","Ardışık Tavan Sayısı","Günlük Değişim %","Göreceli Hacim","Tavan Fiyatı","Tavana Kalan %","Momentum Durumu","Risk Durumu","Veri Yeterlilik Seviyesi","Son Değerlendirme Zamanı"]
+    IPO_HEADERS=["Hisse","Kotasyon","Gün","Arz Fiyatı","Güncel","Arzdan Getiri %","Tavan Serisi","Günlük %","RVOL","Tavan","Kalan %","Momentum","Risk","Veri Seviyesi","Değerlendirme"]
     def __init__(self, prediction_path: Path):
         super().__init__(); self.prediction_path=prediction_path; self._records=[]; self._full=pd.DataFrame(); root=QVBoxLayout(self); root.setContentsMargins(10,8,10,8); root.setSpacing(7)
         header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("Ertesi Gün Tavan Adayları"); title.setObjectName("pageTitle"); sub=QLabel("Tarama Evreni: Tüm Aktif BIST"); sub.setObjectName("muted"); titles.addWidget(title); titles.addWidget(sub); header.addLayout(titles); header.addStretch()
@@ -182,6 +184,7 @@ class NextDayDashboard(QWidget):
         main=QHBoxLayout(); main.setSpacing(8); left=QVBoxLayout(); self.tabs=QTabWidget(); self.tables={}
         for key,title in (("strong","Güçlü Adaylar"),("pending","Teyit Bekleyenler"),("risk","Yüksek Risk")):
             table=QTableWidget(); table.setAlternatingRowColors(True); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.verticalHeader().hide(); table.setSortingEnabled(True); table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.cellClicked.connect(lambda row,col,t=table:self._selected(t,row)); self.tabs.addTab(table,title); self.tables[key]=table; self._fill(table, pd.DataFrame(columns=self.COLUMNS))
+        ipo=QTableWidget(); ipo.setAlternatingRowColors(True); ipo.setEditTriggers(QAbstractItemView.NoEditTriggers); ipo.setSelectionBehavior(QAbstractItemView.SelectRows); ipo.verticalHeader().hide(); ipo.setSortingEnabled(True); ipo.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded); ipo.cellClicked.connect(lambda row,col,t=ipo:self._selected(t,row)); self.tabs.addTab(ipo,"Yeni Halka Arzlar"); self.tables["ipo"]=ipo; self._fill(ipo,pd.DataFrame(columns=self.IPO_COLUMNS),self.IPO_COLUMNS,self.IPO_HEADERS)
         left.addWidget(self.tabs,1); main.addLayout(left,7); self.detail=DetailPanel(); self.detail.setMinimumWidth(245); main.addWidget(self.detail,3); root.addLayout(main,1)
         bottom=QHBoxLayout(); perf,perfbox=card("Tahmin Performansı"); self.performance=QLabel("Yerel tahmin deposu bekleniyor"); self.performance.setWordWrap(True); perfbox.addWidget(self.performance); regime,regbox=card("Piyasa ve Sektör Rejimi"); self.regime=QLabel("Veri bekleniyor"); self.regime.setWordWrap(True); regbox.addWidget(self.regime); opened,openbox=card("Açık Tahminler"); self.open_predictions=QLabel("Açık tahmin kaydı bekleniyor"); self.open_predictions.setWordWrap(True); openbox.addWidget(self.open_predictions)
         bottom.addWidget(perf,1); bottom.addWidget(regime,1); bottom.addWidget(opened,1); root.addLayout(bottom); self.refresh_store()
@@ -190,23 +193,27 @@ class NextDayDashboard(QWidget):
     def load_results(self,frame,message=""):
         self.scan.setEnabled(True); self._full=frame.copy() if frame is not None else pd.DataFrame(); self.last_scan.setText("Son Tarama: "+datetime.now().strftime("%H:%M"))
         status=self._full.get("Durum",pd.Series(dtype=str)).astype(str)
-        groups={"strong":self._full[status.isin(["GÜÇLÜ ERTESİ GÜN ADAYI","ERKEN BİRİKİM ADAYI","TAVAN GÖRÜLDÜ"])],"pending":self._full[status.str.contains("TEYİT",na=False)],"risk":self._full[status.str.contains("RİSK|GEÇ KAL|YETERSİZ",na=False)]}
-        for key,data in groups.items(): self._fill(self.tables[key],data)
+        model=self._full.get("Model Yolu",pd.Series("",index=self._full.index)).astype(str)
+        standard=~model.eq("YENI_HALKA_ARZ")
+        groups={"strong":self._full[standard & status.isin(["GÜÇLÜ ERTESİ GÜN ADAYI","ERKEN BİRİKİM ADAYI","TAVAN GÖRÜLDÜ"])],"pending":self._full[standard & status.str.contains("TEYİT",na=False)],"risk":self._full[standard & status.str.contains("RİSK|GEÇ KAL|YETERSİZ|ALINAMADI",na=False)],"ipo":self._full[model.eq("YENI_HALKA_ARZ")]}
+        for key,data in groups.items(): self._fill(self.tables[key],data,self.IPO_COLUMNS,self.IPO_HEADERS) if key=="ipo" else self._fill(self.tables[key],data)
         self.stats.setText(message or ("Sonuç bulunamadı" if self._full.empty else f"{len(self._full)} aday")); self.tabs.setTabText(0,f"Güçlü Adaylar  {len(groups['strong'])}"); self.tabs.setTabText(1,f"Teyit Bekleyenler  {len(groups['pending'])}"); self.tabs.setTabText(2,f"Yüksek Risk  {len(groups['risk'])}")
+        self.tabs.setTabText(3,f"Yeni Halka Arzlar  {len(groups['ipo'])}")
         if not self._full.empty: self.detail.set_row(self._full.iloc[0].to_dict())
         regimes=status if "Piyasa Rejimi" not in self._full else self._full["Piyasa Rejimi"].dropna().astype(str)
         self.regime.setText("BIST rejimi: "+(regimes.mode().iloc[0] if not regimes.empty else "Veri bekleniyor")+"\nPiyasa genişliği ve sektör çubukları: Veri bekleniyor")
         self.refresh_store()
-    def _fill(self,table,data):
-        table.setSortingEnabled(False); table.clear(); table.setColumnCount(len(self.COLUMNS)); table.setHorizontalHeaderLabels(self.HEADERS); table.setRowCount(len(data)); records=data.to_dict("records")
+    def _fill(self,table,data,columns=None,headers=None):
+        columns,headers=columns or self.COLUMNS,headers or self.HEADERS
+        table.setSortingEnabled(False); table.clear(); table.setColumnCount(len(columns)); table.setHorizontalHeaderLabels(headers); table.setRowCount(len(data)); records=data.to_dict("records")
         for r,row in enumerate(records):
-            for c,name in enumerate(self.COLUMNS):
+            for c,name in enumerate(columns):
                 value=row.get(name); text="—" if value is None or (isinstance(value,float) and pd.isna(value)) else f"{value:.2f}" if isinstance(value,(float,int)) else str(value)
-                item=QTableWidgetItem(text); item.setData(Qt.UserRole,row); item.setToolTip(text); item.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter if c in (0,9) else Qt.AlignRight|Qt.AlignVCenter)
-                if c==3: item.setForeground(QColor(COLORS["green"] if float(value or 0)>=0 else COLORS["red"]))
-                if c==9: item.setForeground(QColor(COLORS["orange"] if "RİSK" in text or "BEKL" in text else COLORS["green"]))
+                item=QTableWidgetItem(text); item.setData(Qt.UserRole,row); item.setToolTip(text); item.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter if name in ("Hisse","Durum","Momentum Durumu","Risk Durumu") else Qt.AlignRight|Qt.AlignVCenter)
+                if name in ("Günlük Değişim %","Halka Arzdan Beri Getiri %"): item.setForeground(QColor(COLORS["green"] if float(value or 0)>=0 else COLORS["red"]))
+                if name in ("Durum","Momentum Durumu","Risk Durumu"): item.setForeground(QColor(COLORS["orange"] if "RİSK" in text or "BEKL" in text or "KACTI" in text else COLORS["green"]))
                 table.setItem(r,c,item)
-        header=table.horizontalHeader(); header.setSectionResizeMode(QHeaderView.Stretch); header.setSectionResizeMode(0,QHeaderView.ResizeToContents); header.setSectionResizeMode(9,QHeaderView.ResizeToContents); table.verticalHeader().setDefaultSectionSize(27); table.setSortingEnabled(True)
+        header=table.horizontalHeader(); header.setSectionResizeMode(QHeaderView.ResizeToContents if columns is self.IPO_COLUMNS else QHeaderView.Stretch); header.setSectionResizeMode(0,QHeaderView.ResizeToContents); table.verticalHeader().setDefaultSectionSize(27); table.setSortingEnabled(True)
     def _selected(self,table,row):
         item=table.item(row,0)
         if item: self.detail.set_row(item.data(Qt.UserRole) or {})

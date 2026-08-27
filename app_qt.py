@@ -334,10 +334,11 @@ class SingleWorker(QObject):
     finished = Signal(bool, object, str)
     progress = Signal(str)
 
-    def __init__(self, symbol, mode):
+    def __init__(self, symbol, mode, position=None):
         super().__init__()
         self.symbol = symbol
         self.mode = mode
+        self.position = position or {}
 
     def run(self):
         try:
@@ -369,6 +370,29 @@ class SingleWorker(QObject):
             from canli_kanit_kilidi import strateji_kilidi_uygula
             locked, _ = strateji_kilidi_uygula([result], sinyal_gecmisi_oku())
             result = locked[0]
+
+            # Son kullanici karari yalniz merkezi motor tarafindan uretilir.
+            from merkezi_karar_motoru import DecisionEngine, Pozisyon, karar_girdisi_sozlukten
+            position = Pozisyon(**self.position) if self.position else Pozisyon()
+            result.setdefault("symbol", self.symbol.replace(".IS", ""))
+            result.setdefault("veri_zamani", result.get("veri_tarihi"))
+            result.setdefault("veri_guncel", result.get("veri_islem_gunu_gecikmesi") == 0)
+            central = DecisionEngine().karar_ver(karar_girdisi_sozlukten(result, position))
+            result["merkezi_karar"] = central.as_dict()
+            try:
+                from karar_deposu import KararDeposu
+                repo = KararDeposu(rapor_yolu())
+                previous = repo.son_karar(central.sembol)
+                previous_decision = previous.get("decision") if previous else None
+                change_reason = None
+                if previous_decision and previous_decision != central.karar:
+                    change_reason = "Yeni veri ve karar kapilari sonucu karar degisti"
+                decision_key = f"{central.sembol}:{central.kayit_zamani}:{central.model_surumu}"
+                saved, save_result = repo.karar_ekle(decision_key, central.as_dict(), previous_decision, change_reason)
+                result["karar_kaydi"] = {"basarili": saved, "id_veya_hata": save_result}
+            except Exception as exc:
+                # Karar kaydi sorunu analizi/taramayi durdurmaz.
+                result["karar_kaydi"] = {"basarili": False, "id_veya_hata": str(exc)}
 
             if self.mode == "analysis":
                 from mtf_grafik import grafik_olustur
@@ -832,6 +856,19 @@ class SingleAnalysisPage(QWidget):
         social.addWidget(social_check)
         layout.addLayout(social)
 
+        position = QHBoxLayout()
+        self.quantity = QLineEdit(); self.quantity.setPlaceholderText("Adet (bos: pozisyon yok)")
+        self.average_cost = QLineEdit(); self.average_cost.setPlaceholderText("Ortalama maliyet")
+        self.purchase_date = QLineEdit(); self.purchase_date.setPlaceholderText("Alis tarihi YYYY-AA-GG")
+        self.previously_sold = QLineEdit(); self.previously_sold.setPlaceholderText("Once satilan adet")
+        self.horizon = QComboBox(); self.horizon.addItems(["GUNLUK", "T+1", "KISA", "ORTA"])
+        self.horizon.setCurrentText("KISA")
+        self.max_loss = QLineEdit(); self.max_loss.setPlaceholderText("Azami kayip % (istege bagli)")
+        for widget in (self.quantity, self.average_cost, self.purchase_date, self.previously_sold,
+                       self.horizon, self.max_loss):
+            position.addWidget(widget)
+        layout.addLayout(position)
+
         self.status = QLabel("")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
@@ -842,6 +879,17 @@ class SingleAnalysisPage(QWidget):
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 8, 0)
+
+        self.decision_card = QLabel("KARAR KARTI\nAnaliz icin hisse kodu girin.")
+        self.decision_card.setObjectName("decisionCard")
+        self.decision_card.setWordWrap(True)
+        self.decision_card.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.decision_card.setStyleSheet(
+            "QLabel#decisionCard {background:#111c2f; color:#f7fafc; border:2px solid #2d8cff; "
+            "border-radius:12px; padding:18px; font-size:16px; font-weight:600;}"
+        )
+        self.decision_card.setMinimumHeight(210)
+        content_layout.addWidget(self.decision_card)
 
         self.summary = QLabel(
             "BIST 30 dışı dahil geçerli bir BIST hisse kodu girildiğinde karar, alış bandı, hedef, stop, tahmini süre ve model güveni burada gösterilir."
@@ -901,7 +949,18 @@ class SingleAnalysisPage(QWidget):
             "Veri güncelliği, trend, momentum, hacim, tarihsel kanıt ve risk/getiri değerlendiriliyor..."
         )
         self.research_result.setPlainText("Şirketin doğrulanabilir temel verileri hazırlanıyor...")
-        self.worker = SingleWorker(symbol, "analysis")
+        try:
+            qty = int(self.quantity.text() or 0)
+            cost = float(self.average_cost.text().replace(",", ".")) if self.average_cost.text() else None
+            sold = int(self.previously_sold.text() or 0)
+            max_loss = float(self.max_loss.text().replace(",", ".")) if self.max_loss.text() else None
+        except ValueError:
+            self.button.setEnabled(True)
+            QMessageBox.warning(self, "Pozisyon", "Adet, maliyet ve azami kayip alanlarini sayi olarak girin.")
+            return
+        position = {"adet": qty, "ortalama_maliyet": cost, "alis_tarihi": self.purchase_date.text() or None,
+                    "daha_once_satilan": sold, "vade": self.horizon.currentText(), "azami_kayip_pct": max_loss}
+        self.worker = SingleWorker(symbol, "analysis", position)
         self.worker.progress.connect(self.status.setText)
         self.worker.finished.connect(self.done)
         QTimer.singleShot(0, self.worker.run)
@@ -916,6 +975,24 @@ class SingleAnalysisPage(QWidget):
             return
 
         self.last_result = dict(r)
+        central = r.get("merkezi_karar", {})
+        if central:
+            probability = central.get("olasilik_metni", "")
+            levels = (f"Giris {central.get('giris_alt') or '-'} - {central.get('giris_ust') or '-'} TL | "
+                      f"Hedef {central.get('hedef_1') or '-'} TL | Stop {central.get('stop') or '-'} TL")
+            reasons = "\n".join("- " + x for x in central.get("nedenler", [])[:3]) or "- Zorunlu karar kapilari degerlendirildi."
+            risks = "\n".join("- " + x for x in central.get("riskler", [])[:3]) or "- Kritik risk saptanmadi."
+            changes = "\n".join("- " + x for x in central.get("degisim_kosullari", [])[:3]) or "- Yeni veriyle yeniden hesaplanir."
+            dual = ""
+            if not guvenli_sayi(self.quantity.text()):
+                dual = (f"\nYeni alim: {central.get('yeni_alim_karari')} | "
+                        f"Elinde olan icin: {central.get('elde_olan_karari')}")
+            self.decision_card.setText(
+                f"{central.get('sembol')}  |  {central.get('sunum_karari')}  |  {self.horizon.currentText()}\n"
+                f"Gerceklesme olasiligi: {probability}{dual}\n{levels}\n"
+                f"Risk/Getiri: {central.get('risk_getiri') or '-'} | Net EV: {central.get('net_ev_pct') if central.get('net_ev_pct') is not None else '-'}\n\n"
+                f"Neden?\n{reasons}\n\nRisk nedir?\n{risks}\n\nNe olursa karar degisir?\n{changes}"
+            )
         decision = r.get("yatirim_karari", "İZLE")
         price = guvenli_sayi(r.get("price"))
         buy_low = guvenli_sayi(r.get("onerilen_alis_alt"))
@@ -1331,9 +1408,9 @@ class DailyTradeWorker(QObject):
 
     def run(self):
         try:
-            from bist_evreni import tum_bist_hisseleri
+            from bist_evreni import son_evren_durumu, tum_bist_hisseleri
             from gunluk_trade_motoru import gunluk_trade_analiz
-            rows = []
+            rows, attempted, received, unavailable = [], 0, 0, 0
             symbols = tum_bist_hisseleri()
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
@@ -1344,9 +1421,15 @@ class DailyTradeWorker(QObject):
                     risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
                     sadece_teyitli=self.confirmed_only,
                 )
+                attempted += 1
+                if row.get("Neden Kodu") in {"MISSING_PRICE_DATA", "SYMBOL_MAPPING_FAILED"}: unavailable += 1
+                else: received += 1
                 if not self.confirmed_only or row.get("Sonuç") == "AL ADAYI":
                     rows.append(row)
-            self.finished.emit(True, pd.DataFrame(rows), "Tarama tamamlandı.")
+            warning = son_evren_durumu().get("warning", "")
+            message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Veri alınamayan: {unavailable} | Gösterilen: {len(rows)}"
+            if warning: message += " | UYARI: " + warning
+            self.finished.emit(True, pd.DataFrame(rows), message)
         except Exception:
             self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
 
@@ -1711,25 +1794,32 @@ class Under50Worker(QObject):
 
     def run(self):
         try:
-            from bist_evreni import tum_bist_hisseleri
+            from bist_evreni import son_evren_durumu, tum_bist_hisseleri
             from veri_saglayici import get_daily_ohlcv
-            symbols, rows = tum_bist_hisseleri(), []
+            symbols, rows, attempted, received, unavailable, ipo_count = tum_bist_hisseleri(), [], 0, 0, 0, 0
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
                 self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
+                attempted += 1; got_data = False
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "1y")
+                    got_data = not history.empty
+                    received += int(got_data); unavailable += int(not got_data)
                     candidate = elli_tl_ohlcv_adayi(symbol, history)
                     if candidate:
+                        ipo_count += int(candidate.get("Model Yolu") == "YENI_HALKA_ARZ")
                         rows.append(candidate)
                 except Exception:
-                    continue
+                    if not got_data: unavailable += 1
             frame = pd.DataFrame(rows)
             if not frame.empty:
                 frame = frame.sort_values(["Skor", "Risk/Getiri", "Ortalama İşlem Tutarı"], ascending=False).head(20)
                 frame = frame.drop(columns=["Ortalama İşlem Tutarı"], errors="ignore").reset_index(drop=True)
-            self.finished.emit(True, frame, f"{len(symbols)} BIST hissesi tarandı; en iyi {len(frame)} aday gösteriliyor.")
+            warning = son_evren_durumu().get("warning", "")
+            message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Yeni halka arz: {ipo_count} | Veri alınamayan: {unavailable} | Gösterilen: {len(frame)}"
+            if warning: message += " | UYARI: " + warning
+            self.finished.emit(True, frame, message)
         except Exception:
             self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
 
@@ -1767,13 +1857,15 @@ class NextDayWorker(QObject):
 
     def run(self):
         try:
-            from bist_evreni import tum_bist_hisseleri
+            from bist_evreni import son_evren_durumu, tum_bist_hisseleri
             from ertesi_gun_motoru import erken_aday
+            from tarama_seffafligi import TaramaOzeti
             from tahmin_deposu import TahminDeposu
             from veri_saglayici import get_daily_ohlcv
             symbols, rows = tum_bist_hisseleri(), []
             if not symbols:
                 raise RuntimeError("Aktif BIST evreni yuklenemedi.")
+            summary = TaramaOzeti(aktif_bist_evreni=len(symbols))
             store = TahminDeposu(veri_klasoru() / "tahmin_gecmisi.sqlite3")
             # Endeks/breadth kaynağı doğrulanamadığında rejim uydurulmaz.
             regime = "VERİ YETERSİZ"
@@ -1784,8 +1876,13 @@ class NextDayWorker(QObject):
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "2y")
                     row = erken_aday(symbol, history, regime, kap=None)
-                    if row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}:
-                        rows.append(row)
+                    strong = row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}
+                    if row.get("Model Yolu") == "STANDART" and not strong:
+                        row["Neden Kodu"] = "REJECTED_LOW_SCORE"
+                        row["Eleme Nedeni"] = "Standart T+1 puani aday esiginin altinda"
+                    summary.kaydet(row, not history.empty)
+                    rows.append(row)
+                    if strong:
                         cutoff = row["Veri Zamanı"]
                         try:
                             store.tahmin_ekle({
@@ -1803,13 +1900,20 @@ class NextDayWorker(QObject):
                         except Exception:
                             # Aynı kesim/sembol yeniden taranırsa eski tahmin asla ezilmez.
                             pass
-                except Exception:
-                    continue
+                except Exception as exc:
+                    error = {"Hisse": symbol.replace(".IS", ""), "Durum": "VERİ ALINAMADI",
+                             "Model Yolu": "BELİRLENEMEDİ", "Neden Kodu": "MISSING_PRICE_DATA",
+                             "Eleme Nedeni": str(exc), "Riskler": [str(exc)]}
+                    summary.kaydet(error, False); rows.append(error)
             frame = pd.DataFrame(rows)
             if not frame.empty:
-                frame = frame.sort_values("Referans Skor", ascending=False).head(20).reset_index(drop=True)
-            message = (f"{len(symbols)} aktif BIST hissesi tarandı; {len(frame)} katı eşik adayı bulundu. "
-                       "Kalibre örnek-dışı model yoksa olasılıklar bilinçli olarak boş gösterilir.")
+                frame["Referans Skor"] = pd.to_numeric(frame.get("Referans Skor"), errors="coerce").fillna(0)
+                frame = frame.sort_values("Referans Skor", ascending=False).reset_index(drop=True)
+            evren = son_evren_durumu()
+            message = summary.metin()
+            if evren.get("warning"):
+                message += " | UYARI: " + evren["warning"]
+            message += " | Kalibre model yoksa olasiliklar bilincli olarak bos gosterilir."
             if frame.empty:
                 message += " Bugün güvenilir güçlü hareket adayı bulunamadı."
             self.finished.emit(True, frame, message)

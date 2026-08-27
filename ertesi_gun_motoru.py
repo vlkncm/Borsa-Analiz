@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from fiyat_limitleri import pay_fiyat_limitleri
+from yeni_halka_arz import AYARLAR as IPO_AYARLARI, NEDEN_ACIKLAMALARI, model_yolu, yeni_halka_arz_analizi
 
 
 ADAY_DURUMLARI = {"ERKEN BİRİKİM ADAYI", "GÜÇLÜ ERTESİ GÜN ADAYI", "TEYİT BEKLİYOR", "YÜKSEK RİSK", "VERİ YETERSİZ"}
@@ -92,10 +93,25 @@ def piyasa_rejimi(index_frame: pd.DataFrame, breadth: dict[str, float] | None = 
 
 
 def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any] | None = None,
-               sector_score: float | None = None, calibration: KalibrasyonKaniti | None = None) -> dict[str, Any]:
+               sector_score: float | None = None, calibration: KalibrasyonKaniti | None = None,
+               ipo_info: dict[str, Any] | None = None, as_of=None) -> dict[str, Any]:
+    session_count = 0 if frame is None else len(frame.loc[frame.index <= pd.Timestamp(as_of)] if as_of is not None else frame)
+    path, _level = model_yolu(session_count, IPO_AYARLARI)
+    if path == "YENI_HALKA_ARZ" and session_count > 0:
+        row = yeni_halka_arz_analizi(symbol, frame, regime, ipo_info=ipo_info, kap=kap, as_of=as_of)
+        # Ortak T+1 tablo sozlesmesi; kisa gecmis satiri aday olmasa da gorunur kalir.
+        return {
+            **row,
+            "%8+ Olasılığı": None, "Tavan Olasılığı": None,
+            "Kapanış %8+ Olasılığı": None, "Tahmini En Yüksek Fiyat": None,
+            "Referans Skor": row.get("Momentum Puani", 0),
+            "Olasılık Güvenilir": False, "Model Sürümü": "ipo-kisa-gecmis-v1",
+        }
     f = teknik_ozellikler(frame); kap = kap or {}; calibration = calibration or KalibrasyonKaniti()
     if not f:
-        return {"Hisse": symbol.replace(".IS", ""), "Durum": "VERİ YETERSİZ", "Riskler": ["En az 60 günlük geçerli OHLCV yok"]}
+        return {"Hisse": symbol.replace(".IS", ""), "Durum": "VERİ ALINAMADI", "Model Yolu": "BELİRLENEMEDİ",
+                "Neden Kodu": "MISSING_PRICE_DATA", "Eleme Nedeni": NEDEN_ACIKLAMALARI["MISSING_PRICE_DATA"],
+                "Riskler": ["Geçerli OHLCV yok"]}
     reasons, risks, score = [], [], 0.0
     if 0 < f["ema20_distance"] < .06 and f["ema50_distance"] > 0: score += 14; reasons.append("Trend üzerinde, EMA20'den kopmamış")
     if f["macd_hist"] > 0 and 48 <= f["rsi"] <= 68: score += 12; reasons.append("Dengeli pozitif momentum")
@@ -125,7 +141,9 @@ def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any
             "Tahmini En Yüksek Fiyat": None, "Durum": status, "Referans Skor": round(score, 1),
             "Aday Nedenleri": reasons, "Riskler": risks, "Piyasa Rejimi": regime,
             "Sektör Puanı": sector_score, "Veri Zamanı": str(frame.index[-1]),
-            "Olasılık Güvenilir": calibration.guvenilir, "Model Sürümü": calibration.model_version}
+            "Olasılık Güvenilir": calibration.guvenilir, "Model Sürümü": calibration.model_version,
+            "Model Yolu": "STANDART", "Neden Kodu": "INCLUDED_STANDARD",
+            "Eleme Nedeni": NEDEN_ACIKLAMALARI["INCLUDED_STANDARD"]}
 
 
 def canli_teyit(aday: dict[str, Any], intraday: pd.DataFrame | None, metadata: Any) -> dict[str, Any]:
@@ -146,4 +164,3 @@ def purged_walk_forward_splits(n: int, train_min: int, test_size: int, purge: in
         if train_end and test_start < test_end:
             yield np.arange(train_end), np.arange(test_start, test_end)
         start = test_end
-

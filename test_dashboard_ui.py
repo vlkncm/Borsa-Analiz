@@ -49,6 +49,20 @@ class DashboardUiTests(unittest.TestCase):
         page._selected(page.tables["risk"], 0); self.assertIn("RISK", page.detail.title.text())
         window.close()
 
+    def test_yeni_halka_arz_guclu_olmasa_da_ayri_sekmede_gorunur(self):
+        window = MainWindow(); page = window.next_day
+        frame = pd.DataFrame([{
+            "Hisse":"YENI", "Model Yolu":"YENI_HALKA_ARZ", "Durum":"YENI HALKA ARZ - IZLE",
+            "Kotasyon Tarihi":"2026-08-20", "İşlem Günü Sayısı":6,
+            "Halka Arz Fiyatı":85.4, "Güncel Fiyat":100.0, "Neden Kodu":"REJECTED_LOW_SCORE",
+        }])
+        page.load_results(frame, "1 hisse tarandi")
+        self.assertEqual(4, page.tabs.count())
+        self.assertEqual(1, page.tables["ipo"].rowCount())
+        self.assertEqual("YENI", page.tables["ipo"].item(0,0).text())
+        self.assertEqual(0, page.tables["strong"].rowCount())
+        window.close()
+
     def test_supported_sizes_have_no_horizontal_table_scroll(self):
         window = MainWindow(); window._show_page("next")
         for width, height in ((1366,768),(1600,900),(1920,1080)):

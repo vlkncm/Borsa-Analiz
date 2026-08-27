@@ -191,11 +191,28 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
 
 def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     """50 TL taramasını v10.2 kanonik günlük feature hattıyla hesaplar."""
-    if frame is None or len(frame) < 200:
+    if frame is None or frame.empty or "Close" not in frame:
         return None
     data = frame.copy().dropna(subset=["Close", "High", "Low"])
-    if len(data) < 200:
+    if data.empty:
         return None
+    price = float(pd.to_numeric(data["Close"], errors="coerce").iloc[-1])
+    if not 1 <= price <= 50:
+        return None
+    if len(data) < 60:
+        from yeni_halka_arz import yeni_halka_arz_analizi
+        ipo = yeni_halka_arz_analizi(symbol, data)
+        return {"Hisse": ipo["Hisse"], "Durum": ipo["Durum"], "Mevcut Fiyat": price,
+                "Skor": ipo["Momentum Puani"], "Risk/Getiri": None,
+                "Ortalama İşlem Tutarı": ipo["Ortalama İşlem Tutarı"],
+                "Model Yolu": ipo["Model Yolu"], "Neden Kodu": ipo["Neden Kodu"],
+                "Eleme Nedeni": ipo["Eleme Nedeni"], "Veri Yeterlilik Seviyesi": ipo["Veri Yeterlilik Seviyesi"]}
+    if len(data) < 200:
+        return {"Hisse": symbol.replace(".IS", ""), "Durum": "VERİ GEÇMİŞİ SINIRLI",
+                "Mevcut Fiyat": price, "Skor": 0, "Risk/Getiri": None,
+                "Ortalama İşlem Tutarı": float((data["Close"]*data.get("Volume", 0)).mean()),
+                "Model Yolu": "STANDART", "Neden Kodu": "INSUFFICIENT_HISTORY",
+                "Eleme Nedeni": "50 TL standart modeli için 200 seans gerekli"}
     # RSI, EMA, MACD ve ATR burada yeniden yazılmaz. Masaüstü tarama,
     # backtest ve mobil sözleşmenin dayandığı tek kanonik motor kullanılır.
     from sinyal_pipeline import daily_features
@@ -205,8 +222,6 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     high, low = pd.to_numeric(data["High"], errors="coerce"), pd.to_numeric(data["Low"], errors="coerce")
     volume = pd.to_numeric(data.get("Volume", 0), errors="coerce").fillna(0)
     price = float(close.iloc[-1])
-    if not 1 <= price <= 50:
-        return None
     turnover = float((close * volume).tail(20).mean())
     if not math.isfinite(turnover) or turnover < 5_000_000:
         return None

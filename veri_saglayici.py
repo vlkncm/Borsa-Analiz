@@ -18,6 +18,7 @@ import pandas as pd
 import yfinance as yf
 
 from bist_bulteni import resmi_gunluk_satir
+from sembol_esleme import saglayici_sembolu
 
 _LOCK = threading.RLock()
 ISTANBUL = ZoneInfo("Europe/Istanbul")
@@ -173,6 +174,7 @@ def _bist_ile_birlestir(symbol: str, interval: str, df: pd.DataFrame) -> pd.Data
 
 def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -> pd.DataFrame:
     """yfinance.download uyumlu, kalite kontrollu ve onbellekli indirme."""
+    symbol = saglayici_sembolu(symbol, "yahoo")
     key = json.dumps([symbol, period, interval], ensure_ascii=False)
     cached = _oku(key, _ttl(interval))
     if not cached.empty:
@@ -238,6 +240,7 @@ class YahooPiyasaVeriAdapteri:
     source = "Yahoo Finance (ücretsiz; gecikme garantisi yok)"
 
     def get_daily_ohlcv(self, symbol: str, period: str = "6mo") -> tuple[pd.DataFrame, VeriMetadatasi]:
+        symbol = saglayici_sembolu(symbol, "yahoo")
         fetched = datetime.now(ISTANBUL)
         frame = download(symbol, period=period, interval="1d", progress=False, auto_adjust=False)
         frame = _istanbul_index(frame)
@@ -254,6 +257,7 @@ class YahooPiyasaVeriAdapteri:
         return frame, meta
 
     def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d") -> tuple[pd.DataFrame, VeriMetadatasi]:
+        symbol = saglayici_sembolu(symbol, "yahoo")
         if interval not in {"5m", "15m"}:
             raise ValueError("Intraday aralık yalnızca 5m veya 15m olabilir")
         fetched = datetime.now(ISTANBUL)

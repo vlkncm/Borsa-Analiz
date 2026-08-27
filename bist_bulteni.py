@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from sembol_esleme import normalize_bist_kodu
+
 _LOCK = threading.RLock()
 _BELLEK: dict[str, object] = {}
 _URL = "https://www.borsaistanbul.com/data/thb/{yil}/{ay}/thb{tarih}1.zip"
@@ -18,7 +20,7 @@ _CACHE_FILE = "bist_son_bulten.json"
 
 
 def _sembol_duzelt(symbol: str) -> str:
-    return symbol.upper().removesuffix(".IS").removesuffix(".E")
+    return normalize_bist_kodu(symbol)
 
 
 def bulten_zip_coz(icerik: bytes) -> tuple[date, dict[str, dict[str, float]]]:

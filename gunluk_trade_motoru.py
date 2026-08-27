@@ -20,6 +20,7 @@ from sinyal_pipeline import FORMULA_VERSION
 from trade_kanitlari import (CostConfig, classify_market_regime, decision_gates,
                              expected_value, horizon_probability_evidence, mfe_mae_summary, relative_strength,
                              ranking_score, same_time_rvol)
+from sembol_esleme import SembolEslemeHatasi
 
 STRATEGY_CONFIG = StrategyConfig()
 
@@ -40,8 +41,9 @@ def _fmt_time(value) -> str:
     return value.isoformat(timespec="minutes") if value else "bilinmiyor"
 
 
-def _bos_sonuc(symbol: str, reason: str, metadata=None) -> dict[str, Any]:
+def _bos_sonuc(symbol: str, reason: str, metadata=None, reason_code="INSUFFICIENT_HISTORY") -> dict[str, Any]:
     return {"Hisse": symbol.replace(".IS", ""), "Sonuç": "VERİ YETERSİZ", "Uyarılar": reason,
+            "Neden Kodu": reason_code, "Eleme Nedeni": reason,
             "Veri Kaynağı": getattr(metadata, "source", "bilinmiyor"),
             "Veri Zamanı": _fmt_time(getattr(metadata, "last_bar_at", None)),
             "Veri Gecikmesi": "bilinmiyor", "Kısa Özet": f"{symbol}: {reason}"}
@@ -58,8 +60,10 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     try:
         daily, daily_meta = get_daily_ohlcv(symbol, "6mo", adapter)
         intra, meta = get_intraday_ohlcv(symbol, interval, "5d", adapter)
+    except SembolEslemeHatasi as exc:
+        return _bos_sonuc(symbol, str(exc), reason_code="SYMBOL_MAPPING_FAILED")
     except Exception as exc:
-        return _bos_sonuc(symbol, f"Veri alınamadı: {exc}")
+        return _bos_sonuc(symbol, f"Veri alınamadı: {exc}", reason_code="MISSING_PRICE_DATA")
     if len(daily) < 16 or len(intra) < 3:
         return _bos_sonuc(symbol, "Gösterge hesabı için yetersiz veri", meta)
     if meta.is_stale or intra["Volume"].fillna(0).le(0).all():
