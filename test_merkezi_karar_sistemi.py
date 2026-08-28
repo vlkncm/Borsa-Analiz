@@ -63,7 +63,8 @@ def test_tavanda_ve_hareket_kacmissa_al_yok():
 def test_tknka_benzeri_kisa_gecmis_kaybolmaz_ama_sahte_olasilik_almaz():
     out = DecisionEngine().karar_ver(base(sembol="TKNKA", yeni_halka_arz=True,
         kalibrasyon=Kalibrasyon(), tavanda=True, hareket_kacti=True))
-    assert out.sembol == "TKNKA" and out.karar == "ALMA" and out.olasilik is None
+    assert out.sembol == "TKNKA" and out.karar == "KARAR YOK" and out.olasilik is None
+    assert out.on_degerlendirme
 
 
 def test_kar_al_miktari_pozisyona_gore_hesaplanir():

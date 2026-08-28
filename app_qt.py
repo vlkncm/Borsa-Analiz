@@ -27,11 +27,11 @@ from PySide6.QtWidgets import (
 )
 from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
-    Sidebar, TopHeader,
+    Sidebar, T1T2PerformanceDashboard, TopHeader,
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.2.2"
+APP_VERSION = "10.3.0"
 _CRASH_STREAM = None
 
 
@@ -39,6 +39,12 @@ def uygulama_klasoru() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+
+def paket_kaynak_klasoru() -> Path:
+    """PyInstaller veri dosyalari icin _MEIPASS, kaynak calismada proje kokunu doner."""
+    bundle = getattr(sys, "_MEIPASS", None)
+    return Path(bundle).resolve() if bundle else Path(__file__).resolve().parent
 
 
 def veri_klasoru() -> Path:
@@ -55,8 +61,10 @@ def rapor_yolu() -> Path:
 def tarama_alt_sureci_komutu():
     """Kaynak kod ve PyInstaller EXE için güvenli tarama alt süreci komutu."""
     if getattr(sys, "frozen", False):
-        worker = uygulama_klasoru() / "BorsaTaramaMotoru.exe"
-        return str(worker), []
+        # Paket kendi headless tarama girişini ayrı bir işletim sistemi sürecinde
+        # çalıştırır. Böylece eksik ikinci EXE yüzünden toplu tarama başlamamazlık
+        # etmez; analiz çökse bile ana arayüz süreci korunur.
+        return str(Path(sys.executable).resolve()), ["--headless-scan"]
     return sys.executable, [str(Path(__file__).resolve().with_name("scan_runner.py"))]
 
 
@@ -1408,7 +1416,7 @@ class DailyTradeWorker(QObject):
 
     def run(self):
         try:
-            from bist_evreni import son_evren_durumu, tum_bist_hisseleri
+            from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
             from gunluk_trade_motoru import gunluk_trade_analiz
             rows, attempted, received, unavailable = [], 0, 0, 0
             symbols = tum_bist_hisseleri()
@@ -1857,16 +1865,24 @@ class NextDayWorker(QObject):
 
     def run(self):
         try:
-            from bist_evreni import son_evren_durumu, tum_bist_hisseleri
+            from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
             from ertesi_gun_motoru import erken_aday
             from tarama_seffafligi import TaramaOzeti
             from tahmin_deposu import TahminDeposu
+            from t1t2_tahmin_sistemi import (EveningSnapshotStore, cross_sectional_rank,
+                                             load_artifacts, predict_symbol, settle_pending_snapshots)
             from veri_saglayici import get_daily_ohlcv
             symbols, rows = tum_bist_hisseleri(), []
+            security_types = kap_menkul_turleri()
+            t1_predictions, t2_predictions = [], []
             if not symbols:
                 raise RuntimeError("Aktif BIST evreni yuklenemedi.")
             summary = TaramaOzeti(aktif_bist_evreni=len(symbols))
             store = TahminDeposu(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+            snapshot_store = EveningSnapshotStore(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+            settlement = settle_pending_snapshots(
+                snapshot_store, lambda pending_symbol: get_daily_ohlcv(pending_symbol, "1mo"))
+            artifacts, model_metrics = load_artifacts(paket_kaynak_klasoru() / "models" / "t1t2_reference.json")
             # Endeks/breadth kaynağı doğrulanamadığında rejim uydurulmaz.
             regime = "VERİ YETERSİZ"
             for index, symbol in enumerate(symbols, 1):
@@ -1876,6 +1892,12 @@ class NextDayWorker(QObject):
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "2y")
                     row = erken_aday(symbol, history, regime, kap=None)
+                    if not history.empty:
+                        as_of = history.index[-1]
+                        # Menkul turu kaynaktan kesinlestirilmedigi surece normal pay varsayilmaz.
+                        security_type = security_types.get(symbol, "BELIRSIZ")
+                        t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type))
+                        t2_predictions.append(predict_symbol(symbol, history, as_of, "T+2", artifacts, security_type=security_type))
                     strong = row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}
                     if row.get("Model Yolu") == "STANDART" and not strong:
                         row["Neden Kodu"] = "REJECTED_LOW_SCORE"
@@ -1909,11 +1931,57 @@ class NextDayWorker(QObject):
             if not frame.empty:
                 frame["Referans Skor"] = pd.to_numeric(frame.get("Referans Skor"), errors="coerce").fillna(0)
                 frame = frame.sort_values("Referans Skor", ascending=False).reset_index(drop=True)
+                t1_ranked = cross_sectional_rank(t1_predictions)
+                t2_ranked = cross_sectional_rank(t2_predictions)
+                rank1 = {item["symbol"].replace(".IS", ""): item for item in t1_ranked}
+                rank2 = {item["symbol"].replace(".IS", ""): item for item in t2_ranked}
+                frame["T+1 Sırası"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("rank"))
+                frame["T+2 Sırası"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("rank"))
+                frame["T+1 Güç Skoru"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("ranking_score"))
+                frame["T+2 Güç Skoru"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("ranking_score"))
+                frame["T+1 Yüzdelik"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("percentile"))
+                frame["T+2 Yüzdelik"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("percentile"))
+                frame["Feature Hash"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("feature_hash"))
+                frame["T+1/T+2 Durumu"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("status"))
+                frame["T+1 %5+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_5"))
+                frame["T+1 %7+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_7"))
+                frame["T+1 %8+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_8"))
+                frame["T+1 Tavan Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("limit_up"))
+                frame["T+1 Kapanış %5+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("close_5"))
+                frame["T+2 %5+ Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("max_5"))
+                frame["T+2 %7+ Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("max_7"))
+                frame["T+2 %8+ Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("max_8"))
+                frame["T+2 Tavan Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("limit_up"))
+                frame["T+2 Pozitif Kapanış Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("close_positive"))
+                frame["Hedef Stop'tan Önce T+1"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("target_before_stop"))
+                frame["Hisseye Özel Nedenler"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("reasons", [])))
+                frame["Hisseye Özel Riskler"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("risks", [])))
+                frame["Menkul Türü"] = frame["Hisse"].map(lambda s: security_types.get(str(s)+".IS", "BELIRSIZ"))
+                for prefix, ranks in (("T+1", rank1), ("T+2", rank2)):
+                    frame[f"{prefix} Giriş"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("entry_high"))
+                    frame[f"{prefix} Hedef"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("target_7"))
+                    frame[f"{prefix} Stop"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("stop"))
+                    frame[f"{prefix} Risk/Getiri"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("risk_reward"))
+                    frame[f"{prefix} Net EV"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("net_ev_pct"))
+                    frame[f"{prefix} Seviye Doğrulandı"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("levels_valid", False))
+                # Aksam siralamasi degistirilemez snapshot olarak saklanir.
+                for item in (*t1_ranked, *t2_ranked):
+                    snapshot_store.save(item)
+                duplicate_hashes = pd.Series([p.feature_hash for p in t1_predictions]).duplicated(keep=False)
+                if duplicate_hashes.any():
+                    message_hash = f" | UYARI: {int(duplicate_hashes.sum())} sembolde ayni feature hash"
+                else:
+                    message_hash = " | Feature hashler sembol bazinda ayrik"
             evren = son_evren_durumu()
             message = summary.metin()
             if evren.get("warning"):
                 message += " | UYARI: " + evren["warning"]
             message += " | Kalibre model yoksa olasiliklar bilincli olarak bos gosterilir."
+            message += f" | T+1/T+2 artefakt: {len(artifacts)}/12"
+            message += (f" | Gerçekleşme: {settlement['settled']} işlendi, "
+                        f"{settlement['not_ready']} seans bekliyor")
+            if not frame.empty:
+                message += message_hash
             if frame.empty:
                 message += " Bugün güvenilir güçlü hareket adayı bulunamadı."
             self.finished.emit(True, frame, message)
@@ -1975,7 +2043,7 @@ class MainWindow(QMainWindow):
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
-        self.history = SimpleTable("GEÇMİŞ PERFORMANS", "Geçmiş önerilerin gerçekleşen sonuçları.")
+        self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
@@ -2015,7 +2083,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, self._load_market_cards)
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
-        self.pages.setCurrentWidget(self.home)
+        self.pages.setCurrentWidget(self.next_day)
+        self.sidebar.set_active("next")
 
         self.load_report()
 
@@ -2024,6 +2093,8 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.pages.setCurrentWidget(page)
             self.sidebar.set_active(key)
+            if key == "performance" and hasattr(page, "refresh"):
+                page.refresh()
 
     def _sync_active_page(self, _index):
         current = self.pages.currentWidget()
@@ -2130,7 +2201,7 @@ class MainWindow(QMainWindow):
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
             self.under_50.load(under_frame)
-            self.history.load(sheets.get("Sinyal Gecmisi", pd.DataFrame()).tail(30))
+            self.history.refresh()
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
             )

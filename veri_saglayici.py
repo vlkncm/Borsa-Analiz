@@ -293,6 +293,25 @@ class YahooPiyasaVeriAdapteri:
         return completed, meta
 
 
+class HistoricalDataProvider(YahooPiyasaVeriAdapteri):
+    """Gecmis/aksam analizi; canli teyit yetkisi yoktur."""
+
+
+class DelayedDataProvider(YahooPiyasaVeriAdapteri):
+    """Gecikmesi garanti edilemeyen ucretsiz intraday saglayici."""
+
+
+class RealtimeDataProvider:
+    """Lisansli gercek zamanli saglayicilar icin degistirilebilir adaptör sözlesmesi."""
+    source = "YAPILANDIRILMADI"
+
+    def get_daily_ohlcv(self, symbol: str, period: str = "6mo"):
+        raise RuntimeError("Lisansli RealtimeDataProvider yapilandirilmadi")
+
+    def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d"):
+        raise RuntimeError("Gercek zamanli veri yok; canli teyit kapali")
+
+
 _VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = YahooPiyasaVeriAdapteri()
 
 

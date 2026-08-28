@@ -116,7 +116,7 @@ class TopHeader(QFrame):
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
-    ITEMS = [("home","⌂","Ana Sayfa"),("next","◎","Ertesi Gün Tavan Adayları"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · BIST 30"),("medium","▥","Orta Vade · BIST 30"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
+    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · BIST 30"),("medium","▥","Orta Vade · BIST 30"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
     def __init__(self):
         super().__init__(); self.setObjectName("sidebar"); self.expanded=True; self.setFixedWidth(190)
         self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}
@@ -159,7 +159,9 @@ class DetailPanel(QFrame):
                 try: value=json.loads(value)
                 except Exception: value=[value]
             return value if isinstance(value,(list,tuple)) else []
-        reasons=lines(row.get("Aday Nedenleri")); risks=lines(row.get("Riskler")); missing=[k for k,v in facts if v=="Veri yetersiz"]
+        reasons=lines(row.get("Aday Nedenleri")) or [x.strip() for x in str(row.get("Hisseye Özel Nedenler","")).split("|") if x.strip()]
+        risks=lines(row.get("Riskler")) or [x.strip() for x in str(row.get("Hisseye Özel Riskler","")).split("|") if x.strip()]
+        missing=[k for k,v in facts if v=="Veri yetersiz"]
         chunks=[]
         if reasons: chunks.append("Olumlu\n"+"\n".join("✓ "+str(x) for x in reasons[:4]))
         if "TEYİT" in str(status): chunks.append("Teyit bekleyen\n• Canlı fiyat ve hacim doğrulaması")
@@ -174,17 +176,19 @@ class NextDayDashboard(QWidget):
     HEADERS=["Hisse","Önceki Kapanış","Güncel","Günlük %","Tavan","Tavana Kalan","%8+ Olasılık","Tavan Olasılığı","Tahmini En Yüksek","Durum"]
     IPO_COLUMNS=["Hisse","Kotasyon Tarihi","İşlem Günü Sayısı","Halka Arz Fiyatı","Güncel Fiyat","Halka Arzdan Beri Getiri %","Ardışık Tavan Sayısı","Günlük Değişim %","Göreceli Hacim","Tavan Fiyatı","Tavana Kalan %","Momentum Durumu","Risk Durumu","Veri Yeterlilik Seviyesi","Son Değerlendirme Zamanı"]
     IPO_HEADERS=["Hisse","Kotasyon","Gün","Arz Fiyatı","Güncel","Arzdan Getiri %","Tavan Serisi","Günlük %","RVOL","Tavan","Kalan %","Momentum","Risk","Veri Seviyesi","Değerlendirme"]
+    T1_COLUMNS=["T+1 Sırası","Hisse","Güncel Fiyat","T+1 %7+ Olasılığı","T+1 %8+ Olasılığı","T+1 Tavan Olasılığı","T+1 Giriş","T+1 Hedef","T+1 Stop","T+1 Risk/Getiri","T+1/T+2 Durumu"]
+    T2_COLUMNS=["T+2 Sırası","Hisse","Güncel Fiyat","T+2 %7+ Olasılığı","T+2 %8+ Olasılığı","T+2 Tavan Olasılığı","T+2 Giriş","T+2 Hedef","T+2 Stop","T+2 Risk/Getiri","T+1/T+2 Durumu"]
     def __init__(self, prediction_path: Path):
         super().__init__(); self.prediction_path=prediction_path; self._records=[]; self._full=pd.DataFrame(); root=QVBoxLayout(self); root.setContentsMargins(10,8,10,8); root.setSpacing(7)
-        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("Ertesi Gün Tavan Adayları"); title.setObjectName("pageTitle"); sub=QLabel("Tarama Evreni: Tüm Aktif BIST"); sub.setObjectName("muted"); titles.addWidget(title); titles.addWidget(sub); header.addLayout(titles); header.addStretch()
+        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("YÜKSEK HAREKET RADARI"); title.setObjectName("pageTitle"); sub=QLabel("T+1 / T+2 gün içi %7–10 hareket hazırlığı · Tüm aktif BIST"); sub.setObjectName("muted"); titles.addWidget(title); titles.addWidget(sub); header.addLayout(titles); header.addStretch()
         for text,obj in (("◎ Seans Sonrası","pillBlue"),("● Canlı Teyit","pillGreen")):
             lab=QLabel(text); lab.setObjectName(obj); header.addWidget(lab)
         self.last_scan=QLabel("Son Tarama: —"); self.last_scan.setObjectName("muted"); header.addWidget(self.last_scan); self.scan=QPushButton("Taramayı Başlat"); self.scan.setObjectName("primary"); self.scan.clicked.connect(self.scan_requested.emit); header.addWidget(self.scan); root.addLayout(header)
         self.stats=QLabel("Veri bekleniyor"); self.stats.setObjectName("muted"); root.addWidget(self.stats)
         main=QHBoxLayout(); main.setSpacing(8); left=QVBoxLayout(); self.tabs=QTabWidget(); self.tables={}
-        for key,title in (("strong","Güçlü Adaylar"),("pending","Teyit Bekleyenler"),("risk","Yüksek Risk")):
-            table=QTableWidget(); table.setAlternatingRowColors(True); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.verticalHeader().hide(); table.setSortingEnabled(True); table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.cellClicked.connect(lambda row,col,t=table:self._selected(t,row)); self.tabs.addTab(table,title); self.tables[key]=table; self._fill(table, pd.DataFrame(columns=self.COLUMNS))
-        ipo=QTableWidget(); ipo.setAlternatingRowColors(True); ipo.setEditTriggers(QAbstractItemView.NoEditTriggers); ipo.setSelectionBehavior(QAbstractItemView.SelectRows); ipo.verticalHeader().hide(); ipo.setSortingEnabled(True); ipo.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded); ipo.cellClicked.connect(lambda row,col,t=ipo:self._selected(t,row)); self.tabs.addTab(ipo,"Yeni Halka Arzlar"); self.tables["ipo"]=ipo; self._fill(ipo,pd.DataFrame(columns=self.IPO_COLUMNS),self.IPO_COLUMNS,self.IPO_HEADERS)
+        for key,title,columns in (("t1wide","T+1 Geniş Radar",self.T1_COLUMNS),("t1elite","T+1 Seçkin",self.T1_COLUMNS),("t2wide","T+2 Geniş Radar",self.T2_COLUMNS),("t2elite","T+2 Seçkin",self.T2_COLUMNS),("ceiling","Tavan Hazırlık",self.T1_COLUMNS)):
+            table=QTableWidget(); table.setAlternatingRowColors(True); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.verticalHeader().hide(); table.setSortingEnabled(True); table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.cellClicked.connect(lambda row,col,t=table:self._selected(t,row)); self.tabs.addTab(table,title); self.tables[key]=table; self._fill(table,pd.DataFrame(columns=columns),columns,columns)
+        ipo=QTableWidget(); ipo.setAlternatingRowColors(True); ipo.setEditTriggers(QAbstractItemView.NoEditTriggers); ipo.setSelectionBehavior(QAbstractItemView.SelectRows); ipo.verticalHeader().hide(); ipo.setSortingEnabled(True); ipo.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); ipo.cellClicked.connect(lambda row,col,t=ipo:self._selected(t,row)); self.tabs.addTab(ipo,"Yeni Halka Arzlar"); self.tables["ipo"]=ipo; self._fill(ipo,pd.DataFrame(columns=self.IPO_COLUMNS),self.IPO_COLUMNS,self.IPO_HEADERS)
         left.addWidget(self.tabs,1); main.addLayout(left,7); self.detail=DetailPanel(); self.detail.setMinimumWidth(245); main.addWidget(self.detail,3); root.addLayout(main,1)
         bottom=QHBoxLayout(); perf,perfbox=card("Tahmin Performansı"); self.performance=QLabel("Yerel tahmin deposu bekleniyor"); self.performance.setWordWrap(True); perfbox.addWidget(self.performance); regime,regbox=card("Piyasa ve Sektör Rejimi"); self.regime=QLabel("Veri bekleniyor"); self.regime.setWordWrap(True); regbox.addWidget(self.regime); opened,openbox=card("Açık Tahminler"); self.open_predictions=QLabel("Açık tahmin kaydı bekleniyor"); self.open_predictions.setWordWrap(True); openbox.addWidget(self.open_predictions)
         bottom.addWidget(perf,1); bottom.addWidget(regime,1); bottom.addWidget(opened,1); root.addLayout(bottom); self.refresh_store()
@@ -195,10 +199,20 @@ class NextDayDashboard(QWidget):
         status=self._full.get("Durum",pd.Series(dtype=str)).astype(str)
         model=self._full.get("Model Yolu",pd.Series("",index=self._full.index)).astype(str)
         standard=~model.eq("YENI_HALKA_ARZ")
-        groups={"strong":self._full[standard & status.isin(["GÜÇLÜ ERTESİ GÜN ADAYI","ERKEN BİRİKİM ADAYI","TAVAN GÖRÜLDÜ"])],"pending":self._full[standard & status.str.contains("TEYİT",na=False)],"risk":self._full[standard & status.str.contains("RİSK|GEÇ KAL|YETERSİZ|ALINAMADI",na=False)],"ipo":self._full[model.eq("YENI_HALKA_ARZ")]}
-        for key,data in groups.items(): self._fill(self.tables[key],data,self.IPO_COLUMNS,self.IPO_HEADERS) if key=="ipo" else self._fill(self.tables[key],data)
-        self.stats.setText(message or ("Sonuç bulunamadı" if self._full.empty else f"{len(self._full)} aday")); self.tabs.setTabText(0,f"Güçlü Adaylar  {len(groups['strong'])}"); self.tabs.setTabText(1,f"Teyit Bekleyenler  {len(groups['pending'])}"); self.tabs.setTabText(2,f"Yüksek Risk  {len(groups['risk'])}")
-        self.tabs.setTabText(3,f"Yeni Halka Arzlar  {len(groups['ipo'])}")
+        t1=self._full.sort_values("T+1 Sırası",na_position="last") if "T+1 Sırası" in self._full else self._full
+        t2=self._full.sort_values("T+2 Sırası",na_position="last") if "T+2 Sırası" in self._full else self._full
+        t1type=t1.get("Menkul Türü",pd.Series("",index=t1.index)); t2type=t2.get("Menkul Türü",pd.Series("",index=t2.index))
+        t1elite=t1[(pd.to_numeric(t1.get("T+1 %7+ Olasılığı"),errors="coerce")>=20)&(pd.to_numeric(t1.get("T+1 %8+ Olasılığı"),errors="coerce")>=10)&t1type.eq("NORMAL_PAY")&t1.get("T+1 Seviye Doğrulandı",pd.Series(False,index=t1.index)).fillna(False).astype(bool)&(pd.to_numeric(t1.get("T+1 Net EV"),errors="coerce")>0)].head(5)
+        t2elite=t2[(pd.to_numeric(t2.get("T+2 %7+ Olasılığı"),errors="coerce")>=20)&(pd.to_numeric(t2.get("T+2 %8+ Olasılığı"),errors="coerce")>=10)&t2type.eq("NORMAL_PAY")&t2.get("T+2 Seviye Doğrulandı",pd.Series(False,index=t2.index)).fillna(False).astype(bool)&(pd.to_numeric(t2.get("T+2 Net EV"),errors="coerce")>0)].head(5)
+        ceiling=t1.sort_values("T+1 Tavan Olasılığı",ascending=False,na_position="last").head(20) if "T+1 Tavan Olasılığı" in t1 else t1.head(0)
+        groups={"t1wide":t1.head(30),"t1elite":t1elite,"t2wide":t2.head(30),"t2elite":t2elite,"ceiling":ceiling,"ipo":self._full[model.eq("YENI_HALKA_ARZ")]}
+        for key,data in groups.items():
+            if key=="ipo": self._fill(self.tables[key],data,self.IPO_COLUMNS,self.IPO_HEADERS)
+            else:
+                columns=self.T2_COLUMNS if key.startswith("t2") else self.T1_COLUMNS; self._fill(self.tables[key],data,columns,columns)
+        elite_message = " Bugün güvenilir %7–10 hareket adayı bulunamadı." if t1elite.empty and t2elite.empty else ""
+        self.stats.setText((message or (f"{len(self._full)} hisse sıralandı" if not self._full.empty else "")) + elite_message)
+        for index,(key,label) in enumerate((("t1wide","T+1 Geniş"),("t1elite","T+1 Seçkin"),("t2wide","T+2 Geniş"),("t2elite","T+2 Seçkin"),("ceiling","Tavan Hazırlık"),("ipo","Yeni Halka Arz"))): self.tabs.setTabText(index,f"{label}  {len(groups[key])}")
         if not self._full.empty: self.detail.set_row(self._full.iloc[0].to_dict())
         regimes=status if "Piyasa Rejimi" not in self._full else self._full["Piyasa Rejimi"].dropna().astype(str)
         self.regime.setText("BIST rejimi: "+(regimes.mode().iloc[0] if not regimes.empty else "Veri bekleniyor")+"\nPiyasa genişliği ve sektör çubukları: Veri bekleniyor")
@@ -226,6 +240,46 @@ class NextDayDashboard(QWidget):
             self.performance.setText(f"Toplam tahmin: {total}   ·   %8+ gören: {perf.get('yuzde8_goren',0)}   ·   Tavan gören: {perf.get('tavan_goren',0)}\nPrecision@1 / Precision@3 / 7-30-90 gün: Veri bekleniyor\nYanlış pozitif: {'Veri bekleniyor' if fp is None else f'%{fp:.1f}'}")
             lines=[f"{x.get('symbol','—')}  ·  {x.get('session_date','—')}  ·  {x.get('status','—')}" for x in pending[:4]]; self.open_predictions.setText("\n".join(lines) if lines else "Açık tahmin bulunmuyor")
         except Exception as exc: self.performance.setText("Performans verisi okunamadı: "+str(exc))
+
+
+class T1T2PerformanceDashboard(QWidget):
+    """Değiştirilemez Radar snapshot'larının gerçek T+1/T+2 sonuç ekranı."""
+    COLUMNS=["Tarih","Hisse","Vade","Gerçekleşen Maksimum %","Tavan Gördü","Önceki Sıra","Geniş Radarda","Seçkin Aday"]
+    def __init__(self, database_path: Path):
+        super().__init__(); self.database_path=Path(database_path)
+        root=QVBoxLayout(self); root.setContentsMargins(12,10,12,10); root.setSpacing(8)
+        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("TAHMİN PERFORMANSI"); title.setObjectName("pageTitle")
+        subtitle=QLabel("Yalnız önceden kaydedilmiş, değiştirilemez T+1/T+2 snapshot sonuçları"); subtitle.setObjectName("muted")
+        titles.addWidget(title); titles.addWidget(subtitle); header.addLayout(titles); header.addStretch()
+        refresh=QPushButton("Yenile"); refresh.setObjectName("primary"); refresh.clicked.connect(self.refresh); header.addWidget(refresh); root.addLayout(header)
+        cards=QHBoxLayout(); self.t1=QLabel(); self.t2=QLabel(); self.data=QLabel()
+        for label in (self.t1,self.t2,self.data): label.setObjectName("bottomCard"); label.setWordWrap(True); label.setMinimumHeight(90); cards.addWidget(label,1)
+        root.addLayout(cards)
+        self.notice=QLabel(); self.notice.setObjectName("muted"); self.notice.setWordWrap(True); root.addWidget(self.notice)
+        self.table=QTableWidget(); self.table.setAlternatingRowColors(True); self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows); self.table.verticalHeader().hide(); self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(self.table,1); self.refresh()
+    @staticmethod
+    def _fmt(value, percent=False):
+        if value is None or pd.isna(value): return "—"
+        return f"%{float(value)*100:.1f}" if percent else f"{float(value):.2f}"
+    def refresh(self):
+        try:
+            from t1t2_tahmin_sistemi import EveningSnapshotStore
+            store=EveningSnapshotStore(self.database_path); summary=store.performance_summary(); audit=store.winner_audit()
+            for horizon,label in (("T+1",self.t1),("T+2",self.t2)):
+                item=summary.get("horizons",{}).get(horizon,{})
+                label.setText(f"{horizon} GERÇEK SONUÇ\nÖrnek: {item.get('total',0)} · %7+: {item.get('hit_7',0)} · Tavan: {item.get('hit_limit_up',0)}\nPrecision@3: {self._fmt(item.get('precision_at_3'),True)} · Recall@20: {self._fmt(item.get('recall_at_20'),True)}\nBrier %7: {self._fmt(item.get('brier_7'))}")
+            self.data.setText(f"KAYIT DURUMU\nSonuçlanan snapshot: {summary.get('total',0)}\nGerçek %7+ hareket: {len(audit)}\nTahmin yoksa geçmiş sıra üretilmez")
+            self.notice.setText("Sonuçlar yalnız tahmin tarihinde kaydedilmiş snapshot'larla eşleştirilir; bugünkü veriyle geriye dönük aday oluşturulmaz.")
+            frame=pd.DataFrame(audit,columns=self.COLUMNS); self.table.clear(); self.table.setColumnCount(len(self.COLUMNS)); self.table.setHorizontalHeaderLabels(self.COLUMNS); self.table.setRowCount(len(frame))
+            for row_index,row in frame.iterrows():
+                for column_index,name in enumerate(self.COLUMNS):
+                    value=row.get(name); text="—" if value is None else f"{value:.2f}" if isinstance(value,float) else str(value)
+                    self.table.setItem(row_index,column_index,QTableWidgetItem(text))
+            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeToContents)
+        except Exception as exc:
+            self.notice.setText("Performans verisi okunamadı: "+str(exc)); self.table.setRowCount(0)
 
 
 class PlaceholderPage(QWidget):

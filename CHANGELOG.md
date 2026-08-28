@@ -1,5 +1,13 @@
 # Değişiklik Günlüğü
 
+## 10.3.0
+
+- T+1/T+2 point-in-time özellik, etiketleme, model eğitimi ve kalibrasyon altyapısı eklendi.
+- Tüm BIST için hisseye özel özellik hashleri ve kesitsel güçlü hareket sıralaması eklendi.
+- Yeni halka arz, menkul türü, merkezi sembol eşleme ve veri yetersizliği güvenlikleri korundu.
+- Tahmin snapshot'ları ile gerçekleşmeler SQLite'ta ayrı ve değiştirilemez kayıtlar olarak tutulur.
+- Toplu taramanın kurulu EXE'de eksik worker dosyası yüzünden başlamaması giderildi.
+
 ## 10.2.0
 
 - RSI, EMA/SMA, MACD/MACD-V, ATR, ADX, Bollinger/BBW, VWAP, pivot, hacim ve risk ölçümleri için tek teknik gösterge motoru eklendi.

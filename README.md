@@ -1,4 +1,13 @@
-# Borsa Analiz Pro MAX v10.2.2
+# Borsa Analiz Pro MAX v10.3.0
+
+## v10.3.0 yüksek hareket radarı ve toplu tarama düzeltmesi
+
+- T+1 ve T+2 güçlü hareket tahminleri sembol, tarih, vade, model ve veri sürümüne göre birbirinden ayrıldı.
+- Hisseye özel özellik hashleri, kesitsel BIST sıralaması, kalibrasyon güvenliği ve değiştirilemez SQLite tahmin snapshot'ları eklendi.
+- Yeni halka arzlar kısa veri geçmişi nedeniyle sessizce elenmeden ayrı analiz yolunda değerlendirilir.
+- T+1/T+2 performans ekranı gerçekleşen sonuçları ve sıralama metriklerini SQLite üzerinden gösterir.
+- Paketlenmiş uygulamada toplu taramanın eksik `BorsaTaramaMotoru.exe` nedeniyle başlamaması düzeltildi; ana EXE güvenli headless alt süreç başlatır.
+- Model veya kalibrasyon bulunmadığında sahte olasılık ve kesin karar gösterilmez.
 
 ## v10.2.2 dashboard ve kayıt güvenilirliği güncellemesi
 

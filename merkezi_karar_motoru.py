@@ -120,6 +120,8 @@ class KararSonucu:
     kullanilan_ozellikler: tuple[str, ...]
     eksik_ozellikler: tuple[str, ...]
     kayit_zamani: str
+    seviye_dogrulandi: bool = False
+    on_degerlendirme: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -166,14 +168,17 @@ class DecisionEngine:
             )
             net_ev = ev["net_beklenti_pct"] - g.tahmini_kayma_pct - g.likidite_maliyeti_pct
 
+        level_ok = self._seviyeleri_dogrula(g, levels, rr)
         critical = g.tavanda or not g.likit or g.kritik_negatif_haber or g.hareket_kacti
         market_ok = g.piyasa_rejimi.upper() not in {"RISK_OFF", "RISKten KACIS", "BILINMIYOR"}
         regime_ok = market_ok and g.sektor_destekliyor is not False
         al_ok = all((temel_veri, seviyeler_var, calibrated, net_ev is not None and net_ev > 0,
-                     rr is not None and rr >= self.min_rr, regime_ok, not critical,
+                     level_ok, rr is not None and rr >= self.min_rr, regime_ok, not critical,
                      not g.asiri_uzamis, not g.trend_bozuldu))
 
-        if not temel_veri or not seviyeler_var:
+        if not temel_veri or not seviyeler_var or not level_ok:
+            yeni = "KARAR YOK"
+        elif not calibrated:
             yeni = "KARAR YOK"
         elif al_ok:
             yeni = "AL"
@@ -184,7 +189,9 @@ class DecisionEngine:
         main = holder if g.pozisyon.var else yeni
         profit_pct, profit_qty = self._profit_take(g, holder, hedef1, atr)
         reasons, risks, changes = self._explain(g, main, calibrated, net_ev, rr, hedef1, stop)
-        if main == "ALMA" and not critical and temel_veri and (not calibrated or (net_ev is not None and net_ev >= 0)):
+        if not calibrated and temel_veri and level_ok:
+            presentation = "ON DEGERLENDIRME - KALIBRE EDILMEMIS"
+        elif main == "ALMA" and not critical and temel_veri and net_ev is not None and net_ev >= 0:
             presentation = "IZLE - uygun giris/teyit bekle"
         elif main == "KARAR YOK":
             presentation = "KARAR YOK - GUVENILIR VERI YETERSIZ"
@@ -205,12 +212,16 @@ class DecisionEngine:
             veri_zamani=g.veri_zamani, model_surumu=g.model_surumu,
             kullanilan_ozellikler=tuple(sorted(g.ozellikler)), eksik_ozellikler=g.eksik_ozellikler,
             kayit_zamani=datetime.now(timezone.utc).isoformat(),
+            seviye_dogrulandi=level_ok, on_degerlendirme=not calibrated and temel_veri and level_ok,
         )
 
     def _seviyeler(self, g: KararGirdisi, atr: float):
         price = g.fiyat
-        support = g.destek if g.destek and 0 < g.destek <= price * 1.03 else price - atr
-        resistance = g.direnc if g.direnc and g.direnc > price else price + 2.2 * atr
+        # Uzak, başka vadeye ait destek/direnç kısa-vade seviyesine taşınmaz.
+        support = g.destek if g.destek and price-2.5*atr <= g.destek <= price * 1.02 else price - atr
+        horizon_cap = {"GUNLUK": .04, "T+1": .08, "T+2": .12, "KISA": .25, "ORTA": .50}.get(g.vade.upper(), .25)
+        resistance = (g.direnc if g.direnc and price < g.direnc <= price*(1+horizon_cap)
+                      else price + 2.2 * atr)
         entry_low = max(.01, min(price, support + .15 * atr))
         entry_high = min(price + .25 * atr, max(price, support + .45 * atr))
         stop = min(entry_low - .2 * atr, support - .65 * atr)
@@ -220,6 +231,17 @@ class DecisionEngine:
             entry_low, entry_high, target1, target2, stop, stop + .25 * atr,
             price - 1.8 * atr, price - 1.2 * atr,
         ))
+
+    @staticmethod
+    def _seviyeleri_dogrula(g, levels, rr):
+        entry_low, entry_high, target, _target2, stop, *_ = levels
+        if any(value is None for value in (entry_low, entry_high, target, stop, rr)):
+            return False
+        applicable_entry = entry_high
+        width_pct = (entry_high-entry_low)/max(g.fiyat, .01)
+        max_width = {"GUNLUK": .025, "T+1": .035, "T+2": .05, "KISA": .08, "ORTA": .12}.get(g.vade.upper(), .08)
+        return (entry_low <= entry_high and stop < applicable_entry < target and
+                width_pct <= max_width and .5 <= rr <= 8.0)
 
     def _holder_decision(self, g, calibrated, net_ev, target, stop):
         p = g.pozisyon
@@ -254,11 +276,23 @@ class DecisionEngine:
     @staticmethod
     def _explain(g, decision, calibrated, net_ev, rr, target, stop):
         reasons, risks, changes = [], [], []
+        features = g.ozellikler
         if decision == "AL": reasons += ["Kalibre edilmis kanit ve pozitif masraf sonrasi beklenti.", "Risk/getiri ve giris bolgesi uygun."]
         elif decision == "KAR AL": reasons += ["Mevcut kar geri verilme riski artiyor.", "Kademeli azaltim toplam riski dusuruyor."]
         elif decision == "SAT": reasons += ["Pozisyonun ana risk veya stop kosulu dogrulandi."]
-        elif decision == "KARAR YOK": reasons += ["Guvenilir karar icin zorunlu veri veya kalibrasyon eksik."]
+        elif decision == "KARAR YOK": reasons += ["T+1/T+2 modeli hazir veya kalibre degil; yatirim karari uretilmedi."]
         else: reasons += ["Yeni alim icin tum zorunlu kapilar gecilmedi."]
+        # Genel fallback yerine sembolun gercek, en guclu olculebilir kanitlari.
+        rvol = features.get("relative_volume", features.get("volume_ratio"))
+        ret5 = features.get("ret_5")
+        close_location = features.get("close_location")
+        if isinstance(rvol, (int, float)) and math.isfinite(float(rvol)):
+            reasons.append(f"Goreceli hacim {float(rvol):.2f}x.")
+        if isinstance(ret5, (int, float)) and math.isfinite(float(ret5)):
+            value = float(ret5) * (100 if abs(float(ret5)) <= 1 else 1)
+            reasons.append(f"Son 5 islem gunu getirisi %{value:.2f}.")
+        if isinstance(close_location, (int, float)) and math.isfinite(float(close_location)):
+            reasons.append(f"Kapanis gunluk araligin %{float(close_location)*100:.0f} seviyesinde.")
         if not calibrated: risks.append("Olasilik kalibre degil; yuzde gosterilmez.")
         if g.tavanda: risks.append("Hisse tavanda; emrin gerceklesmesi dusuk olabilir.")
         if g.asiri_uzamis or g.hareket_kacti: risks.append("Hareket baslamis; gec giris riski yuksek.")
@@ -274,7 +308,8 @@ def karar_girdisi_sozlukten(item: Mapping[str, Any], pozisyon: Pozisyon | None =
     evidence_n = int(item.get("karar_kanit_ornegi") or item.get("kisa_ornek") or 0)
     p = item.get("dogrulanmis_olasilik")
     p = float(p) / (100 if p is not None and float(p) > 1 else 1) if p is not None else None
-    calibrated = bool(p is not None and evidence_n >= 30)
+    # Eski sezgisel/dogrulama puani kalibre T+1/T+2 olasiligi sayilmaz.
+    calibrated = bool(item.get("olasilik_kalibre_edildi", False) and p is not None and evidence_n >= 30)
     cal = Kalibrasyon(kalibre=calibrated, ornek_sayisi=evidence_n,
                       hedef_once_stop=p, stop_once_hedef=(1-p if calibrated else None))
     return KararGirdisi(
