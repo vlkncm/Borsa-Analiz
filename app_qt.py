@@ -29,6 +29,10 @@ from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
     Sidebar, T1T2PerformanceDashboard, TopHeader,
 )
+from responsive_ui import (
+    AnalysisContext, AnalysisDetailWindow, BaseAnalysisPage, PROFILE_COMPACT,
+    ResponsiveResultTable, profile_for_width,
+)
 
 APP_NAME = "Borsa Analiz Pro MAX"
 APP_VERSION = "10.3.0"
@@ -450,84 +454,50 @@ class InfoWorker(QObject):
             self.finished.emit(False, {}, traceback.format_exc())
 
 
-class SimpleTable(QWidget):
+class SimpleTable(BaseAnalysisPage):
     row_selected = Signal(object)
 
-    def __init__(self, title, subtitle=""):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title_label = QLabel(title)
-        title_label.setObjectName("pageTitle")
-        layout.addWidget(title_label)
-        if subtitle:
-            sub = QLabel(subtitle)
-            sub.setWordWrap(True)
-            sub.setObjectName("subText")
-            layout.addWidget(sub)
-        self.info = QLabel("Henüz analiz yapılmadı.")
-        self.info.setObjectName("subText")
-        layout.addWidget(self.info)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.setWordWrap(False)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.cellDoubleClicked.connect(self._emit_selected_row)
-        layout.addWidget(self.table, 1)
-        self._data = pd.DataFrame()
+    def __init__(self, title, subtitle="", analysis_id=None, analysis_type="Hisse"):
+        slug=analysis_id or "analysis_"+"".join(ch.lower() if ch.isalnum() else "_" for ch in title).strip("_")
+        super().__init__(slug,title,subtitle,analysis_type=analysis_type)
+        self.info=self.state_widget; self._data=pd.DataFrame(); self._title=title
+        self.table.detail_requested.connect(lambda record,_context:self.row_selected.emit(record))
 
     def _emit_selected_row(self, row, _column):
-        marker = self.table.item(row, 0)
-        source_row = marker.data(Qt.UserRole) if marker is not None else row
-        if source_row is not None and 0 <= int(source_row) < len(self._data):
-            self.row_selected.emit(self._data.iloc[int(source_row)].to_dict())
+        record=self.table.record_for_visual_row(row)
+        if record: self.row_selected.emit(record)
+
+    def _preferred_columns(self, columns):
+        title=self._title.casefold()
+        if "kısa" in title:
+            preferred=["Hisse","Fiyat","Güncel Fiyat","Hedef","Stop","Beklenen Süre","Model Olasılığı %","Yatırım Kararı","Karar"]
+        elif "orta" in title:
+            preferred=["Hisse","Fiyat","Güncel Fiyat","Hedef","Temel Puan","Risk %","Beklenen Süre","Yatırım Kararı","Karar"]
+        elif "50 tl" in title:
+            preferred=["Hisse","Fiyat","Güncel Fiyat","T+1 %7+ Olasılığı","T+2 %7+ Olasılığı","Likidite","Risk %","Yatırım Kararı","Karar"]
+        elif "fon" in title:
+            preferred=["Fon","Fon Kodu","Güncel Değer","Günlük Getiri %","Aylık Getiri %","Risk","Fon Türü","Karar"]
+        elif "trade" in title or "aday" in title:
+            preferred=["Hisse","Hisse / Karar","Fiyat","Güncel Fiyat","Alış Bandı","Giriş","Hedef","Stop","Yükseliş %","Olasılık / Süre","Risk/Getiri","Karar","Sonuç"]
+        else:
+            preferred=["Hisse","Fon","Fiyat","Güncel Fiyat","Hedef","Stop","Risk %","Yatırım Kararı","Karar","Durum"]
+        selected=[]
+        for name in preferred:
+            if name in columns and name not in selected: selected.append(name)
+        for name in columns:
+            if name not in selected and len(selected)<8: selected.append(name)
+        return selected[:8]
 
     def load(self, df):
         if df is None:
             df = pd.DataFrame()
         self._data = df.reset_index(drop=True).copy()
-        self.table.setUpdatesEnabled(False)
-        self.table.setSortingEnabled(False)
-        self.table.clear()
-        self.table.setRowCount(len(df))
-        self.table.setColumnCount(len(df.columns))
-        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns])
-        for r, (_, row) in enumerate(df.iterrows()):
-            for c, value in enumerate(row):
-                if pd.isna(value):
-                    text = "-"
-                elif isinstance(value, float):
-                    text = f"{value:.2f}"
-                else:
-                    text = str(value)
-                item = QTableWidgetItem(text)
-                item.setData(Qt.UserRole, r)
-                column_name = str(df.columns[c])
-                item.setToolTip(text)
-                if column_name in {"Yatırım Kararı", "İşlem Durumu", "Broker Aksiyon"}:
-                    if "AL" in text and "ALMA" not in text:
-                        item.setForeground(QColor("#22c55e"))
-                    elif "ALMA" in text or "SAT" in text:
-                        item.setForeground(QColor("#ef4444"))
-                    elif "BEKLE" in text or "TUT" in text:
-                        item.setForeground(QColor("#f59e0b"))
-                elif column_name in {"Sinyal Güveni", "Fırsat Seviyesi"}:
-                    if "ÇOK YÜKSEK" in text or "ÇOK GÜÇLÜ" in text:
-                        item.setForeground(QColor("#22c55e"))
-                    elif "YÜKSEK" in text or "GÜÇLÜ" in text:
-                        item.setForeground(QColor("#38bdf8"))
-                self.table.setItem(r, c, item)
-        self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(28)
-        self.table.setUpdatesEnabled(True)
-        self.table.viewport().update()
-        self.info.setText(f"Gösterilen hisse: {len(df)}")
+        compact=self._preferred_columns(list(df.columns)); standard=compact+([c for c in df.columns if c not in compact][:1])
+        display_columns=standard[:9]
+        self.table.configure_columns(compact,standard,display_columns); self.table.load_frame(df,display_columns,display_columns)
+        self.summary_bar.update_metrics({"Taranan":len(df),"Geniş Radar":len(df),"Seçkin":"—","Güçlü":"—","Teyit":"—","Veri Zamanı":datetime.now().strftime("%H:%M")})
+        if df.empty: self.info.set_empty()
+        else: self.info.set_ready(f"Gösterilen sonuç: {len(df)} · Satıra çift tıklayın veya Detay düğmesini kullanın.")
 
 
 class StockDetailDialog(QDialog):
@@ -646,25 +616,12 @@ class StockDetailDialog(QDialog):
 class SearchableTable(SimpleTable):
     def __init__(self, title, subtitle=""):
         super().__init__(title, subtitle)
-        self.search = QLineEdit()
+        self.search = self.filter_bar.search
         self.search.setPlaceholderText("Hisse veya karar ara... (örnek: ASELS, AL, TUT)")
-        self.search.setClearButtonEnabled(True)
-        self.search.textChanged.connect(self.apply_filter)
-        self.layout().insertWidget(3, self.search)
 
     def apply_filter(self, text):
-        needle = str(text or "").strip().casefold()
-        visible = 0
-        for row in range(self.table.rowCount()):
-            haystack = " ".join(
-                self.table.item(row, col).text()
-                for col in range(self.table.columnCount())
-                if self.table.item(row, col) is not None
-            ).casefold()
-            show = not needle or needle in haystack
-            self.table.setRowHidden(row, not show)
-            visible += int(show)
-        self.info.setText(f"Gösterilen / toplam: {visible} / {self.table.rowCount()}")
+        visible=self.table.apply_filter(text)
+        self.info.set_ready(f"Gösterilen / toplam: {visible} / {self.table.rowCount()}")
 
 
 class InvestmentTerminalPage(QWidget):
@@ -730,12 +687,11 @@ class InvestmentTerminalPage(QWidget):
         self.tabs.addTab(self.avoid, "RİSKLİ / UZAK DUR")
         self.tabs.addTab(self.onay, "YÜKSEK ONAY")
         self.tabs.addTab(self.tum, "TÜM BİST / ARAMA")
-        for table in (self.buy, self.wait, self.avoid, self.onay, self.tum):
-            table.row_selected.connect(self.show_stock_detail)
+        self.responsive_layout=True; self.analysis_id="investment_terminal"
         layout.addWidget(self.tabs, 1)
 
     def show_stock_detail(self, data):
-        StockDetailDialog(data, self).exec()
+        self.tum.open_detail(data, AnalysisContext("investment_terminal").with_record(data))
 
     def update_summary(self, path: Path, counts, total=0, conviction=0):
         when = datetime.fromtimestamp(path.stat().st_mtime).strftime("%d.%m.%Y %H:%M") if path.exists() else "-"
@@ -1227,6 +1183,7 @@ class SelectedInfoPage(QWidget):
 class TrackPage(QWidget):
     def __init__(self):
         super().__init__()
+        self.responsive_layout=True; self.analysis_id="portfolio"; self._detail_window=AnalysisDetailWindow(self)
         from takip_modulu import takip_listesini_oku, takip_listesini_yaz, takip_fiyatlarini_getir
         self.read_list = takip_listesini_oku
         self.write_list = takip_listesini_yaz
@@ -1249,10 +1206,9 @@ class TrackPage(QWidget):
         top.addWidget(add)
         top.addWidget(refresh)
         layout.addLayout(top)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table = ResponsiveResultTable("portfolio")
+        self.table.set_context(AnalysisContext("portfolio",analysis_type="Hisse"))
+        self.table.detail_requested.connect(self._detail_window.show_record)
         layout.addWidget(self.table, 1)
         self.show_symbols()
 
@@ -1280,21 +1236,18 @@ class TrackPage(QWidget):
         self.show_symbols()
 
     def load(self, df):
-        self.table.clear()
-        self.table.setRowCount(len(df))
-        self.table.setColumnCount(len(df.columns) + 1)
-        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns] + ["İşlem"])
+        df=df.reset_index(drop=True).copy(); df["İşlem"]="Sil"
+        preferred=[name for name in ("Hisse","Adet","Maliyet","Güncel","Güncel Fiyat","Kâr/Zarar","Ana Karar","Kâr Alma Miktarı","İşlem") if name in df.columns]
+        if not preferred: preferred=list(df.columns[:8])
+        self.table.configure_columns(preferred,preferred,list(df.columns)); self.table.load_frame(df)
         for r, (_, row) in enumerate(df.iterrows()):
-            for c, value in enumerate(row):
-                self.table.setItem(r, c, QTableWidgetItem(str(value)))
             symbol = normalize_symbol(row.get("Hisse", ""))
             remove_button = QPushButton("SİL")
             remove_button.setToolTip(f"{symbol.replace('.IS', '')} hissesini takip listesinden çıkar")
             remove_button.clicked.connect(lambda checked=False, value=symbol: self.remove(value))
-            self.table.setCellWidget(r, len(df.columns), remove_button)
-        self.table.horizontalHeader().setSectionResizeMode(
-            len(df.columns), QHeaderView.ResizeToContents
-        )
+            self.table.setCellWidget(r, list(df.columns).index("İşlem"), remove_button)
+    def resizeEvent(self,event):
+        super().resizeEvent(event); self.table.apply_profile(profile_for_width(self.width()))
 
 
 class FundWorker(QObject):
@@ -1317,6 +1270,7 @@ class FundWorker(QObject):
 class FundAnalysisPage(QWidget):
     def __init__(self):
         super().__init__()
+        self.responsive_layout=True; self.analysis_id="fund_analysis"
         self.thread = None
         self.worker = None
         layout = QVBoxLayout(self)
@@ -1353,7 +1307,7 @@ class FundAnalysisPage(QWidget):
         self.selection = QTextEdit()
         self.selection.setReadOnly(True)
         self.selection.setObjectName("analysisText")
-        self.selection.setMinimumHeight(310)
+        self.selection.setMinimumHeight(64); self.selection.setMaximumHeight(105)
         self.selection.setPlainText(
             "Tarama sonunda şartları geçen en fazla 3 risk-ayarlı fon adayı; kurum, kademeli alım, 2-3 aylık hedef ve çıkış koşuluyla gösterilir."
         )
@@ -1362,7 +1316,7 @@ class FundAnalysisPage(QWidget):
             "Yüksek Getiri ve Fon Karar Adayları",
             "Tablo puana göre sıralanır. Bir aylık yükselişi aşırı hızlanan fonlarda 'kovalama' uyarısı verilir.",
         )
-        self.table.row_selected.connect(self.show_detail)
+        self.table.table.set_context(AnalysisContext("fund_analysis",analysis_type="Fon"))
         layout.addWidget(self.table, 1)
 
     def run(self):
@@ -1402,7 +1356,7 @@ class FundAnalysisPage(QWidget):
         self.status.setText(f"Kaynak: {message} | Uygun fon: {len(frame)} | 20%+ uç senaryo adayı: {strong}")
 
     def show_detail(self, data):
-        StockDetailDialog(data, self, show_chart=False).exec()
+        self.table.open_detail(data, AnalysisContext("fund_analysis",analysis_type="Fon").with_record(data))
 
 
 class DailyTradeWorker(QObject):
@@ -1446,28 +1400,30 @@ class DailyTradePage(QWidget):
     """Gecikme ve kanıt durumunu gizlemeden sunan günlük trade karar-destek sayfası."""
     def __init__(self):
         super().__init__()
+        self.responsive_layout = True
+        self.analysis_id = "daily_trade"
         self.setObjectName("dailyTradePage")
         self.thread = None
         self.worker = None
         self.results = pd.DataFrame()
         self.report_fallback = pd.DataFrame()
         self._detail_records = []
-        self.setMinimumWidth(760)
+        self.setMinimumWidth(640)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(12, 9, 12, 9); layout.setSpacing(6)
         header = QFrame(); header.setObjectName("dailyHeader")
         header_layout = QVBoxLayout(header); header_layout.setContentsMargins(16, 12, 16, 12)
-        eyebrow = QLabel("CODEX İÇİN KOYU ARAYÜZ TASARIMI"); eyebrow.setObjectName("eyebrow")
+        self.eyebrow = QLabel("YÜKSEK HAREKET RADARI"); self.eyebrow.setObjectName("eyebrow")
         heading = QLabel("Borsa Analiz Pro MAX"); heading.setObjectName("dailyHeading")
         subtitle = QLabel("Günlük Trade  ·  Karar destek ve kâğıt işlem ekranı"); subtitle.setObjectName("dailySubtitle")
-        header_layout.addWidget(eyebrow); header_layout.addWidget(heading); header_layout.addWidget(subtitle)
-        nav = QHBoxLayout(); nav.addStretch()
+        header_layout.addWidget(self.eyebrow); header_layout.addWidget(heading); header_layout.addWidget(subtitle)
+        nav = QHBoxLayout(); nav.addStretch(); self.nav_buttons=[]
         for caption, target in (("Günlük Trade", self), ("Kısa Vade", None), ("Orta Vade", None), ("Tek Hisse", None)):
             button = QPushButton(caption); button.setObjectName("dailyNavActive" if target is self else "dailyNav")
             if caption == "Kısa Vade": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().short_term))
             elif caption == "Orta Vade": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().medium_term))
             elif caption == "Tek Hisse": button.clicked.connect(lambda: self.window().pages.setCurrentWidget(self.window().single))
-            nav.addWidget(button)
+            nav.addWidget(button); self.nav_buttons.append(button)
         header_layout.addLayout(nav); layout.addWidget(header)
         warning = QLabel(
             "Karar-destek ve kâğıt işlem ekranıdır; gerçek emir göndermez. Yahoo intraday veri ücretsizdir, "
@@ -1516,7 +1472,7 @@ class DailyTradePage(QWidget):
         self.detail = QLabel("Bir aday seçildiğinde net beklenti, risk/getiri, göreceli güç, RVOL ve olasılık kanıtı burada gösterilir.")
         self.detail.setObjectName("analysisText")
         self.detail.setWordWrap(True)
-        self.detail.setMinimumHeight(112)
+        self.detail.setMinimumHeight(52); self.detail.setMaximumHeight(72); self.detail.hide()
         self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.detail)
         self.paper_button = QPushButton("SEÇİLİ SATIRI KÂĞIT İŞLEM OLARAK KAYDET")
@@ -1644,6 +1600,10 @@ class DailyTradePage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        compact=profile_for_width(self.width())==PROFILE_COMPACT
+        self.eyebrow.setVisible(not compact)
+        for button in self.nav_buttons: button.setVisible(not compact)
+        self.table.set_view_profile(profile_for_width(self.width()))
         self._resize_trade_columns()
 
     def _resize_trade_columns(self):
@@ -1687,6 +1647,8 @@ class HomePage(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.responsive_layout=True; self.analysis_id="daily_trade"
+        self.responsive_layout=True; self.analysis_id="home"
         layout = QVBoxLayout(self); layout.setContentsMargins(16, 12, 16, 12); layout.setSpacing(10)
         top = QFrame(); top.setObjectName("topStrip"); top_box = QHBoxLayout(top)
         self.index_value = QLabel("BIST 100\nVeri bekleniyor"); self.index_value.setObjectName("topMetric")
@@ -1705,19 +1667,19 @@ class HomePage(QWidget):
         self.trade_button = QPushButton("BUGÜNÜN TRADE\nADAYLARINI BUL\nEn iyi 5 hisseyi analiz et"); self.trade_button.setObjectName("heroButton")
         self.trade_button.clicked.connect(self.trade_requested.emit); summary_box.addWidget(self.trade_button, 1); layout.addWidget(summary)
 
-        content = QHBoxLayout(); tables = QGridLayout(); tables.setSpacing(8); self.preview_tables = {}
-        for column, (key, caption) in enumerate((("trade", "GÜNLÜK TRADE – EN İYİ 5"), ("short", "KISA VADE – EN İYİ 5"), ("medium", "ORTA VADE – EN İYİ 5"))):
+        content = QHBoxLayout(); self.preview_tabs=QTabWidget(); self.preview_tables = {}; self.preview_panels={}
+        for key, caption in (("trade", "GÜNLÜK TRADE – EN İYİ 5"), ("short", "KISA VADE – EN İYİ 5"), ("medium", "ORTA VADE – EN İYİ 5")):
             panel = QFrame(); panel.setObjectName("dashboardPanel"); box = QVBoxLayout(panel)
             label = QLabel(caption); label.setObjectName("tableTitle"); box.addWidget(label)
             table = QTableWidget(0, 6); table.setHorizontalHeaderLabels(["Hisse", "Alım", "Hedef", "Stop", "Potansiyel", "Skor"])
             table.verticalHeader().setVisible(False); table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            box.addWidget(table); self.preview_tables[key] = table; tables.addWidget(panel, 0, column)
-        content.addLayout(tables, 4)
-        rail = QVBoxLayout()
+            box.addWidget(table); self.preview_tables[key] = table; self.preview_panels[key]=panel; self.preview_tabs.addTab(panel,caption.split(" – ")[0].title())
+        content.addWidget(self.preview_tabs,4)
+        self.rail = QWidget(); rail = QVBoxLayout(self.rail); rail.setContentsMargins(0,0,0,0)
         self.portfolio_summary = QLabel("TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: 0\nGüncel değer: —"); self.portfolio_summary.setObjectName("sidePanel")
         self.performance = QLabel("SON PERFORMANS (30 İŞLEM)\n\nHenüz sonuçlanmış işlem yok"); self.performance.setObjectName("sidePanel")
-        rail.addWidget(self.portfolio_summary); rail.addWidget(self.performance); rail.addStretch(); content.addLayout(rail, 1)
+        rail.addWidget(self.portfolio_summary); rail.addWidget(self.performance); rail.addStretch(); content.addWidget(self.rail, 1)
         layout.addLayout(content, 1)
         footer = QLabel("Veriler yaklaşık 15 dakika gecikmeli olabilir. Bu uygulama yatırım tavsiyesi değildir."); footer.setObjectName("footerText"); layout.addWidget(footer)
 
@@ -1734,6 +1696,9 @@ class HomePage(QWidget):
         for key, caption, frame in (("trade", "Günlük Trade", trade), ("short", "Kısa Vade", short), ("medium", "Orta Vade", medium)):
             self.counts[key].setText(f"{caption}\n{len(frame)}\nuygun aday"); self._load_preview(key, frame)
         self.counts["growth"].setText(f"Büyüme Adayları\n{growth_count}\nuygun aday")
+    def resizeEvent(self,event):
+        super().resizeEvent(event); compact=profile_for_width(self.width())==PROFILE_COMPACT
+        self.rail.setVisible(not compact)
 
 
 class DecisionPage(SimpleTable):
@@ -2023,6 +1988,7 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon)))
 
         self.scan_process = None
+        self._last_view_profile = None
         self._scan_stdout_buffer = ""
         self._scan_stderr_buffer = ""
         self.pages = QStackedWidget()
@@ -2059,6 +2025,7 @@ class MainWindow(QMainWindow):
         outer = QVBoxLayout(central)
         outer.setContentsMargins(0, 0, 0, 0); outer.setSpacing(0)
         self.top_header = TopHeader()
+        self.top_header.set_compact(True)
         self.top_header.scan_requested.connect(self.scan)
         self.top_header.search_requested.connect(self._search_symbol)
         outer.addWidget(self.top_header)
@@ -2068,7 +2035,9 @@ class MainWindow(QMainWindow):
         content = QVBoxLayout(); content.setContentsMargins(8, 6, 8, 6); content.setSpacing(6)
         markets = QHBoxLayout(); markets.setSpacing(6); self.market_cards = {}
         for name in ("BIST 100", "BIST 30", "BIST TÜM", "DOLAR/TL", "EURO/TL", "ONS ALTIN"):
-            market_card = MarketCard(name); self.market_cards[name] = market_card; markets.addWidget(market_card, 1)
+            market_card = MarketCard(name); self.market_cards[name] = market_card
+            if name not in {"BIST 100","BIST 30","BIST TÜM"}: market_card.hide()
+            markets.addWidget(market_card, 1)
         content.addLayout(markets); content.addWidget(self.pages, 1); root.addLayout(content, 1); outer.addLayout(root, 1)
         self.scan_button = self.top_header.scan
         self.reload_button = QPushButton("Son veriyi yükle"); self.reload_button.clicked.connect(self.load_report)
@@ -2079,7 +2048,7 @@ class MainWindow(QMainWindow):
                           "performance":self.history,"settings":self.settings_page}
         self.pages.currentChanged.connect(self._sync_active_page)
         self._market_thread = None; self._market_worker = None
-        if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+        if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen" and os.environ.get("BORSA_VISUAL_TEST") != "1":
             QTimer.singleShot(100, self._load_market_cards)
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
@@ -2087,6 +2056,20 @@ class MainWindow(QMainWindow):
         self.sidebar.set_active("next")
 
         self.load_report()
+        QTimer.singleShot(0,self._apply_responsive_profile)
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event); self._apply_responsive_profile()
+
+    def _apply_responsive_profile(self):
+        profile=profile_for_width(self.width()); compact=profile==PROFILE_COMPACT
+        self.top_header.set_compact(compact)
+        if compact and self.sidebar.expanded: self.sidebar.set_expanded(False,remember=False)
+        for name,card in self.market_cards.items():
+            card.setVisible(not compact or name in {"BIST 100","BIST 30","BIST TÜM"})
+        for page in self._page_map.values():
+            if hasattr(page,"set_view_profile"): page.set_view_profile(profile)
+        self._last_view_profile=profile
 
     def _show_page(self, key):
         page = self._page_map.get(key)

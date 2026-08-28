@@ -17,3 +17,5 @@ artifacts/*.log
 *.xlsx
 *.csv
 .wrangler/
+ui_dogrulama/
+paket_dogrulama_*/

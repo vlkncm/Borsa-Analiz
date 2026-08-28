@@ -6,12 +6,16 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
+from PySide6.QtCore import Qt, QObject, QSettings, Signal, QThread, QTimer
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+)
+from responsive_ui import (
+    AnalysisContext, AnalysisDetailWindow, AnalysisFilterBar, AnalysisStateWidget,
+    AnalysisSummaryBar, PROFILE_COMPACT, ResponsiveResultTable, profile_for_width,
 )
 
 
@@ -43,6 +47,13 @@ QTableWidget::item { padding:4px; } QHeaderView::section { background:#0a1c2e; c
 QTabWidget::pane { border:0; } QTabBar::tab { background:#071827; color:#9db2c7; padding:7px 15px; border:1px solid #173a58; }
 QTabBar::tab:selected { background:#0878f9; color:white; }
 QScrollArea { border:0; } QToolTip { background:#102c45; color:white; border:1px solid #3184c7; }
+#summaryBar, #filterBar { background:#071827; border:1px solid #173a58; border-radius:7px; }
+#summaryMetricCompact { color:#dce9f6; font-size:10px; font-weight:600; }
+#analysisState { color:#8da5bd; padding:3px 5px; }
+#detailHeader { background:#0c4a6e; color:white; font-size:17px; font-weight:700; padding:10px; border-radius:7px; }
+#detailKey { color:#91a9c0; font-weight:700; min-width:150px; padding:6px; }
+#detailValue { background:#091b2d; border:1px solid #173a58; border-radius:5px; padding:6px; }
+QPushButton[detailButton="true"] { background:#0c4b80; color:white; padding:3px 7px; text-align:center; }
 """
 
 
@@ -68,9 +79,9 @@ class MarketCard(QFrame):
     def __init__(self, title):
         super().__init__(); self.setObjectName("marketCard"); self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed); self.setFixedHeight(75)
         box = QVBoxLayout(self); box.setContentsMargins(10, 6, 8, 5); box.setSpacing(1)
-        self.name = QLabel(title); self.name.setObjectName("marketName"); box.addWidget(self.name)
-        row = QHBoxLayout(); self.value = QLabel("Veri bekleniyor"); self.value.setObjectName("marketValue"); self.spark = Sparkline(); row.addWidget(self.value, 1); row.addWidget(self.spark); box.addLayout(row)
-        self.change = QLabel("Veri bekleniyor"); self.change.setObjectName("dataTime"); box.addWidget(self.change)
+        self.name = QLabel(title); self.name.setObjectName("marketName"); self.name.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); box.addWidget(self.name)
+        row = QHBoxLayout(); self.value = QLabel("Veri bekleniyor"); self.value.setObjectName("marketValue"); self.value.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); self.spark = Sparkline(); row.addWidget(self.value, 1); row.addWidget(self.spark); box.addLayout(row)
+        self.change = QLabel("Veri bekleniyor"); self.change.setObjectName("dataTime"); self.change.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); box.addWidget(self.change)
 
     def update_data(self, payload):
         if not payload: self.value.setText("Veri bekleniyor"); self.change.setText("Veri bekleniyor"); self.spark.set_values([]); return
@@ -103,30 +114,42 @@ class TopHeader(QFrame):
     def __init__(self):
         super().__init__(); self.setObjectName("topHeader"); self.setFixedHeight(58)
         row = QHBoxLayout(self); row.setContentsMargins(14, 7, 12, 7); row.setSpacing(9)
-        brand = QVBoxLayout(); title = QLabel("▥  Borsa Analiz"); title.setObjectName("brandTitle"); sub = QLabel("Daha Seçici Analiz, Daha Güçlü Kararlar"); sub.setObjectName("brandSub"); brand.addWidget(title); brand.addWidget(sub); row.addLayout(brand)
+        brand = QVBoxLayout(); self.title = QLabel("▥  Borsa Analiz"); self.title.setObjectName("brandTitle"); self.subtitle = QLabel("Daha Seçici Analiz, Daha Güçlü Kararlar"); self.subtitle.setObjectName("brandSub"); brand.addWidget(self.title); brand.addWidget(self.subtitle); row.addLayout(brand)
         self.search = QLineEdit(); self.search.setPlaceholderText("⌕  Hisse ara… (örn. TGSAS)"); self.search.setMaximumWidth(330); self.search.returnPressed.connect(lambda:self.search_requested.emit(self.search.text())); row.addWidget(self.search, 1)
         row.addStretch(); self.clock = QLabel(); self.clock.setObjectName("muted"); row.addWidget(self.clock)
         self.market = QLabel("● Piyasa durumu bekleniyor"); self.market.setObjectName("warning"); row.addWidget(self.market)
+        self.icon_buttons=[]
         for text, tip in (("♢", "Bildirimler"), ("⚙", "Ayarlar"), ("●", "Kullanıcı")):
             button=QPushButton(text); button.setObjectName("iconButton"); button.setToolTip(tip); button.setFixedWidth(34); row.addWidget(button)
+            self.icon_buttons.append(button)
         self.scan = QPushButton("↗  Tüm Hisse Analizlerini Başlat"); self.scan.setObjectName("primary"); self.scan.clicked.connect(self.scan_requested.emit); row.addWidget(self.scan)
         timer=QTimer(self); timer.timeout.connect(self._tick); timer.start(1000); self._tick()
     def _tick(self): self.clock.setText(datetime.now().strftime("%d %B %Y  %H:%M:%S"))
+    def set_compact(self, compact):
+        self.subtitle.setVisible(not compact); self.clock.setVisible(not compact)
+        self.market.setVisible(not compact); self.search.setMaximumWidth(210 if compact else 330)
+        self.scan.setText("↗  Taramayı Başlat" if compact else "↗  Tüm Hisse Analizlerini Başlat")
+        self.scan.setToolTip("Tüm aktif BIST hisselerinin analizini güvenli ayrı süreçte başlat")
+        for button in self.icon_buttons: button.setVisible(not compact)
 
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
     ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · BIST 30"),("medium","▥","Orta Vade · BIST 30"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
     def __init__(self):
-        super().__init__(); self.setObjectName("sidebar"); self.expanded=True; self.setFixedWidth(190)
+        super().__init__(); self.setObjectName("sidebar"); self._settings=QSettings("VSoftware","BorsaAnalizProMAX")
+        self.expanded=str(self._settings.value("sidebar/expanded","true")).lower() not in {"false","0"}; self.setFixedWidth(190 if self.expanded else 54)
         self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}
         collapse=QPushButton("☰  Menüyü Daralt"); collapse.clicked.connect(self.toggle); self.box.addWidget(collapse); self.collapse=collapse
         for key, icon, text in self.ITEMS:
             button=QPushButton(f"{icon}  {text}"); button.setCheckable(True); button.setToolTip(text); button.clicked.connect(lambda checked=False,k=key:self.page_requested.emit(k)); self.box.addWidget(button); self.buttons[key]=button
-        self.box.addStretch(); self.set_active("home")
+        self.box.addStretch(); self.set_expanded(self.expanded, remember=False); self.set_active("home")
     def toggle(self):
-        self.expanded=not self.expanded; self.setFixedWidth(190 if self.expanded else 54); self.collapse.setText("☰  Menüyü Daralt" if self.expanded else "☰")
+        self.set_expanded(not self.expanded)
+    def set_expanded(self, expanded, remember=True):
+        self.expanded=bool(expanded); self.setFixedWidth(190 if self.expanded else 54); self.collapse.setText("☰  Menüyü Daralt" if self.expanded else "☰")
         for key, icon, text in self.ITEMS: self.buttons[key].setText(f"{icon}  {text}" if self.expanded else icon)
+        if remember: self._settings.setValue("sidebar/expanded",self.expanded)
     def set_active(self,key):
         for name,button in self.buttons.items(): button.setChecked(name==key)
 
@@ -179,21 +202,35 @@ class NextDayDashboard(QWidget):
     T1_COLUMNS=["T+1 Sırası","Hisse","Güncel Fiyat","T+1 %7+ Olasılığı","T+1 %8+ Olasılığı","T+1 Tavan Olasılığı","T+1 Giriş","T+1 Hedef","T+1 Stop","T+1 Risk/Getiri","T+1/T+2 Durumu"]
     T2_COLUMNS=["T+2 Sırası","Hisse","Güncel Fiyat","T+2 %7+ Olasılığı","T+2 %8+ Olasılığı","T+2 Tavan Olasılığı","T+2 Giriş","T+2 Hedef","T+2 Stop","T+2 Risk/Getiri","T+1/T+2 Durumu"]
     def __init__(self, prediction_path: Path):
-        super().__init__(); self.prediction_path=prediction_path; self._records=[]; self._full=pd.DataFrame(); root=QVBoxLayout(self); root.setContentsMargins(10,8,10,8); root.setSpacing(7)
-        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("YÜKSEK HAREKET RADARI"); title.setObjectName("pageTitle"); sub=QLabel("T+1 / T+2 gün içi %7–10 hareket hazırlığı · Tüm aktif BIST"); sub.setObjectName("muted"); titles.addWidget(title); titles.addWidget(sub); header.addLayout(titles); header.addStretch()
+        super().__init__(); self.responsive_layout=True; self.analysis_id="high_movement_radar"; self.prediction_path=prediction_path; self._records=[]; self._full=pd.DataFrame(); root=QVBoxLayout(self); root.setContentsMargins(10,8,10,8); root.setSpacing(6)
+        self._detail_window=AnalysisDetailWindow(self)
+        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("YÜKSEK HAREKET RADARI"); title.setObjectName("pageTitle"); self.subtitle=QLabel("T+1 / T+2 gün içi %7–10 hareket hazırlığı · Tüm aktif BIST"); self.subtitle.setObjectName("muted"); self.subtitle.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); titles.addWidget(title); titles.addWidget(self.subtitle); header.addLayout(titles); header.addStretch(); self.header_pills=[]
         for text,obj in (("◎ Seans Sonrası","pillBlue"),("● Canlı Teyit","pillGreen")):
-            lab=QLabel(text); lab.setObjectName(obj); header.addWidget(lab)
+            lab=QLabel(text); lab.setObjectName(obj); lab.hide(); header.addWidget(lab); self.header_pills.append(lab)
         self.last_scan=QLabel("Son Tarama: —"); self.last_scan.setObjectName("muted"); header.addWidget(self.last_scan); self.scan=QPushButton("Taramayı Başlat"); self.scan.setObjectName("primary"); self.scan.clicked.connect(self.scan_requested.emit); header.addWidget(self.scan); root.addLayout(header)
-        self.stats=QLabel("Veri bekleniyor"); self.stats.setObjectName("muted"); root.addWidget(self.stats)
-        main=QHBoxLayout(); main.setSpacing(8); left=QVBoxLayout(); self.tabs=QTabWidget(); self.tables={}
+        self.summary_bar=AnalysisSummaryBar(); root.addWidget(self.summary_bar)
+        self.filter_bar=AnalysisFilterBar("Radar sonuçlarında hisse veya durum ara…"); root.addWidget(self.filter_bar)
+        self.stats=AnalysisStateWidget(); self.stats.set_ready("Veri bekleniyor"); root.addWidget(self.stats)
+        main=QHBoxLayout(); main.setSpacing(8); left=QVBoxLayout(); self.tabs=QTabWidget(); self.tabs.tabBar().setUsesScrollButtons(True); self.tabs.tabBar().setExpanding(False); self.tabs.tabBar().setElideMode(Qt.ElideRight); self.tables={}
         for key,title,columns in (("t1wide","T+1 Geniş Radar",self.T1_COLUMNS),("t1elite","T+1 Seçkin",self.T1_COLUMNS),("t2wide","T+2 Geniş Radar",self.T2_COLUMNS),("t2elite","T+2 Seçkin",self.T2_COLUMNS),("ceiling","Tavan Hazırlık",self.T1_COLUMNS)):
-            table=QTableWidget(); table.setAlternatingRowColors(True); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.verticalHeader().hide(); table.setSortingEnabled(True); table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.cellClicked.connect(lambda row,col,t=table:self._selected(t,row)); self.tabs.addTab(table,title); self.tables[key]=table; self._fill(table,pd.DataFrame(columns=columns),columns,columns)
-        ipo=QTableWidget(); ipo.setAlternatingRowColors(True); ipo.setEditTriggers(QAbstractItemView.NoEditTriggers); ipo.setSelectionBehavior(QAbstractItemView.SelectRows); ipo.verticalHeader().hide(); ipo.setSortingEnabled(True); ipo.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); ipo.cellClicked.connect(lambda row,col,t=ipo:self._selected(t,row)); self.tabs.addTab(ipo,"Yeni Halka Arzlar"); self.tables["ipo"]=ipo; self._fill(ipo,pd.DataFrame(columns=self.IPO_COLUMNS),self.IPO_COLUMNS,self.IPO_HEADERS)
-        left.addWidget(self.tabs,1); main.addLayout(left,7); self.detail=DetailPanel(); self.detail.setMinimumWidth(245); main.addWidget(self.detail,3); root.addLayout(main,1)
-        bottom=QHBoxLayout(); perf,perfbox=card("Tahmin Performansı"); self.performance=QLabel("Yerel tahmin deposu bekleniyor"); self.performance.setWordWrap(True); perfbox.addWidget(self.performance); regime,regbox=card("Piyasa ve Sektör Rejimi"); self.regime=QLabel("Veri bekleniyor"); self.regime.setWordWrap(True); regbox.addWidget(self.regime); opened,openbox=card("Açık Tahminler"); self.open_predictions=QLabel("Açık tahmin kaydı bekleniyor"); self.open_predictions.setWordWrap(True); openbox.addWidget(self.open_predictions)
-        bottom.addWidget(perf,1); bottom.addWidget(regime,1); bottom.addWidget(opened,1); root.addLayout(bottom); self.refresh_store()
-    def set_loading(self,text="Aktif BIST hisseleri taranıyor…"): self.stats.setText(text); self.scan.setEnabled(False)
-    def set_error(self,text): self.stats.setText("Tarama hatası: "+text); self.scan.setEnabled(True)
+            table=ResponsiveResultTable(f"radar_{key}"); context=AnalysisContext(f"radar_{key}",horizon="T+2" if key.startswith("t2") else "T+1")
+            table.set_context(context); compact=[columns[0],"Hisse","Güncel Fiyat",columns[3],columns[4],columns[5],columns[-1]]
+            table.configure_columns(compact,compact+columns[6:9],columns); table.detail_requested.connect(self._open_detail)
+            table.cellClicked.connect(lambda row,col,t=table:self._selected(t,row)); self.tabs.addTab(table,title); self.tables[key]=table; self._fill(table,pd.DataFrame(columns=columns),columns,columns)
+        ipo=ResponsiveResultTable("radar_ipo"); ipo.set_context(AnalysisContext("radar_ipo",horizon="Yeni Halka Arz",analysis_type="Hisse"))
+        ipo_compact=["Hisse","İşlem Günü Sayısı","Halka Arz Fiyatı","Güncel Fiyat","Halka Arzdan Beri Getiri %","Momentum Durumu","Risk Durumu","Veri Yeterlilik Seviyesi"]
+        ipo.configure_columns(ipo_compact,ipo_compact+["Kotasyon Tarihi","Göreceli Hacim"],self.IPO_COLUMNS); ipo.detail_requested.connect(self._open_detail)
+        ipo.cellClicked.connect(lambda row,col,t=ipo:self._selected(t,row)); self.tabs.addTab(ipo,"Yeni Halka Arzlar"); self.tables["ipo"]=ipo; self._fill(ipo,pd.DataFrame(columns=self.IPO_COLUMNS),self.IPO_COLUMNS,self.IPO_HEADERS)
+        self.filter_bar.filter_changed.connect(lambda text:[table.apply_filter(text) for table in self.tables.values()])
+        self.filter_bar.reset_columns_requested.connect(lambda:[table.reset_columns() for table in self.tables.values()])
+        left.addWidget(self.tabs,1); main.addLayout(left,1); self.detail=DetailPanel(); self.detail.hide(); root.addLayout(main,1)
+        self.bottom_tabs=QTabWidget(); self.bottom_tabs.setMaximumHeight(112)
+        perf,perfbox=card("Tahmin Performansı"); self.performance=QLabel("Yerel tahmin deposu bekleniyor"); self.performance.setWordWrap(True); perfbox.addWidget(self.performance)
+        regime,regbox=card("Piyasa ve Sektör Rejimi"); self.regime=QLabel("Veri bekleniyor"); self.regime.setWordWrap(True); regbox.addWidget(self.regime)
+        opened,openbox=card("Açık Tahminler"); self.open_predictions=QLabel("Açık tahmin kaydı bekleniyor"); self.open_predictions.setWordWrap(True); openbox.addWidget(self.open_predictions)
+        self.bottom_tabs.addTab(perf,"Performans"); self.bottom_tabs.addTab(regime,"Piyasa Rejimi"); self.bottom_tabs.addTab(opened,"Açık Tahminler"); root.addWidget(self.bottom_tabs); self.refresh_store()
+    def set_loading(self,text="Aktif BIST hisseleri taranıyor…"): self.stats.set_loading(text=text); self.scan.setEnabled(False)
+    def set_error(self,text): self.stats.set_error("Tarama hatası: "+text+"\nÖnceki geçerli sonuç korunuyor."); self.scan.setEnabled(True)
     def load_results(self,frame,message=""):
         self.scan.setEnabled(True); self._full=frame.copy() if frame is not None else pd.DataFrame(); self.last_scan.setText("Son Tarama: "+datetime.now().strftime("%H:%M"))
         status=self._full.get("Durum",pd.Series(dtype=str)).astype(str)
@@ -211,7 +248,9 @@ class NextDayDashboard(QWidget):
             else:
                 columns=self.T2_COLUMNS if key.startswith("t2") else self.T1_COLUMNS; self._fill(self.tables[key],data,columns,columns)
         elite_message = " Bugün güvenilir %7–10 hareket adayı bulunamadı." if t1elite.empty and t2elite.empty else ""
-        self.stats.setText((message or (f"{len(self._full)} hisse sıralandı" if not self._full.empty else "")) + elite_message)
+        state_text=(message or (f"{len(self._full)} hisse sıralandı" if not self._full.empty else "")) + elite_message
+        self.stats.set_empty() if self._full.empty else self.stats.set_ready(state_text)
+        self.summary_bar.update_metrics({"Taranan":len(self._full),"Geniş Radar":len(t1.head(30))+len(t2.head(30)),"Seçkin":len(t1elite)+len(t2elite),"Güçlü":int(status.str.contains("GÜÇLÜ",case=False,na=False).sum()),"Teyit":int(status.str.contains("TEYİT",case=False,na=False).sum()),"Veri Zamanı":datetime.now().strftime("%H:%M")})
         for index,(key,label) in enumerate((("t1wide","T+1 Geniş"),("t1elite","T+1 Seçkin"),("t2wide","T+2 Geniş"),("t2elite","T+2 Seçkin"),("ceiling","Tavan Hazırlık"),("ipo","Yeni Halka Arz"))): self.tabs.setTabText(index,f"{label}  {len(groups[key])}")
         if not self._full.empty: self.detail.set_row(self._full.iloc[0].to_dict())
         regimes=status if "Piyasa Rejimi" not in self._full else self._full["Piyasa Rejimi"].dropna().astype(str)
@@ -219,18 +258,17 @@ class NextDayDashboard(QWidget):
         self.refresh_store()
     def _fill(self,table,data,columns=None,headers=None):
         columns,headers=columns or self.COLUMNS,headers or self.HEADERS
-        table.setSortingEnabled(False); table.clear(); table.setColumnCount(len(columns)); table.setHorizontalHeaderLabels(headers); table.setRowCount(len(data)); records=data.to_dict("records")
-        for r,row in enumerate(records):
-            for c,name in enumerate(columns):
-                value=row.get(name); text="—" if value is None or (isinstance(value,float) and pd.isna(value)) else f"{value:.2f}" if isinstance(value,(float,int)) else str(value)
-                item=QTableWidgetItem(text); item.setData(Qt.UserRole,row); item.setToolTip(text); item.setTextAlignment(Qt.AlignLeft|Qt.AlignVCenter if name in ("Hisse","Durum","Momentum Durumu","Risk Durumu") else Qt.AlignRight|Qt.AlignVCenter)
-                if name in ("Günlük Değişim %","Halka Arzdan Beri Getiri %"): item.setForeground(QColor(COLORS["green"] if float(value or 0)>=0 else COLORS["red"]))
-                if name in ("Durum","Momentum Durumu","Risk Durumu"): item.setForeground(QColor(COLORS["orange"] if "RİSK" in text or "BEKL" in text or "KACTI" in text else COLORS["green"]))
-                table.setItem(r,c,item)
-        header=table.horizontalHeader(); header.setSectionResizeMode(QHeaderView.ResizeToContents if columns is self.IPO_COLUMNS else QHeaderView.Stretch); header.setSectionResizeMode(0,QHeaderView.ResizeToContents); table.verticalHeader().setDefaultSectionSize(27); table.setSortingEnabled(True)
+        table.load_frame(data,columns,headers)
     def _selected(self,table,row):
-        item=table.item(row,0)
-        if item: self.detail.set_row(item.data(Qt.UserRole) or {})
+        record=table.record_for_visual_row(row) if hasattr(table,"record_for_visual_row") else None
+        if record: self.detail.set_row(record)
+    def _open_detail(self,record,context): self._detail_window.show_record(record,context)
+    def resizeEvent(self,event):
+        super().resizeEvent(event); profile=profile_for_width(self.width())
+        for table in self.tables.values(): table.apply_profile(profile)
+        compact=profile==PROFILE_COMPACT; self.subtitle.setVisible(not compact)
+        for pill in self.header_pills: pill.setVisible(not compact)
+        self.bottom_tabs.setVisible(self.height()>=570)
     def refresh_store(self):
         if not self.prediction_path.exists(): return
         try:
@@ -246,7 +284,7 @@ class T1T2PerformanceDashboard(QWidget):
     """Değiştirilemez Radar snapshot'larının gerçek T+1/T+2 sonuç ekranı."""
     COLUMNS=["Tarih","Hisse","Vade","Gerçekleşen Maksimum %","Tavan Gördü","Önceki Sıra","Geniş Radarda","Seçkin Aday"]
     def __init__(self, database_path: Path):
-        super().__init__(); self.database_path=Path(database_path)
+        super().__init__(); self.responsive_layout=True; self.analysis_id="prediction_performance"; self.database_path=Path(database_path); self._detail_window=AnalysisDetailWindow(self)
         root=QVBoxLayout(self); root.setContentsMargins(12,10,12,10); root.setSpacing(8)
         header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("TAHMİN PERFORMANSI"); title.setObjectName("pageTitle")
         subtitle=QLabel("Yalnız önceden kaydedilmiş, değiştirilemez T+1/T+2 snapshot sonuçları"); subtitle.setObjectName("muted")
@@ -255,9 +293,9 @@ class T1T2PerformanceDashboard(QWidget):
         cards=QHBoxLayout(); self.t1=QLabel(); self.t2=QLabel(); self.data=QLabel()
         for label in (self.t1,self.t2,self.data): label.setObjectName("bottomCard"); label.setWordWrap(True); label.setMinimumHeight(90); cards.addWidget(label,1)
         root.addLayout(cards)
-        self.notice=QLabel(); self.notice.setObjectName("muted"); self.notice.setWordWrap(True); root.addWidget(self.notice)
-        self.table=QTableWidget(); self.table.setAlternatingRowColors(True); self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows); self.table.verticalHeader().hide(); self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.notice=AnalysisStateWidget(); root.addWidget(self.notice)
+        self.table=ResponsiveResultTable("prediction_performance"); self.table.set_context(AnalysisContext("prediction_performance",analysis_type="Hisse"))
+        self.table.configure_columns(self.COLUMNS[:6],self.COLUMNS,self.COLUMNS); self.table.detail_requested.connect(self._detail_window.show_record)
         root.addWidget(self.table,1); self.refresh()
     @staticmethod
     def _fmt(value, percent=False):
@@ -271,17 +309,15 @@ class T1T2PerformanceDashboard(QWidget):
                 item=summary.get("horizons",{}).get(horizon,{})
                 label.setText(f"{horizon} GERÇEK SONUÇ\nÖrnek: {item.get('total',0)} · %7+: {item.get('hit_7',0)} · Tavan: {item.get('hit_limit_up',0)}\nPrecision@3: {self._fmt(item.get('precision_at_3'),True)} · Recall@20: {self._fmt(item.get('recall_at_20'),True)}\nBrier %7: {self._fmt(item.get('brier_7'))}")
             self.data.setText(f"KAYIT DURUMU\nSonuçlanan snapshot: {summary.get('total',0)}\nGerçek %7+ hareket: {len(audit)}\nTahmin yoksa geçmiş sıra üretilmez")
-            self.notice.setText("Sonuçlar yalnız tahmin tarihinde kaydedilmiş snapshot'larla eşleştirilir; bugünkü veriyle geriye dönük aday oluşturulmaz.")
-            frame=pd.DataFrame(audit,columns=self.COLUMNS); self.table.clear(); self.table.setColumnCount(len(self.COLUMNS)); self.table.setHorizontalHeaderLabels(self.COLUMNS); self.table.setRowCount(len(frame))
-            for row_index,row in frame.iterrows():
-                for column_index,name in enumerate(self.COLUMNS):
-                    value=row.get(name); text="—" if value is None else f"{value:.2f}" if isinstance(value,float) else str(value)
-                    self.table.setItem(row_index,column_index,QTableWidgetItem(text))
-            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeToContents)
+            self.notice.set_ready("Sonuçlar yalnız tahmin tarihinde kaydedilmiş snapshot'larla eşleştirilir; bugünkü veriyle geriye dönük aday oluşturulmaz.")
+            frame=pd.DataFrame(audit,columns=self.COLUMNS); self.table.load_frame(frame,self.COLUMNS,self.COLUMNS)
+            if frame.empty: self.notice.set_empty("Henüz sonuçlanmış tahmin snapshot'ı yok.\nBugünkü veriyle sahte geçmiş sıra üretilmedi.")
         except Exception as exc:
-            self.notice.setText("Performans verisi okunamadı: "+str(exc)); self.table.setRowCount(0)
+            self.notice.set_error("Performans verisi okunamadı: "+str(exc)+"\nÖnceki geçerli sonuç korunuyor."); self.table.setRowCount(0)
+    def resizeEvent(self,event):
+        super().resizeEvent(event); self.table.apply_profile(profile_for_width(self.width()))
 
 
 class PlaceholderPage(QWidget):
     def __init__(self,title,text="Bu sayfa ortak dashboard temasıyla hazırdır."):
-        super().__init__(); box=QVBoxLayout(self); box.setContentsMargins(18,18,18,18); heading=QLabel(title); heading.setObjectName("pageTitle"); box.addWidget(heading); panel=QLabel(text); panel.setObjectName("card"); panel.setAlignment(Qt.AlignCenter); box.addWidget(panel,1)
+        super().__init__(); self.responsive_layout=True; self.analysis_id="settings"; box=QVBoxLayout(self); box.setContentsMargins(12,10,12,10); heading=QLabel(title); heading.setObjectName("pageTitle"); box.addWidget(heading); panel=QLabel(text); panel.setObjectName("card"); panel.setWordWrap(True); panel.setAlignment(Qt.AlignCenter); box.addWidget(panel,1)
