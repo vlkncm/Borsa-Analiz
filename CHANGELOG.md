@@ -1,5 +1,22 @@
 # Değişiklik Günlüğü
 
+## 10.3.1
+
+- Varsayılan arayüz sekiz sütunlu **Sade Yatırımcı Modu**na geçirildi; teknik terimler isteğe bağlı ayrıntıya taşındı.
+- Her analiz sayfası eşikleri düşürmeden en fazla beş güvenilir `AL/BEKLE` sonucu gösterir.
+- Güven düzeyi yalnız yeterli aynı-vade geçmiş örneği varsa sınıflandırılır; yetersiz örnekte yüzde gösterilmez.
+- Portföye gerçek alış fiyatı, tarih, adet, hedef ve stop kaydı ile `BEKLE/KÂR AL/SAT` güncellemesi eklendi.
+- T+1/T+2 worker, dashboard, detay ve snapshot tek `CandidateDecision` sözleşmesine bağlandı.
+- Geniş Radar ile Seçkin Aday ayrıldı; her elenme görünür neden kodu taşır.
+- Gün içi tamamlanmamış barın akşam snapshot'ına sızması ve geç oluşturulan geçmiş kayıtların performansa katılması engellendi.
+- KAP/menkul türü kesintisinde kalibre yüksek sıralı hisselerin radardan kaybolması önlendi; eksik KAP nötr belirsizlik oldu.
+- BIST 100 ortak kesime bağlandı, kilitli tavan barlarındaki CMF/MFI NaN sorunu giderildi ve Net EV elemesi denetlenebilir hâle getirildi.
+- Değiştirilemez günlük Kaçırılan Hareketler raporu ve 28 Ağustos kök neden raporu eklendi.
+- Sol menüye program sonuçlarının güvenli okunmasını anlatan **Nasıl Kullanılır?** ekranı eklendi.
+- Veri güncelliği, karar anlamları, alış bandı, hedef, stop ve risk/getiri kontrolleri açıklandı.
+- Portföy riski ve azami adet hesabı örnekle gösterildi.
+- İşlem öncesi kontrol listesi ve ayrıntılı kullanım rehberi pakete eklendi.
+
 ## 10.3.0
 
 - T+1/T+2 point-in-time özellik, etiketleme, model eğitimi ve kalibrasyon altyapısı eklendi.

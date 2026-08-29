@@ -324,8 +324,9 @@ class AnalysisDetailWindow(QMainWindow):
         self.header = QLabel("Analiz detayı"); self.header.setObjectName("detailHeader"); self.header.setWordWrap(True)
         root.addWidget(self.header)
         self.tabs = QTabWidget(); self.tabs.setDocumentMode(True); root.addWidget(self.tabs, 1)
+        self.technical_toggle=QPushButton("Teknik Ayrıntıları Göster"); self.technical_toggle.clicked.connect(self._toggle_technical)
         close = QPushButton("Kapat"); close.clicked.connect(self.close)
-        footer = QHBoxLayout(); footer.addStretch(); footer.addWidget(close); root.addLayout(footer)
+        footer = QHBoxLayout(); footer.addWidget(self.technical_toggle); footer.addStretch(); footer.addWidget(close); root.addLayout(footer)
         geometry = self._settings.value("analysisDetail/geometry")
         if isinstance(geometry, QByteArray):
             self.restoreGeometry(geometry)
@@ -336,17 +337,25 @@ class AnalysisDetailWindow(QMainWindow):
 
     def show_record(self, record: Mapping[str, Any], context: AnalysisContext):
         self._context = context
+        try:
+            from sade_yatirimci_modu import simplify_record
+            held=str(_first(record,"Karar",default="")).upper() in {"KÂR AL","SAT"}
+            record=simplify_record(record,context.analysis_id,held=held)
+        except Exception:
+            record=dict(record)
         symbol = _first(record, "Hisse", "Sembol", "Fon", default="—")
-        price = _first(record, "Güncel Fiyat", "Fiyat", "Güncel", "Güncel Değer")
+        price = _first(record, "Güncel fiyat", "Güncel Fiyat", "Fiyat", "Güncel", "Güncel Değer")
         decision = _first(record, "Ana Karar", "Karar", "Yatırım Kararı", "Durum", "Sonuç")
-        probability = _first(record, "T+1 %7+ Olasılığı", "%7 Olasılığı", "Model Olasılığı %")
         self.header.setText(
-            f"{symbol}  ·  {context.analysis_id}  ·  {context.horizon or 'Vade belirtilmedi'}\n"
-            f"Güncel: {_format(price)}  ·  Karar: {decision}  ·  Olasılık: {_format(probability, 'Olasılık')}  ·  "
-            f"Veri: {context.as_of_timestamp or '—'}"
+            f"{symbol}  ·  Karar: {decision}\n"
+            f"Beklenen süre: {_first(record,'Beklenen süre','Beklenen Süre',default='—')}  ·  "
+            f"Güven: {_first(record,'Güven düzeyi',default='Ölçülemedi')}  ·  Güncel: {_format(price)}"
         )
         self.tabs.clear()
         is_fund = context.analysis_type.casefold() == "fon" or "Fon" in record
+        self._add_tab("Sade Özet", record, (
+            "Karar","Beklenen süre","Güven düzeyi","Güven Açıklaması","Güncel fiyat","Alım bölgesi","Hedef","Stop",
+            "Kısa Neden","Neden AL?","Ana Risk","Karar Ne Zaman Değişir?","Süre Açıklaması"))
         self._add_tab("Karar Özeti", record, (
             "Karar", "Yatırım Kararı", "Ana Karar", "Durum", "Sonuç", "T+1/T+2 Durumu",
             "Giriş", "Giriş Bölgesi", "Alım Bölgesi", "Hedef", "Hedef 1", "Hedef 2", "Stop",
@@ -371,7 +380,14 @@ class AnalysisDetailWindow(QMainWindow):
             "T+2 %7+ Olasılığı", "T+2 %8+ Olasılığı", "Gerçekleşen Maksimum Getiri",
             "Kapanış Getirisi", "Hedef/Stop Sonucu", "Model Sürümü", "Strateji Sürümü", "Feature Hash"))
         self._add_tab("Tüm Veriler", record, tuple(record.keys()))
+        for index in range(1,self.tabs.count()): self.tabs.setTabVisible(index,False)
+        self.technical_toggle.setText("Teknik Ayrıntıları Göster")
         self._clamp_to_screen(); self.show(); self.raise_(); self.activateWindow()
+
+    def _toggle_technical(self):
+        visible=self.tabs.count()>1 and not self.tabs.isTabVisible(1)
+        for index in range(1,self.tabs.count()): self.tabs.setTabVisible(index,visible)
+        self.technical_toggle.setText("Teknik Ayrıntıları Gizle" if visible else "Teknik Ayrıntıları Göster")
 
     def _add_tab(self, title: str, record: Mapping[str, Any], keys: Iterable[str]):
         selected = []

@@ -33,7 +33,7 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
         page = window.daily_trade
         window.pages.setCurrentWidget(page)
         sample = pd.DataFrame([{
-            "Hisse": "TEST", "Sonuç": "TEYİT BEKLE", "Alış Alt": 10, "Alış Üst": 10.2,
+            "Hisse": "TEST", "Sonuç": "TEYİT BEKLE", "Güncel Fiyat": 10.1, "Alış Alt": 10, "Alış Üst": 10.2,
             "Hedef": 11, "Stop": 9.5, "Hedef Potansiyeli %": 10, "Hedef Önce Olasılığı %": "%60",
             "Olasılık Ufku — İşlem Günü": 3, "OOS Örnek Sayısı": 30, "Olasılık %95 Güven Aralığı": "%42 – %75",
             "Ufuk Olasılıkları": {1: {"probability": 40, "sample_size": 35, "ci_low": 25, "ci_high": 56},
@@ -43,18 +43,20 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
             "Veri Zamanı": "2026-08-25T17:00", "Gerekçe": "Uzun bir gerekçe metni ayrıntı panelinde kelime kaydırmalıdır.",
         }])
         page.scan_done(True, sample, "Tamamlandı")
-        expected = ["Hisse / Karar", "Alış Bandı", "Hedef", "Stop", "Yükseliş %", "Olasılık / Süre"]
-        self.assertEqual([page.table.table.horizontalHeaderItem(i).text() for i in range(6)], expected)
+        expected = ["Hisse", "Karar", "Beklenen süre", "Güven düzeyi", "Güncel fiyat", "Alım bölgesi", "Hedef", "Stop"]
+        self.assertEqual([page.table.table.horizontalHeaderItem(i).text() for i in range(8)], expected)
         for width, height in ((1920, 1080), (1366, 768), (1280, 720), (1024, 768)):
             window.resize(width, height); window.show(); self.app.processEvents()
-            self.assertTrue(all(not page.table.table.isColumnHidden(i) for i in range(6)))
+            self.assertTrue(all(not page.table.table.isColumnHidden(i) for i in range(8)))
             self.assertEqual(page.table.table.horizontalScrollBar().maximum(), 0)
             self.assertGreater(page.table.table.columnWidth(0), 0)
             self.assertGreater(page.table.table.columnWidth(2), 0)
             self.assertGreater(page.table.table.columnWidth(5), 0)
         page._show_inline_detail(0)
-        self.assertIn("1 günde hedef olasılığı", page.detail.text())
-        self.assertIn("Yetersiz örnek", page.detail.text())
+        self.assertIn("Neden bu karar?", page.detail.text())
+        self.assertIn("Ana risk", page.detail.text())
+        self.assertIn("Karar ne zaman değişir?", page.detail.text())
+        self.assertNotIn("hedef olasılığı", page.detail.text())
         self.assertTrue(page.detail.wordWrap())
         window.close()
 

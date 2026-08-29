@@ -12,6 +12,55 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
+class SafeConsoleStream:
+    """Qt ebeveyni boruyu kapattiginda normal print cagrilarini guvenli tutar."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def write(self, text):
+        try:
+            return self.stream.write(text)
+        except (OSError, BrokenPipeError, ValueError):
+            return len(text or "")
+
+    def flush(self):
+        try:
+            return self.stream.flush()
+        except (OSError, BrokenPipeError, ValueError):
+            return None
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def install_safe_console_streams():
+    if not isinstance(sys.stdout, SafeConsoleStream):
+        sys.stdout = SafeConsoleStream(sys.stdout)
+    if not isinstance(sys.stderr, SafeConsoleStream):
+        sys.stderr = SafeConsoleStream(sys.stderr)
+
+
+def safe_console_print(message, *, flush=False):
+    """GUI parent boruyu kapatsa bile headless taramayi traceback ile dusurmez."""
+    try:
+        print(message, flush=flush)
+        return True
+    except (OSError, BrokenPipeError):
+        logger.warning("Alt surec stdout borusu kapali; mesaj yalniz logda kaldi: %s", message)
+        return False
+
+
+def progress_event(phase, completed, total, message):
+    """Arayuzun degisken log metinlerini tahmin etmeden okuyacagi protokol."""
+    scan_id = os.getenv("BORSA_SCAN_ID", "standalone")
+    safe_message = str(message).replace("\r", " ").replace("\n", " ").replace("|", "/")
+    safe_console_print(
+        f"PROGRESS|{scan_id}|{phase}|{int(completed)}|{int(total)}|{safe_message}",
+        flush=True,
+    )
+
 from borsa_tarayici import teknik_analiz, rapor_yazdir
 from backtest import backtest_toplu
 from kap_modulu import kap_toplu_analiz
@@ -30,7 +79,8 @@ from gunluk_islem_plani import gun_sonu_plani
 from faktor_model_portfoy import faktor_model_portfoyu
 from usta_yatirimci_modeli import usta_model_portfoyu
 from bist30 import BIST30_DONEMI, BIST30_KUMESI, bist30_hisseleri
-from bist_evreni import tum_bist_hisseleri
+from bist_evreni import son_evren_durumu, tum_bist_hisseleri
+from analysis_orchestration import filter_frame_to_symbols, tag_analysis_result
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -95,8 +145,22 @@ def hisseleri_txt_oku(dosya_adi=None):
     symbols = tum_bist_hisseleri() if tum_evren else bist30_hisseleri()
     quarantined = set(karantinadaki_semboller())
     if quarantined:
-        symbols = [symbol for symbol in symbols if symbol not in quarantined]
-        print(f"Veri hatasi nedeniyle karantinada: {len(set(symbols) & quarantined)} hisse")
+        removed = len(set(symbols) & quarantined)
+        if tum_evren:
+            # Aktif BIST gorevinde gecmis veri hatasi sembolu evrenden silemez;
+            # yeniden denenir ve bu taramada basarisizsa sayaca yazilir.
+            print(f"Önceki veri hatası bulunan {removed} aktif hisse yeniden denenecek")
+        else:
+            symbols = [symbol for symbol in symbols if symbol not in quarantined]
+            print(f"Veri hatasi nedeniyle karantinada: {removed} hisse")
+    test_limit = os.getenv("BORSA_TEST_SYMBOLS", "").strip()
+    if test_limit:
+        try:
+            limit = max(0, int(test_limit))
+            if limit:
+                symbols = symbols[:limit]
+        except ValueError:
+            logger.warning("Gecersiz BORSA_TEST_SYMBOLS degeri: %s", test_limit)
     print(f"{'Aktif BIST' if tum_evren else 'BIST 30'} analiz evreni: {len(symbols)} sembol")
     return symbols
 
@@ -118,9 +182,8 @@ def dogrulanmis_listeyi_kaydet(results):
 
 
 def hisse_tara(symbol):
-    if symbol not in BIST30_KUMESI:
-        return None
-    return teknik_analiz(symbol, "BIST 30")
+    kategori = "BIST 30" if symbol in BIST30_KUMESI else "Aktif BIST"
+    return teknik_analiz(symbol, kategori)
 
 
 def sonuclari_sirala(results):
@@ -1011,7 +1074,8 @@ def analiz_ciktilarini_kaydet(df, frames, output_dir):
     return {"sqlite": sqlite_result, "text": txt_path, "csv_backup": csv_backup}
 
 
-def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None):
+def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None,
+                     temettu_df=None, scan_id="standalone"):
     results = [
         item for item in results
         if pd.notna(item.get("price")) and float(item.get("price", 0)) > 0
@@ -1022,7 +1086,16 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         return {"sqlite": None, "text": None, "csv_backup": None, "skipped": True}
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
-    kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
+    # Kisa ve orta motorlarina tum BIST tablosu degil, dogrudan guncel BIST30
+    # sembollerinin snapshot'i verilir. Motorlar ayni evrende ayri puan uretir.
+    bist30_frame = filter_frame_to_symbols(df, bist30_hisseleri())
+    progress_event("short_term", 0, len(bist30_frame), "Kısa Vade · BIST30 analiz ediliyor")
+    progress_event("medium_term", 0, len(bist30_frame), "Orta Vade · BIST30 analiz ediliyor")
+    kisa_df, orta_df, uzun_df = vade_listeleri_uret(bist30_frame)
+    kisa_df = tag_analysis_result(kisa_df, "short_term", scan_id)
+    progress_event("short_term", len(bist30_frame), len(bist30_frame), "Kısa Vade · BIST30 tamamlandı")
+    orta_df = tag_analysis_result(orta_df, "medium_term", scan_id)
+    progress_event("medium_term", len(bist30_frame), len(bist30_frame), "Orta Vade · BIST30 tamamlandı")
     potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
     firsatlar_df = bugunun_firsatlari_hazirla(df)
     formasyon_kolonlari = [
@@ -1080,10 +1153,23 @@ def ozet_yazdir(results, baslangic_zamani):
 
 
 def main():
+    install_safe_console_streams()
     baslangic_zamani = time.time()
+    scan_id = os.getenv("BORSA_SCAN_ID", "standalone")
+    progress_event("prepare", 0, 1, "Tarama hazırlanıyor")
     print("Borsa Analiz Pro MAX v6.5 PROFESSIONAL TERMINAL başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     hisseler = hisseleri_txt_oku()
+    progress_event("universe", len(hisseler), len(hisseler), "Aktif BIST evreni yükleniyor")
+    universe_state = son_evren_durumu()
+    universe_fields = [
+        universe_state.get("source", "bilinmiyor"),
+        universe_state.get("created_at", "bilinmiyor"),
+        universe_state.get("warning", ""),
+    ]
+    universe_fields = [str(value).replace("|", "/").replace("\n", " ") for value in universe_fields]
+    safe_console_print(f"UNIVERSE_META|{scan_id}|{len(hisseler)}|" + "|".join(universe_fields), flush=True)
+    safe_console_print(f"UNIVERSE|{scan_id}|{','.join(hisseler)}", flush=True)
     print(f"Toplam taranacak hisse: {len(hisseler)}")
 
     results = []
@@ -1108,6 +1194,7 @@ def main():
             except Exception as e:
                 failed_symbols.append(symbol)
                 print(f"{tamamlanan}/{len(hisseler)} hata: {symbol} -> {e}")
+            progress_event("stocks", tamamlanan, len(hisseler), "Hisseler analiz ediliyor")
 
     tarama_sagligini_kaydet(
         successful=[item.get("symbol", "") for item in results],
@@ -1116,7 +1203,9 @@ def main():
     print(f"Veri sağlığı: {len(results)} başarılı, {len(set(failed_symbols))} yeniden denenecek/karantina adayı")
 
     dogrulanmis_listeyi_kaydet(results)
+    progress_event("technical", 0, 1, "Grafik ve teknik analizler hesaplanıyor")
     results = profesyonel_veri_ekle(results)
+    progress_event("market", 1, 1, "Piyasa ve sektör koşulları değerlendiriliyor")
     results = v4_toplu_puanla(results, final=False)
     results = sonuclari_sirala(results)
 
@@ -1129,7 +1218,9 @@ def main():
     backtest_islemler = pd.DataFrame()
 
     print("\nTarihsel olasılık analizi başlıyor. İlk 30 güçlü aday hesaplanacak...")
+    progress_event("probability", 0, min(30, len(results)), "Geçmiş başarı ve hedef süreleri hesaplanıyor")
     results = olasilik_toplu_ekle(results, limit=30)
+    progress_event("probability", min(30, len(results)), min(30, len(results)), "Geçmiş başarı ve hedef süreleri hesaplanıyor")
     results = v4_toplu_puanla(results, final=True)
     for item in results:
         item.update(karar_uret(item))
@@ -1152,14 +1243,21 @@ def main():
         print("\nTemettü taraması ana analizde kapalı; mevcut/boş liste kullanılacak.")
         temettu_df = pd.DataFrame()
 
+    save_ok = False
     try:
-        sonuclari_kaydet(
+        progress_event("save", 0, 1, "Sonuçlar güvenli biçimde kaydediliyor")
+        save_result = sonuclari_kaydet(
             results,
             baslangic_zamani,
             backtest_ozet,
             backtest_islemler,
-            temettu_df
+            temettu_df,
+            scan_id=scan_id,
         )
+        sqlite_result = save_result.get("sqlite") if isinstance(save_result, dict) else None
+        save_ok = bool(sqlite_result is not None and not sqlite_result.errors and not save_result.get("skipped"))
+        if save_ok:
+            progress_event("save", 1, 1, "Sonuçlar güvenli biçimde kaydediliyor")
     except Exception as exc:
         logger.error("Analiz kayıt akışı başarısız:\n%s", traceback.format_exc())
         print(f"Analiz raporu kayıt akışı tamamlanamadı: {exc}")
@@ -1178,8 +1276,19 @@ def main():
         print("Tarama tamamlandı; kayıt hatası nedeniyle sonuçlar CSV yedeğinde korundu.")
 
     ozet_yazdir(results, baslangic_zamani)
-    print("\nPro MAX tarama tamamen bitti.")
+    safe_console_print(
+        f"SCAN_RESULT|{scan_id}|{len(results)}|{len(set(failed_symbols))}|{output_klasoru() / 'analiz_sonuclari.sqlite3'}",
+        flush=True,
+    )
+    if not save_ok:
+        safe_console_print("Yeni SQLite sonucu doğrulanamadı; önceki geçerli sonuç korunuyor.", flush=True)
+        return 3
+    # Bu yalnız çekirdek analizin bitişidir. Arayüz, Yüksek Hareket dahil
+    # bütün merkezî bileşenler sonlanınca genel "Tarama tamamlandı" durumunu verir.
+    progress_event("core_complete", 1, 1, "Ana tarama tamamlandı; bölümler hazırlanıyor")
+    safe_console_print("\nPro MAX tarama tamamen bitti.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

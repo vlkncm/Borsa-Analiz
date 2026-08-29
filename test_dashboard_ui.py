@@ -22,8 +22,12 @@ class DashboardUiTests(unittest.TestCase):
         labels = [text for _key, _icon, text in Sidebar.ITEMS]
         self.assertEqual(labels, ["Yüksek Hareket Radarı", "Ana Sayfa", "Günlük Trade",
             "Kısa Vade · BIST 30", "Orta Vade · BIST 30", "50 TL Altı", "Fon Analizi",
-            "Portföy", "Tahmin Performansı", "Ayarlar"])
+            "Portföy", "Sistem Denetimi", "Ayarlar"])
         self.assertNotIn("10X", " ".join(labels)); self.assertNotIn("Excel", " ".join(labels))
+        self.assertNotIn("Nasıl Kullanılır", " ".join(labels))
+        self.assertFalse(window.top_header.scan.isHidden())
+        self.assertTrue(window.next_day.scan.isHidden())
+        self.assertTrue(window.under_50.layout().itemAt(3).widget().isHidden())
         window.close()
 
     def test_every_menu_page_opens_and_active_state_changes(self):
@@ -38,15 +42,17 @@ class DashboardUiTests(unittest.TestCase):
         window = MainWindow(); page = window.next_day
         frame = pd.DataFrame([
             {"Hisse":"GUCLU", "Önceki Kapanış":10.0, "Güncel Fiyat":10.2, "Günlük Değişim %":2.0,
-             "Tavan Fiyatı":11.0, "Tavana Kalan %":7.8, "%8+ Olasılığı":None, "Tavan Olasılığı":None,
-             "Tahmini En Yüksek Fiyat":None, "Durum":"GÜÇLÜ ERTESİ GÜN ADAYI", "Aday Nedenleri":["Hacim"], "Riskler":[]},
+             "Tavan Fiyatı":11.0, "Tavana Kalan %":7.8, "T+1 %7+ Olasılığı":72, "T+1 %8+ Olasılığı":60,
+             "T+1 Kararı":"AL ADAYI – CANLI TEYİT BEKLE", "T+1 Giriş":10.3,"T+1 Hedef":11.0,"T+1 Stop":9.8,
+             "T+1 Geniş Radar":True,"T+1 Seçkin Aday":True,"Olasılık Güvenilir":True,"Geçmiş Örnek Sayısı":126,
+             "Durum":"AL ADAYI – CANLI TEYİT BEKLE", "Aday Nedenleri":["Hacim"], "Riskler":[]},
             {"Hisse":"RISK", "Önceki Kapanış":5.0, "Güncel Fiyat":5.0, "Günlük Değişim %":0.0,
              "Tavan Fiyatı":5.5, "Tavana Kalan %":10.0, "%8+ Olasılığı":None, "Tavan Olasılığı":None,
              "Tahmini En Yüksek Fiyat":None, "Durum":"YÜKSEK RİSK", "Aday Nedenleri":[], "Riskler":["Likidite"]},
         ])
         page.load_results(frame, "2 hisse tarandı")
-        self.assertEqual(page.tables["t1wide"].rowCount(), 2); self.assertEqual(page.tables["t1elite"].rowCount(), 0)
-        page._selected(page.tables["t1wide"], 1); self.assertIn("RISK", page.detail.title.text())
+        self.assertEqual(page.tables["t1wide"].rowCount(), 1); self.assertEqual(page.tables["t1elite"].rowCount(), 1)
+        self.assertEqual(page.tables["t1wide"].item(0,1).text(),"AL")
         window.close()
 
     def test_yeni_halka_arz_guclu_olmasa_da_ayri_sekmede_gorunur(self):
@@ -58,9 +64,10 @@ class DashboardUiTests(unittest.TestCase):
         }])
         page.load_results(frame, "1 hisse tarandi")
         self.assertEqual(6, page.tabs.count())
-        self.assertEqual(1, page.tables["ipo"].rowCount())
-        self.assertEqual("YENI", page.tables["ipo"].item(0,0).text())
-        self.assertEqual(1, page.tables["t1wide"].rowCount())
+        self.assertEqual(0, page.tables["ipo"].rowCount())
+        self.assertEqual(0, page.tables["t1wide"].rowCount())
+        self.assertEqual(1,len(page._full))
+        self.assertFalse(page.tabs.isTabVisible(5))
         window.close()
 
     def test_supported_sizes_have_no_horizontal_table_scroll(self):

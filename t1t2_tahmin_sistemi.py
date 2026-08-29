@@ -16,6 +16,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -23,7 +24,7 @@ import pandas as pd
 from fiyat_limitleri import fiyat_adimi, pay_fiyat_limitleri
 
 
-DATA_VERSION = "t1t2-pit-v2"
+DATA_VERSION = "t1t2-pit-v3"
 MODEL_VERSION = "t1t2-reference-v2"
 HORIZONS = ("T+1", "T+2")
 TARGETS_BY_HORIZON = {
@@ -32,6 +33,25 @@ TARGETS_BY_HORIZON = {
 }
 TARGETS = tuple(sorted({target for values in TARGETS_BY_HORIZON.values() for target in values}))
 NORMAL_SECURITY_TYPES = {"NORMAL_PAY"}
+ISTANBUL = ZoneInfo("Europe/Istanbul")
+
+
+def snapshot_is_timely(as_of: Any, created_at: Any | None = None) -> bool:
+    """Snapshot'in sonucu gorerek uretilmedigini seans penceresiyle denetler."""
+    cutoff=pd.Timestamp(as_of)
+    cutoff_date=cutoff.date()
+    created=pd.Timestamp(created_at or datetime.now(timezone.utc))
+    if created.tzinfo is None:
+        created=created.tz_localize("UTC")
+    local=created.tz_convert(ISTANBUL)
+    if local.date()==cutoff_date:
+        return (local.hour,local.minute)>=(18,15)
+    if local.date()>cutoff_date:
+        if local.weekday() >= 5:
+            return True
+        # Ertesi islem seansi acildiktan sonra T kapanis tahmini uretilemez.
+        return (local.hour,local.minute)<(10,0)
+    return False
 
 
 @dataclass(frozen=True)
@@ -130,8 +150,10 @@ def point_in_time_features(frame: pd.DataFrame, as_of: Any,
     mf = typical*v
     positive = mf.where(typical.diff() > 0, 0).rolling(14).sum()
     negative = mf.where(typical.diff() < 0, 0).rolling(14).sum()
-    mfi = 100-100/(1+positive/negative.replace(0, np.nan))
-    multiplier = ((c-l)-(h-c))/(h-l).replace(0, np.nan)
+    ratio = positive/negative.replace(0, np.nan)
+    mfi = (100-100/(1+ratio)).where(negative.ne(0), 100.0).where((positive+negative).ne(0), 50.0)
+    # Tavan kilitli gibi High=Low barlar tum model girdisini NaN yapmamali.
+    multiplier = (((c-l)-(h-c))/(h-l).replace(0, np.nan)).fillna(0.0)
     cmf = (multiplier*v).rolling(20).sum()/v.rolling(20).sum().replace(0, np.nan)
     obv = (np.sign(c.diff()).fillna(0)*v).cumsum()
     last = float(c.iloc[-1]); day_range = float(h.iloc[-1]-l.iloc[-1])
@@ -260,7 +282,7 @@ def _vectorized_feature_frame(work: pd.DataFrame) -> pd.DataFrame:
     tr=pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1); atr=tr.ewm(alpha=1/14,adjust=False).mean()
     typical=(h+l+c)/3; mf=typical*v
     positive=mf.where(typical.diff()>0,0).rolling(14).sum(); negative=mf.where(typical.diff()<0,0).rolling(14).sum()
-    multiplier=((c-l)-(h-c))/(h-l).replace(0,np.nan); obv=(np.sign(c.diff()).fillna(0)*v).cumsum()
+    multiplier=(((c-l)-(h-c))/(h-l).replace(0,np.nan)).fillna(0.0); obv=(np.sign(c.diff()).fillna(0)*v).cumsum()
     result=pd.DataFrame(index=work.index); result["price"]=c
     for n in (1,2,3,5,10,20): result[f"ret_{n}"]=c.pct_change(n)
     result["price_acceleration_2"]=c.pct_change().diff().rolling(2).mean()
@@ -274,7 +296,9 @@ def _vectorized_feature_frame(work: pd.DataFrame) -> pd.DataFrame:
     result["relative_volume"]=v/v.rolling(20).mean(); result["volume_persistence"]=(v>v.rolling(20).median()).rolling(5).mean()
     result["obv_slope_5"]=(obv-obv.shift(5))/v.rolling(20).mean().clip(lower=1)
     result["cmf20"]=(multiplier*v).rolling(20).sum()/v.rolling(20).sum().replace(0,np.nan)
-    result["mfi14"]=100-100/(1+positive/negative.replace(0,np.nan)); result["turnover20"]=c*v.rolling(20).mean()
+    ratio=positive/negative.replace(0,np.nan)
+    result["mfi14"]=(100-100/(1+ratio)).where(negative.ne(0),100.0).where((positive+negative).ne(0),50.0)
+    result["turnover20"]=c*v.rolling(20).mean()
     result["estimated_slippage"]=(2_000_000/result["turnover20"].clip(lower=1)).clip(.0002,.03)
     result["move_realized_5_atr"]=(c-c.shift(5))/atr.clip(lower=.01)
     return result
@@ -302,7 +326,9 @@ def predict_symbol(symbol: str, frame: pd.DataFrame, as_of: Any, horizon: str,
     analysis_type="YENI_HALKA_ARZ" if short_history else "T1T2_AKSAM"
     identity = CacheIdentity(symbol, pd.Timestamp(as_of).isoformat(), horizon, analysis_type, MODEL_VERSION)
     required_features={name for item in (artifacts or {}).values() if item.horizon==horizon for name in item.feature_names}
-    missing = tuple(sorted((required_features|{"relative_strength_bist_5", "relative_strength_sector_5"})-set(features)))
+    # Benchmark/sektor yoklugu ortak karar katmaninda ayri belirsizliktir.
+    # Burada sadece aktif artefaktin gercek girdileri modeli kapatabilir.
+    missing = tuple(sorted(required_features-set(features)))
     reasons, risks = _feature_reasons(features)
     artifacts = artifacts or {}
     probabilities: dict[str, float | None] = {}
@@ -322,15 +348,15 @@ def predict_symbol(symbol: str, frame: pd.DataFrame, as_of: Any, horizon: str,
                                  if artifact.calibration_method=="sigmoid" else
                                  float(np.interp(raw,artifact.isotonic_x,artifact.isotonic_y))*100)
     calibrated = bool(probabilities) and all(value is not None for value in probabilities.values())
-    if security_type not in NORMAL_SECURITY_TYPES:
-        status = "KARAR URETILEMEDI - MENKUL TURU MODELI YOK"
-        risks = (*risks, f"Menkul turu ayrica modellenmeli: {security_type}")
-    elif short_history:
+    if short_history:
         moved=features.get("ret_1",0)>=.08 or features.get("move_realized_5_atr",0)>=3
         status = ("HAREKET KACTI - YENI HALKA ARZ" if moved else
                   "YENI HALKA ARZ IZLEME - KALIBRE EDILMEMIS")
         risks = (*risks, f"Yalniz {len(work)} seans var; standart model uygulanmadi")
         if moved: risks=(*risks,"Hareket baslamis; yeni alim icin gec giris riski")
+    elif security_type not in NORMAL_SECURITY_TYPES:
+        status = "MENKUL TURU DOGRULANMADI - GENIS RADARDA IZLE"
+        risks = (*risks, f"Menkul turu ayrica dogrulanmali: {security_type}")
     elif not calibrated:
         status = "ON DEGERLENDIRME - KALIBRE EDILMEMIS"
         risks = (*risks, "T+1/T+2 modeli hazir veya kalibre degil")
@@ -415,24 +441,13 @@ def cross_sectional_rank(predictions: Iterable[Prediction]) -> list[dict[str, An
 
 
 def radar_lists(predictions: Iterable[Prediction], wide_limit: int = 30) -> dict[str,list[dict[str,Any]]]:
-    """Kaçirmama odakli genis radar ile kati seçkin listeyi ayirir.
-
-    Seçkin liste yalnız kalibre yüzdeleri bulunan, likidite/hareket risklerinde
-    açık engel taşımayan ve kesitsel ilk %5 içinde kalan hisselerden oluşur.
-    Liste dolsun diye bu koşullar gevşetilmez.
-    """
+    """Geriye uyumlu API; karar formulu ortak CandidateDecision motorundadir."""
+    from aday_karar_sistemi import build_candidate_decisions
     ranked=cross_sectional_rank(predictions)
-    wide=[row for row in ranked if row.get("calibrated") and row.get("security_type") in NORMAL_SECURITY_TYPES][:wide_limit]
-    elite=[]
-    for row in ranked:
-        probs=row.get("probabilities",{}); risks=" ".join(row.get("risks",())).upper()
-        calibrated=all(probs.get(name) is not None for name in ("max_7","max_8","limit_up"))
-        if (calibrated and row.get("percentile",0)>=95 and probs["max_7"]>=20 and
-                probs["max_8"]>=10 and "KAYMA" not in risks and "ILERLEMIS" not in risks and
-                row.get("security_type") in NORMAL_SECURITY_TYPES and row.get("levels_valid") and
-                row.get("net_ev_pct") is not None and row["net_ev_pct"]>0):
-            elite.append(row)
-    return {"wide":wide,"elite":elite[:5]}
+    contexts={row["symbol"]:{"data_freshness":"GUNCEL"} for row in ranked}
+    decisions=build_candidate_decisions(ranked,market_regime="YATAY",contexts=contexts,wide_limit=wide_limit)
+    return {"wide":[item.dict() for item in decisions if item.eligible_wide],
+            "elite":[item.dict() for item in decisions if item.eligible_elite][:5]}
 
 
 def ranking_metrics(rows: pd.DataFrame, score_column: str, label_column: str,
@@ -622,7 +637,8 @@ class EveningSnapshotStore:
             key = row.get("cache_key") or CacheIdentity(row["symbol"], row["as_of_timestamp"], row["horizon"], "T1T2_AKSAM", row.get("model_version", MODEL_VERSION)).key
             with closing(self._connect()) as db:
                 cur = db.execute("INSERT INTO t1t2_snapshots(snapshot_key,symbol,as_of,horizon,rank,score,payload_json) VALUES(?,?,?,?,?,?,?)",
-                                 (key,row["symbol"],row["as_of_timestamp"],row["horizon"],row.get("rank"),row.get("raw_score"),json.dumps(dict(row),ensure_ascii=False,default=str)))
+                                 (key,row["symbol"],row["as_of_timestamp"],row["horizon"],row.get("rank"),
+                                  row.get("reference_score",row.get("raw_score")),json.dumps(dict(row),ensure_ascii=False,default=str)))
                 db.commit(); return True, int(cur.lastrowid)
         except (sqlite3.Error, OSError, KeyError, TypeError) as exc: return False, str(exc)
 
@@ -658,14 +674,16 @@ class EveningSnapshotStore:
         """Kayitli tahmin/gerceklesmelerden T+1 ve T+2 siralama performansi."""
         try:
             with closing(self._connect()) as db:
-                rows=db.execute("""SELECT s.as_of,s.horizon,s.rank,s.payload_json,o.payload_json
+                rows=db.execute("""SELECT s.as_of,s.horizon,s.rank,s.payload_json,o.payload_json,s.created_at
                     FROM t1t2_snapshots s JOIN t1t2_outcomes o ON o.snapshot_id=s.id
                     ORDER BY s.as_of,s.horizon,s.rank""").fetchall()
         except sqlite3.Error:
             return {"status":"SQLITE_HATASI","total":0,"horizons":{}}
         records=[]
-        for as_of,horizon,rank,prediction_json,outcome_json in rows:
+        for as_of,horizon,rank,prediction_json,outcome_json,created_at in rows:
             try:
+                if not snapshot_is_timely(as_of,created_at):
+                    continue
                 prediction=json.loads(prediction_json); outcome=json.loads(outcome_json)
                 records.append({"as_of":as_of,"horizon":horizon,"rank":rank,
                                 "p7":prediction.get("probabilities",{}).get("max_7"),
@@ -698,23 +716,101 @@ class EveningSnapshotStore:
         """Yalniz gercek snapshotlardan, sonradan tahmin uydurmadan guclu hareket denetimi."""
         try:
             with closing(self._connect()) as db:
-                rows=db.execute("""SELECT s.symbol,s.as_of,s.horizon,s.rank,s.payload_json,o.payload_json
+                rows=db.execute("""SELECT s.symbol,s.as_of,s.horizon,s.rank,s.payload_json,o.payload_json,s.created_at
                     FROM t1t2_snapshots s JOIN t1t2_outcomes o ON o.snapshot_id=s.id
                     ORDER BY s.as_of DESC,s.horizon,s.rank""").fetchall()
         except sqlite3.Error: return []
         result=[]
-        for symbol,as_of,horizon,rank,payload_json,outcome_json in rows:
+        for symbol,as_of,horizon,rank,payload_json,outcome_json,created_at in rows:
             try:
+                if not snapshot_is_timely(as_of,created_at): continue
                 prediction=json.loads(payload_json); outcome=json.loads(outcome_json)
                 if float(outcome.get("max_return_pct",-999))<minimum_return: continue
                 result.append({"Tarih":as_of,"Hisse":symbol.replace(".IS",""),"Vade":horizon,
                                "Gerçekleşen Maksimum %":round(float(outcome["max_return_pct"]),2),
                                "Tavan Gördü":bool(outcome.get("hit_limit_up")),"Önceki Sıra":rank,
-                               "Geniş Radarda":rank is not None and int(rank)<=30,
-                               "Seçkin Aday":bool(prediction.get("levels_valid") and
-                                                   prediction.get("net_ev_pct") is not None and
-                                                   prediction.get("net_ev_pct")>0 and int(rank or 999)<=5)})
+                               "Geniş Radarda":bool(prediction.get("eligible_wide",rank is not None and int(rank)<=50)),
+                               "Seçkin Aday":bool(prediction.get("eligible_elite",False))})
             except (ValueError,TypeError,json.JSONDecodeError): continue
+        return result
+
+    def missed_moves_report(self, as_of: str | None = None, horizon: str = "T+1") -> dict[str, Any]:
+        """Snapshot ile ayri gerceklesme tablosundan gunluk kacirma raporu."""
+        try:
+            with closing(self._connect()) as db:
+                query="""SELECT s.symbol,s.as_of,s.rank,s.payload_json,o.payload_json,s.created_at
+                         FROM t1t2_snapshots s JOIN t1t2_outcomes o ON o.snapshot_id=s.id
+                         WHERE s.horizon=?"""
+                args: list[Any]=[horizon]
+                if as_of is not None:
+                    query += " AND s.as_of=?"; args.append(as_of)
+                query += " ORDER BY s.as_of,s.rank"
+                rows=db.execute(query,args).fetchall()
+        except sqlite3.Error as exc:
+            return {"status":"SQLITE_HATASI","error":str(exc),"metrics":{},"missed":[]}
+        records=[]
+        invalid_snapshots=0
+        for symbol,date,rank,prediction_json,outcome_json,created_at in rows:
+            try:
+                if not snapshot_is_timely(date,created_at):
+                    invalid_snapshots+=1; continue
+                pred=json.loads(prediction_json); outcome=json.loads(outcome_json)
+                records.append({"symbol":symbol,"as_of":date,"rank":rank,
+                                "wide":bool(pred.get("eligible_wide",False)),
+                                "elite":bool(pred.get("eligible_elite",False)),
+                                "decision":pred.get("final_decision"),
+                                "gate_codes":pred.get("gate_codes",[]),**outcome})
+            except (ValueError,TypeError,json.JSONDecodeError):
+                continue
+        frame=pd.DataFrame(records)
+        if frame.empty:
+            return {"status":"VERI_YOK","metrics":{},"missed":[],"rows":[],"invalid_snapshots":invalid_snapshots}
+        metrics={"scanned":len(frame),"actual_7":int(frame.hit_7.sum()),"actual_8":int(frame.hit_8.sum()),
+                 "actual_limit_up":int(frame.hit_limit_up.sum()),
+                 "closed_limit_up":int(frame.get("closed_at_limit_up",pd.Series(dtype=float)).sum())}
+        for k in (1,3,5,10,20):
+            top=frame[pd.to_numeric(frame["rank"],errors="coerce")<=k]
+            metrics[f"precision_at_{k}"]=float(top.hit_7.mean()) if len(top) else None
+            metrics[f"recall_at_{k}"]=float(top.hit_7.sum()/frame.hit_7.sum()) if frame.hit_7.sum() else None
+        top20=frame[pd.to_numeric(frame["rank"],errors="coerce")<=20]
+        metrics["limit_recall_at_20"]=(float(top20.hit_limit_up.sum()/frame.hit_limit_up.sum())
+                                        if frame.hit_limit_up.sum() else None)
+        metrics["seven_recall_at_20"]=metrics.get("recall_at_20")
+        top5=frame[pd.to_numeric(frame["rank"],errors="coerce")<=5]
+        metrics["false_positive_rate"]=(float((top5.hit_7==0).mean()) if len(top5) else None)
+        winners=frame[frame.hit_7.astype(bool)]
+        missed=[]
+        for row in winners[~winners.wide.astype(bool)].to_dict("records"):
+            missed.append({"symbol":row["symbol"],"as_of":row["as_of"],"rank":row["rank"],
+                           "max_return_pct":row.get("max_return_pct"),"hit_limit_up":row.get("hit_limit_up"),
+                           "gate_codes":row.get("gate_codes") or ["OUTSIDE_TOP_PERCENTILE"],
+                           "miss_type":"MODEL_OR_DATA" if row.get("rank") is None or int(row.get("rank") or 999)>50 else "FILTER"})
+        return {"status":"OK","metrics":metrics,"missed":missed,"rows":records,"invalid_snapshots":invalid_snapshots}
+
+    def write_daily_missed_moves_reports(self, folder: str | Path) -> dict[str, int]:
+        """Sonuclanmis her kesim/vade icin degistirilemez JSON denetimi yaz."""
+        target=Path(folder); target.mkdir(parents=True,exist_ok=True)
+        try:
+            with closing(self._connect()) as db:
+                pairs=db.execute("""SELECT DISTINCT s.as_of,s.horizon FROM t1t2_snapshots s
+                    JOIN t1t2_outcomes o ON o.snapshot_id=s.id ORDER BY s.as_of,s.horizon""").fetchall()
+        except sqlite3.Error:
+            return {"written":0,"existing":0,"skipped":0}
+        result={"written":0,"existing":0,"skipped":0}
+        for as_of,horizon in pairs:
+            report=self.missed_moves_report(as_of,horizon)
+            if report.get("status")!="OK":
+                result["skipped"]+=1; continue
+            date=str(as_of)[:10]; path=target/f"kacirilan_hareketler_{date}_{horizon.replace('+','plus')}.json"
+            try:
+                # x modu daha once uretilmis gunluk denetimi degistirmez.
+                with path.open("x",encoding="utf-8") as handle:
+                    json.dump({"as_of":as_of,"horizon":horizon,**report},handle,ensure_ascii=False,indent=2,default=str)
+                result["written"]+=1
+            except FileExistsError:
+                result["existing"]+=1
+            except OSError:
+                result["skipped"]+=1
         return result
 
 
@@ -754,7 +850,7 @@ def evaluate_prediction(snapshot: Mapping[str,Any], future_bars: pd.DataFrame) -
     for row in bars.itertuples():
         ceiling=float(pay_fiyat_limitleri(prior).ust_limit); last_ceiling=ceiling
         ceiling_hits.append(float(row.High)>=ceiling); prior=float(row.Close)
-    target=snapshot.get("target_7"); stop=snapshot.get("stop"); target_first=None
+    target=snapshot.get("target",snapshot.get("target_7")); stop=snapshot.get("stop"); target_first=None
     if target and stop:
         target_first=0
         for row in bars.itertuples():

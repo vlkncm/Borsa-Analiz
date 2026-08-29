@@ -1,5 +1,5 @@
 #define MyAppName "Borsa Analiz Pro MAX"
-#define MyAppVersion "10.3.0"
+#define MyAppVersion "10.3.1"
 #define MyAppPublisher "V Software"
 #define MyAppExeName "BorsaAnalizProMAX.exe"
 
@@ -11,7 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=SetupOutput
-OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v10.3.0
+OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v10.3.1
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -34,6 +34,8 @@ Source: "dist\BorsaAnalizProMAX\*"; DestDir: "{app}"; Flags: ignoreversion recur
 Source: "KULLANIM_KOSULLARI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "SORUMLULUK_REDDI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "GIZLILIK_BILDIRIMI.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "KULLANIM_VE_YATIRIM_REHBERI.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "KACIRILAN_HAREKETLER_2026-08-28.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Borsa Analiz Pro MAX"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

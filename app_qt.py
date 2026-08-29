@@ -1,6 +1,8 @@
 import os
 import sys
 import traceback
+import uuid
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -11,7 +13,10 @@ from sade_karar_modeli import (
     orta_vadeden_kisa_adaylari_cikar, sade_firsatlar, sure_metni, vade_rapor_adaylari,
 )
 from bist_evreni import likit_120_sec
-from bist30 import normalize_bist_sembolu
+from bist30 import bist30_hisseleri, normalize_bist_sembolu
+from analysis_orchestration import (
+    ANALYSIS_UNIVERSES, build_analysis_universes, tag_analysis_result,
+)
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import (
@@ -23,19 +28,20 @@ from PySide6.QtWidgets import (
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QTextEdit, QMessageBox, QFrame, QLineEdit, QAbstractItemView, QTabWidget,
     QDialog, QGridLayout, QScrollArea, QSizePolicy, QComboBox, QDoubleSpinBox,
-    QCheckBox
+    QCheckBox, QProgressBar
 )
 from dashboard_ui import (
-    APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
+    APP_STYLE, InvestmentGuidePage, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
     Sidebar, T1T2PerformanceDashboard, TopHeader,
 )
 from responsive_ui import (
     AnalysisContext, AnalysisDetailWindow, BaseAnalysisPage, PROFILE_COMPACT,
     ResponsiveResultTable, profile_for_width,
 )
+from scan_progress import ScanCoordinator, TERMINAL_STATES
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.3.0"
+APP_VERSION = "10.3.1"
 _CRASH_STREAM = None
 
 
@@ -460,7 +466,9 @@ class SimpleTable(BaseAnalysisPage):
     def __init__(self, title, subtitle="", analysis_id=None, analysis_type="Hisse"):
         slug=analysis_id or "analysis_"+"".join(ch.lower() if ch.isalnum() else "_" for ch in title).strip("_")
         super().__init__(slug,title,subtitle,analysis_type=analysis_type)
-        self.info=self.state_widget; self._data=pd.DataFrame(); self._title=title
+        self.info=self.state_widget; self._data=pd.DataFrame(); self._raw_data=pd.DataFrame(); self._title=title
+        normalized=title.casefold().replace("ı","i")
+        self.simple_investor_mode=any(token in normalized for token in ("kisa vade","orta vade","50 tl","fon karar","adaylar"))
         self.table.detail_requested.connect(lambda record,_context:self.row_selected.emit(record))
 
     def _emit_selected_row(self, row, _column):
@@ -491,7 +499,25 @@ class SimpleTable(BaseAnalysisPage):
     def load(self, df):
         if df is None:
             df = pd.DataFrame()
-        self._data = df.reset_index(drop=True).copy()
+        self._raw_data=df.reset_index(drop=True).copy()
+        if self.simple_investor_mode:
+            from sade_yatirimci_modu import MAIN_COLUMNS, simple_investor_frame
+            normalized_title=self._title.casefold().replace("ı","i")
+            analysis=("daily_trade" if "adaylar" in normalized_title else
+                      "short" if "kisa" in normalized_title else
+                      "medium" if "orta" in normalized_title else
+                      "under50" if "50 tl" in normalized_title else "fund_analysis")
+            display=simple_investor_frame(df,analysis,max_results=5)
+            self._data=display.copy(); display_columns=MAIN_COLUMNS
+            self.table.configure_columns(display_columns,display_columns,display_columns)
+            self.table.load_frame(display,display_columns,display_columns)
+            self.summary_bar.update_metrics({"Taranan":len(df),"Gösterilen":len(display),"En Güçlü":len(display),"Veri Zamanı":datetime.now().strftime("%H:%M")})
+            if display.empty:
+                self.info.set_empty("Bugün bu analiz için yeterince güvenilir aday bulunamadı.")
+            else:
+                self.info.set_ready(f"En güçlü {len(display)} sonuç gösteriliyor. Teknik ayrıntılar Detay düğmesindedir.")
+            return
+        self._data = self._raw_data.copy()
         compact=self._preferred_columns(list(df.columns)); standard=compact+([c for c in df.columns if c not in compact][:1])
         display_columns=standard[:9]
         self.table.configure_columns(compact,standard,display_columns); self.table.load_frame(df,display_columns,display_columns)
@@ -1188,6 +1214,8 @@ class TrackPage(QWidget):
         self.read_list = takip_listesini_oku
         self.write_list = takip_listesini_yaz
         self.get_prices = takip_fiyatlarini_getir
+        from portfoy_kayitlari import load_positions
+        self.position_path=veri_klasoru()/"portfoy_kayitlari.json"; self.positions=load_positions(self.position_path)
         self.symbols = self.read_list()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -1206,6 +1234,16 @@ class TrackPage(QWidget):
         top.addWidget(add)
         top.addWidget(refresh)
         layout.addLayout(top)
+        position_row=QHBoxLayout()
+        self.position_symbol=QLineEdit(); self.position_symbol.setPlaceholderText("Portföy hissesi: ASELS")
+        self.position_quantity=QLineEdit(); self.position_quantity.setPlaceholderText("Adet")
+        self.position_cost=QLineEdit(); self.position_cost.setPlaceholderText("Alış fiyatı")
+        self.position_date=QLineEdit(datetime.now().strftime("%Y-%m-%d")); self.position_date.setPlaceholderText("Alış tarihi YYYY-AA-GG")
+        self.position_target=QLineEdit(); self.position_target.setPlaceholderText("Hedef (isteğe bağlı)")
+        self.position_stop=QLineEdit(); self.position_stop.setPlaceholderText("Stop (isteğe bağlı)")
+        save_position=QPushButton("PORTFÖYE KAYDET"); save_position.clicked.connect(self.save_position)
+        for widget in (self.position_symbol,self.position_quantity,self.position_cost,self.position_date,self.position_target,self.position_stop,save_position): position_row.addWidget(widget)
+        layout.addLayout(position_row)
         self.table = ResponsiveResultTable("portfolio")
         self.table.set_context(AnalysisContext("portfolio",analysis_type="Hisse"))
         self.table.detail_requested.connect(self._detail_window.show_record)
@@ -1221,7 +1259,8 @@ class TrackPage(QWidget):
         self.show_symbols()
 
     def show_symbols(self):
-        df = pd.DataFrame({"Hisse": [s.replace(".IS", "") for s in self.symbols]})
+        all_symbols=sorted(set(self.symbols)|{p.symbol+".IS" for p in self.positions})
+        df = pd.DataFrame({"Hisse": [s.replace(".IS", "") for s in all_symbols]})
         self.load(df)
 
     def refresh(self):
@@ -1233,19 +1272,47 @@ class TrackPage(QWidget):
             return
         self.symbols.remove(symbol)
         self.write_list(self.symbols)
+        from portfoy_kayitlari import load_positions,remove_position
+        remove_position(self.position_path,symbol); self.positions=load_positions(self.position_path)
         self.show_symbols()
 
+    def save_position(self):
+        from portfoy_kayitlari import PortfolioPosition,load_positions,upsert_position
+        try:
+            symbol=normalize_symbol(self.position_symbol.text()).replace(".IS","")
+            def optional(widget):
+                text=widget.text().strip().replace(",","."); return float(text) if text else None
+            position=PortfolioPosition(symbol,int(self.position_quantity.text()),float(self.position_cost.text().replace(",",".")),
+                                       self.position_date.text().strip(),optional(self.position_target),optional(self.position_stop))
+            upsert_position(self.position_path,position); self.positions=load_positions(self.position_path)
+            normalized=normalize_symbol(symbol)
+            if normalized not in self.symbols: self.symbols.append(normalized); self.write_list(self.symbols)
+            self.position_symbol.clear(); self.position_quantity.clear(); self.position_cost.clear(); self.position_target.clear(); self.position_stop.clear()
+            self.refresh()
+        except (ValueError,TypeError) as exc:
+            QMessageBox.warning(self,"Portföy kaydı","Hisse, pozitif adet, alış fiyatı ve YYYY-AA-GG tarihi girin.\n"+str(exc))
+
     def load(self, df):
-        df=df.reset_index(drop=True).copy(); df["İşlem"]="Sil"
-        preferred=[name for name in ("Hisse","Adet","Maliyet","Güncel","Güncel Fiyat","Kâr/Zarar","Ana Karar","Kâr Alma Miktarı","İşlem") if name in df.columns]
-        if not preferred: preferred=list(df.columns[:8])
-        self.table.configure_columns(preferred,preferred,list(df.columns)); self.table.load_frame(df)
-        for r, (_, row) in enumerate(df.iterrows()):
-            symbol = normalize_symbol(row.get("Hisse", ""))
-            remove_button = QPushButton("SİL")
-            remove_button.setToolTip(f"{symbol.replace('.IS', '')} hissesini takip listesinden çıkar")
-            remove_button.clicked.connect(lambda checked=False, value=symbol: self.remove(value))
-            self.table.setCellWidget(r, list(df.columns).index("İşlem"), remove_button)
+        from portfoy_kayitlari import portfolio_decision
+        track_columns=["Hisse","Karar","Güncel fiyat","Günlük değişim","Alış fiyatı","Kâr/zarar","Hedef","Stop","Hedefe tahmini süre","Son fiyat zamanı"]
+        source=pd.DataFrame() if df is None else df.reset_index(drop=True).copy(); by_symbol={p.symbol.upper():p for p in self.positions}; rows=[]
+        for record in source.to_dict("records"):
+            symbol=str(record.get("Hisse","")).replace(".IS","").upper(); position=by_symbol.get(symbol)
+            current=record.get("Son Fiyat",record.get("Güncel Fiyat")); result=portfolio_decision(position,current) if position else {"decision":"BEKLE","profit_pct":None,"reason":"Takip listesinde; yeni değerlendirme bekleniyor."}
+            if position:
+                decision=result["decision"]; buy_price=position.buy_price; pnl=result["profit_pct"]
+                target=position.target; stop=position.stop
+            else:
+                decision="BEKLE" if current is not None else "VERİ YETERSİZ"; buy_price=None; pnl=None; target=None; stop=None
+            daily=record.get("Günlük değişim",record.get("Günlük Değişim %",record.get("Değişim %")))
+            timestamp=record.get("Son fiyat zamanı",record.get("Veri Zamanı",record.get("Fiyat Zamanı","—")))
+            rows.append({"Hisse":symbol,"Karar":decision,"Güncel fiyat":current if current is not None else "Fiyat alınamadı",
+                         "Günlük değişim":daily if daily is not None else "—","Alış fiyatı":buy_price if buy_price is not None else "—",
+                         "Kâr/zarar":f"%{pnl:.2f}" if pnl is not None else "—","Hedef":target if target is not None else "—",
+                         "Stop":stop if stop is not None else "—","Hedefe tahmini süre":"2–4 hafta" if position else "Hesaplanamadı",
+                         "Son fiyat zamanı":timestamp})
+        display=pd.DataFrame(rows,columns=track_columns)
+        self.table.configure_columns(track_columns,track_columns,track_columns); self.table.load_frame(display,track_columns,track_columns)
     def resizeEvent(self,event):
         super().resizeEvent(event); self.table.apply_profile(profile_for_width(self.width()))
 
@@ -1362,22 +1429,25 @@ class FundAnalysisPage(QWidget):
 class DailyTradeWorker(QObject):
     finished = Signal(bool, object, str)
     progress = Signal(str)
+    structured_progress = Signal(int, int, str)
 
-    def __init__(self, interval, account, risk, min_rr, confirmed_only):
+    def __init__(self, interval, account, risk, min_rr, confirmed_only, symbols=None):
         super().__init__()
         self.interval, self.account, self.risk = interval, account, risk
         self.min_rr, self.confirmed_only = min_rr, confirmed_only
+        self.symbols = list(symbols) if symbols is not None else None
 
     def run(self):
         try:
             from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
             from gunluk_trade_motoru import gunluk_trade_analiz
             rows, attempted, received, unavailable = [], 0, 0, 0
-            symbols = tum_bist_hisseleri()
+            symbols = list(self.symbols) if self.symbols is not None else tum_bist_hisseleri()
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
                 self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
+                self.structured_progress.emit(index, len(symbols), "Günlük Trade · Tüm Aktif BIST")
                 row = gunluk_trade_analiz(
                     symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
                     risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
@@ -1398,6 +1468,9 @@ class DailyTradeWorker(QObject):
 
 class DailyTradePage(QWidget):
     """Gecikme ve kanıt durumunu gizlemeden sunan günlük trade karar-destek sayfası."""
+    central_finished = Signal(str, bool, object, str)
+    central_progress = Signal(str, int, int, str)
+
     def __init__(self):
         super().__init__()
         self.responsive_layout = True
@@ -1415,7 +1488,7 @@ class DailyTradePage(QWidget):
         header_layout = QVBoxLayout(header); header_layout.setContentsMargins(16, 12, 16, 12)
         self.eyebrow = QLabel("YÜKSEK HAREKET RADARI"); self.eyebrow.setObjectName("eyebrow")
         heading = QLabel("Borsa Analiz Pro MAX"); heading.setObjectName("dailyHeading")
-        subtitle = QLabel("Günlük Trade  ·  Karar destek ve kâğıt işlem ekranı"); subtitle.setObjectName("dailySubtitle")
+        subtitle = QLabel("Günlük Trade · Tüm Aktif BIST · Karar destek ve kâğıt işlem ekranı"); subtitle.setObjectName("dailySubtitle")
         header_layout.addWidget(self.eyebrow); header_layout.addWidget(heading); header_layout.addWidget(subtitle)
         nav = QHBoxLayout(); nav.addStretch(); self.nav_buttons=[]
         for caption, target in (("Günlük Trade", self), ("Kısa Vade", None), ("Orta Vade", None), ("Tek Hisse", None)):
@@ -1455,6 +1528,7 @@ class DailyTradePage(QWidget):
         for widget in (self.scan_button, self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             controls.addWidget(widget)
         self.scan_button.setText("Taramayı yenile")
+        self.scan_button.setVisible(False)
         self.options_button = QPushButton("Filtreler")
         self.options_button.setObjectName("dailyNav")
         self.options_button.clicked.connect(self._toggle_options)
@@ -1485,23 +1559,27 @@ class DailyTradePage(QWidget):
         for widget in (self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             widget.setVisible(visible)
 
-    def start_scan(self):
+    def start_scan(self, run_id=None, symbols=None):
         if self.thread and self.thread.isRunning():
-            return
+            return False
+        self._central_run_id = run_id
         self.scan_button.setEnabled(False)
         self.status.setText("Aktif BIST evreni tamamlanmış intraday mumlarla taranıyor...")
         self.thread = QThread(self)
         self.worker = DailyTradeWorker(self.interval.currentText(), self.account.value(), self.risk.value(),
-                                       self.min_rr.value(), self.confirmed.isChecked())
+                                       self.min_rr.value(), self.confirmed.isChecked(), symbols=symbols)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.progress.connect(self.status.setText)
+        self.worker.structured_progress.connect(
+            lambda done, total, message: self.central_progress.emit(run_id or "", done, total, message))
         self.worker.finished.connect(self.scan_done)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self._thread_finished)
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
+        return True
 
     def _thread_finished(self):
         self.worker = None
@@ -1523,13 +1601,14 @@ class DailyTradePage(QWidget):
             display["_rr"] = pd.to_numeric(display.get("Risk/Getiri", pd.Series(0, index=display.index)), errors="coerce").fillna(0)
             selected = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
             self._detail_records = selected.drop(columns=["_öncelik", "_pot", "_rr"], errors="ignore").to_dict("records")
-            display = self._compact_display(self._detail_records)
+            display = pd.DataFrame(self._detail_records)
         if display.empty and not self.report_fallback.empty:
             self._detail_records = self.report_fallback.head(5).to_dict("records")
-            display = self._compact_display(self._detail_records)
+            display = pd.DataFrame(self._detail_records)
         elif display.empty:
             self._detail_records = []
         self.table.load(display)
+        self._detail_records=self.table._data.to_dict("records")
         self._update_summary(display)
         self._resize_trade_columns()
         if not ok:
@@ -1541,6 +1620,12 @@ class DailyTradePage(QWidget):
         else:
             counts = pd.Series([item.get("Sonuç", item.get("Karar", "—")) for item in self._detail_records]).value_counts().to_dict()
             self.status.setText(f"Tarama tamamlandı: {counts} | Satıra tıklayarak ayrıntıları inceleyin.")
+        run_id = getattr(self, "_central_run_id", None)
+        if run_id:
+            tagged = tag_analysis_result(self.results, "daily_trade", run_id)
+            self.results = tagged
+            self.central_finished.emit(run_id, ok, tagged, message)
+            self._central_run_id = None
 
     @staticmethod
     def _compact_display(records):
@@ -1568,23 +1653,21 @@ class DailyTradePage(QWidget):
         if not 0 <= row < len(self._detail_records):
             return
         record = self._detail_records[row]
-        horizons = record.get("Ufuk Olasılıkları") or {}
-        horizon_parts = []
-        for day in (1, 3, 5):
-            value = horizons.get(day, horizons.get(str(day), {})) or {}
-            probability = value.get("probability")
-            label = "Yetersiz örnek" if probability is None else f"%{probability:.0f}"
-            ci = ("—" if value.get("ci_low") is None else f"%{value['ci_low']:.0f}–%{value['ci_high']:.0f}")
-            horizon_parts.append(f"{day} günde hedef olasılığı: {label} (n={value.get('sample_size', 0)}, %95 GA {ci})")
-        median = record.get("Başarılılarda Medyan Süre")
-        median_text = "Yetersiz örnek" if pd.isna(median) or median is None else f"{float(median):.1f} işlem günü"
+        reasons = record.get("Neden AL?", ())
+        if isinstance(reasons, str):
+            reasons = (reasons,)
+        changes = record.get("Karar Ne Zaman Değişir?", ())
+        if isinstance(changes, str):
+            changes = (changes,)
+        reason_text = "\n".join(f"• {item}" for item in reasons) or f"• {record.get('Kısa Neden', 'Açıklama bulunamadı.')}"
+        change_text = "\n".join(f"• {item}" for item in changes) or "• Yeni fiyat ve hacim verisiyle yeniden değerlendirilir."
         self.detail.setText(
-            f"{record.get('Hisse', '-')} — {record.get('Sonuç', '-')}\n" + "  |  ".join(horizon_parts) +
-            f"\nBaşarılılarda medyan süre: {median_text}  |  Net beklenti: {record.get('Net Beklenti %', '—')}  |  "
-            f"Risk/getiri: {record.get('Risk/Getiri', '—')}  |  RVOL: {record.get('RVOL', 'Kullanılamıyor')}  |  "
-            f"RS BIST/Sektör: {record.get('RS BIST 5', '—')} / {record.get('RS Sektör 5', '—')}\n"
-            f"Veri: {record.get('Veri Zamanı', 'bilinmiyor')}  |  Strateji: {record.get('Strateji Sürümü', '—')}  |  "
-            f"Formül: {record.get('Formül Sürümü', '—')}\nGerekçe: {record.get('Gerekçe', '—')}"
+            f"{record.get('Hisse', '-')} — {record.get('Karar', '—')}\n"
+            f"Beklenen süre: {record.get('Beklenen süre', 'Güvenilir şekilde hesaplanamadı')}\n"
+            f"Güven düzeyi: {record.get('Güven düzeyi', 'Ölçülemedi')}\n\n"
+            f"Neden bu karar?\n{reason_text}\n\n"
+            f"Ana risk\n• {record.get('Ana Risk', 'Canlı fiyat işlem öncesinde doğrulanmalı.')}\n\n"
+            f"Karar ne zaman değişir?\n{change_text}"
         )
 
     def _update_summary(self, display):
@@ -1657,6 +1740,10 @@ class HomePage(QWidget):
         self.clock = QLabel(datetime.now().strftime("%d.%m.%Y\n%H:%M")); self.clock.setObjectName("topMetric")
         for widget in (self.index_value, self.market, self.source): top_box.addWidget(widget, 1)
         top_box.addStretch(); top_box.addWidget(self.clock); layout.addWidget(top)
+        self.scan_status = QLabel("Tarama hazır — üstteki düğmeyle tüm hisse analizlerini başlatın.")
+        self.scan_status.setObjectName("subText"); self.scan_status.setWordWrap(True); layout.addWidget(self.scan_status)
+        self.scan_stats = QLabel("Taranan: —  ·  Veri alınan: —  ·  Veri alınamayan: —  ·  Son tarama: —")
+        self.scan_stats.setObjectName("muted"); layout.addWidget(self.scan_stats)
 
         summary = QFrame(); summary.setObjectName("dashboardPanel"); summary_box = QHBoxLayout(summary)
         left = QVBoxLayout(); title = QLabel("BUGÜNÜN DURUMU"); title.setObjectName("sectionTitle"); left.addWidget(title)
@@ -1731,7 +1818,7 @@ class DecisionPage(SimpleTable):
         if row < 0:
             self.live_result.setText("Önce bir aday seçin."); return
         data = self._data.iloc[row].to_dict()
-        parts = str(data.get("Alım Bölgesi", "")).replace("TL", "").replace("–", "-").split("-")
+        parts = str(data.get("Alım bölgesi", data.get("Alım Bölgesi", ""))).replace("TL", "").replace("–", "-").split("-")
         try:
             low, high = float(parts[0].strip()), float(parts[1].strip())
             price, stop, target = self.live_price.value(), float(data.get("Stop", 0)), float(data.get("Hedef", 0))
@@ -1758,22 +1845,30 @@ class FullMarketPage(SimpleTable):
         button = QPushButton("TÜM BIST TARAMASINI BAŞLAT")
         button.setObjectName("primary")
         button.clicked.connect(self.scan_requested.emit)
+        button.setVisible(False)
         self.layout().insertWidget(3, button)
 
 
 class Under50Worker(QObject):
     finished = Signal(bool, object, str)
     progress = Signal(str)
+    structured_progress = Signal(int, int, str)
+
+    def __init__(self, symbols=None):
+        super().__init__()
+        self.symbols = list(symbols) if symbols is not None else None
 
     def run(self):
         try:
             from bist_evreni import son_evren_durumu, tum_bist_hisseleri
             from veri_saglayici import get_daily_ohlcv
-            symbols, rows, attempted, received, unavailable, ipo_count = tum_bist_hisseleri(), [], 0, 0, 0, 0
+            symbols = list(self.symbols) if self.symbols is not None else tum_bist_hisseleri()
+            rows, attempted, received, unavailable, ipo_count = [], 0, 0, 0, 0
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
                 self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
+                self.structured_progress.emit(index, len(symbols), "50 TL Altı · geçerli fiyat filtresi uygulanıyor")
                 attempted += 1; got_data = False
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "1y")
@@ -1798,27 +1893,39 @@ class Under50Worker(QObject):
 
 
 class Under50Page(FullMarketPage):
+    central_finished = Signal(str, bool, object, str)
+    central_progress = Signal(str, int, int, str)
+
     def __init__(self):
-        super().__init__("50 TL ALTI HİSSE FIRSATLARI", "613 aktif BIST hissesi doğrudan taranır; iPhone ile aynı formülle en iyi 20 sonuç gösterilir.")
+        super().__init__("50 TL ALTI HİSSE FIRSATLARI", "50 TL Altı · Tüm Aktif BIST · Geçerli güncel fiyatı 50,00 TL ve altında olan en güçlü 5 aday.")
         self.thread = None; self.worker = None
         button = self.layout().itemAt(3).widget()
         button.clicked.disconnect()
-        button.setText("613 BIST HİSSESİNİ TARA")
+        button.setText("TÜM AKTİF BIST'İ TARA")
         button.clicked.connect(self.start_scan)
 
-    def start_scan(self):
-        if self.thread and self.thread.isRunning(): return
+    def start_scan(self, run_id=None, symbols=None):
+        if self.thread and self.thread.isRunning(): return False
+        self._central_run_id = run_id
         self.info.setText("Tüm BIST 50 TL altı taraması başlatılıyor…")
-        self.thread = QThread(self); self.worker = Under50Worker(); self.worker.moveToThread(self.thread)
+        self.thread = QThread(self); self.worker = Under50Worker(symbols=symbols); self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.info.setText)
+        self.worker.structured_progress.connect(
+            lambda done, total, message: self.central_progress.emit(run_id or "", done, total, message))
         self.worker.finished.connect(self.done); self.worker.finished.connect(self.worker.deleteLater)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self._clear); self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
+        return True
 
     def done(self, ok, frame, message):
-        if ok: self.load(frame); self.info.setText(message)
+        run_id = getattr(self, "_central_run_id", None)
+        tagged = tag_analysis_result(frame, "under_50", run_id) if run_id else frame
+        if ok: self.load(tagged); self.info.setText(message)
         else: self.info.setText("Tarama hatası: " + message.splitlines()[-1])
+        if run_id:
+            self.central_finished.emit(run_id, ok, tagged, message)
+            self._central_run_id = None
 
     def _clear(self):
         self.worker = None; self.thread = None
@@ -1827,66 +1934,92 @@ class Under50Page(FullMarketPage):
 class NextDayWorker(QObject):
     finished = Signal(bool, object, str)
     progress = Signal(str)
+    structured_progress = Signal(int, int, str)
+
+    def __init__(self, symbols=None):
+        super().__init__()
+        self.symbols = list(symbols) if symbols is not None else None
 
     def run(self):
         try:
-            from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
-            from ertesi_gun_motoru import erken_aday
+            from aday_karar_sistemi import (build_candidate_decisions, duplicate_feature_hashes,
+                                            net_ev_audit)
+            from bist_evreni import (kap_menkul_turleri, son_evren_durumu,
+                                     son_kap_menkul_durumu, tum_bist_hisseleri)
+            from ertesi_gun_motoru import erken_aday, piyasa_rejimi
             from tarama_seffafligi import TaramaOzeti
-            from tahmin_deposu import TahminDeposu
             from t1t2_tahmin_sistemi import (EveningSnapshotStore, cross_sectional_rank,
-                                             load_artifacts, predict_symbol, settle_pending_snapshots)
-            from veri_saglayici import get_daily_ohlcv
-            symbols, rows = tum_bist_hisseleri(), []
+                                             load_artifacts, predict_symbol, settle_pending_snapshots,
+                                             snapshot_is_timely)
+            from veri_saglayici import completed_daily_frame, get_daily_ohlcv
+            symbols = list(self.symbols) if self.symbols is not None else tum_bist_hisseleri()
+            rows = []
+            test_limit = os.getenv("BORSA_TEST_SYMBOLS", "").strip()
+            if test_limit:
+                try:
+                    symbols = symbols[:max(0, int(test_limit))]
+                except ValueError:
+                    pass
             security_types = kap_menkul_turleri()
+            security_cache = son_kap_menkul_durumu()
             t1_predictions, t2_predictions = [], []
+            decision_contexts = {}
             if not symbols:
                 raise RuntimeError("Aktif BIST evreni yuklenemedi.")
             summary = TaramaOzeti(aktif_bist_evreni=len(symbols))
-            store = TahminDeposu(veri_klasoru() / "tahmin_gecmisi.sqlite3")
             snapshot_store = EveningSnapshotStore(veri_klasoru() / "tahmin_gecmisi.sqlite3")
             settlement = settle_pending_snapshots(
                 snapshot_store, lambda pending_symbol: get_daily_ohlcv(pending_symbol, "1mo"))
+            daily_reports = snapshot_store.write_daily_missed_moves_reports(
+                veri_klasoru() / "kacirilan_hareketler")
             artifacts, model_metrics = load_artifacts(paket_kaynak_klasoru() / "models" / "t1t2_reference.json")
-            # Endeks/breadth kaynağı doğrulanamadığında rejim uydurulmaz.
-            regime = "VERİ YETERSİZ"
+            # Benchmark bir kez ve hisselerle ayni tamamlanmis zaman kesiminde alinir.
+            try:
+                benchmark_raw, benchmark_meta = get_daily_ohlcv("XU100.IS", "2y")
+                benchmark = completed_daily_frame(benchmark_raw, benchmark_meta.fetched_at)
+                if benchmark.empty:
+                    raise ValueError("BIST 100 tamamlanmis bar verisi yok")
+                common_cutoff = benchmark.index[-1]
+                regime = piyasa_rejimi(benchmark)
+                benchmark_warning = ""
+            except Exception as exc:
+                benchmark = pd.DataFrame(); common_cutoff = None
+                regime = "VERİ YETERSİZ"; benchmark_warning = str(exc)
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
                 self.progress.emit(f"{index}/{len(symbols)} aktif BIST hissesi T+1 için inceleniyor · {len(rows)} güçlü/erken aday")
+                self.structured_progress.emit(index, len(symbols), "Yüksek Hareket · Tüm Aktif BIST")
                 try:
-                    history, _meta = get_daily_ohlcv(symbol, "2y")
-                    row = erken_aday(symbol, history, regime, kap=None)
+                    history_raw, _meta = get_daily_ohlcv(symbol, "2y")
+                    history = completed_daily_frame(history_raw, _meta.fetched_at)
+                    if common_cutoff is not None:
+                        history = history.loc[history.index <= common_cutoff].copy()
+                    as_of = common_cutoff if common_cutoff is not None else (history.index[-1] if not history.empty else None)
+                    row = erken_aday(symbol, history, regime, kap=None, sector_score=None, as_of=as_of)
                     if not history.empty:
-                        as_of = history.index[-1]
                         # Menkul turu kaynaktan kesinlestirilmedigi surece normal pay varsayilmaz.
                         security_type = security_types.get(symbol, "BELIRSIZ")
-                        t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type))
-                        t2_predictions.append(predict_symbol(symbol, history, as_of, "T+2", artifacts, security_type=security_type))
+                        freshness = ("GUNCEL" if common_cutoff is None or history.index[-1].date() == pd.Timestamp(common_cutoff).date()
+                                     else "ESKI")
+                        decision_contexts[symbol] = {
+                            "data_freshness": freshness, "sector_score": None, "kap_status": None,
+                            "security_cache_source": security_cache.get("source"),
+                            "security_cache_at": security_cache.get("created_at"),
+                            "security_cache_stale": security_cache.get("stale"),
+                        }
+                        t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts,
+                                                             security_type=security_type, benchmark=benchmark))
+                        t2_predictions.append(predict_symbol(symbol, history, as_of, "T+2", artifacts,
+                                                             security_type=security_type, benchmark=benchmark))
                     strong = row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}
                     if row.get("Model Yolu") == "STANDART" and not strong:
                         row["Neden Kodu"] = "REJECTED_LOW_SCORE"
                         row["Eleme Nedeni"] = "Standart T+1 puani aday esiginin altinda"
                     summary.kaydet(row, not history.empty)
                     rows.append(row)
-                    if strong:
-                        cutoff = row["Veri Zamanı"]
-                        try:
-                            store.tahmin_ekle({
-                                "prediction_key": f"{cutoff}|{symbol}|{row['Model Sürümü']}",
-                                "predicted_at": datetime.now().isoformat(timespec="seconds"),
-                                "session_date": str(pd.Timestamp(cutoff).date()), "symbol": symbol,
-                                "previous_close": row["Önceki Kapanış"], "ceiling_price": row["Tavan Fiyatı"],
-                                "p_intraday_8": row["%8+ Olasılığı"], "p_ceiling": row["Tavan Olasılığı"],
-                                "p_close_8": row["Kapanış %8+ Olasılığı"], "market_regime": row["Piyasa Rejimi"],
-                                "sector_score": row["Sektör Puanı"], "status": row["Durum"],
-                                "reasons_json": row["Aday Nedenleri"], "risks_json": row["Riskler"],
-                                "cutoff_at": cutoff, "model_version": row["Model Sürümü"],
-                                "probability_reliable": int(row["Olasılık Güvenilir"]),
-                            })
-                        except Exception:
-                            # Aynı kesim/sembol yeniden taranırsa eski tahmin asla ezilmez.
-                            pass
+                    # Teknik erken-aday sonucu yalniz on degerlendirmedir; tahmin
+                    # deposuna veya kullanici kararina tek basina yazilmaz.
                 except Exception as exc:
                     error = {"Hisse": symbol.replace(".IS", ""), "Durum": "VERİ ALINAMADI",
                              "Model Yolu": "BELİRLENEMEDİ", "Neden Kodu": "MISSING_PRICE_DATA",
@@ -1898,6 +2031,10 @@ class NextDayWorker(QObject):
                 frame = frame.sort_values("Referans Skor", ascending=False).reset_index(drop=True)
                 t1_ranked = cross_sectional_rank(t1_predictions)
                 t2_ranked = cross_sectional_rank(t2_predictions)
+                t1_decisions = build_candidate_decisions(t1_ranked, market_regime=regime, contexts=decision_contexts)
+                t2_decisions = build_candidate_decisions(t2_ranked, market_regime=regime, contexts=decision_contexts)
+                t1_ranked = [item.dict() for item in t1_decisions]
+                t2_ranked = [item.dict() for item in t2_decisions]
                 rank1 = {item["symbol"].replace(".IS", ""): item for item in t1_ranked}
                 rank2 = {item["symbol"].replace(".IS", ""): item for item in t2_ranked}
                 frame["T+1 Sırası"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("rank"))
@@ -1907,7 +2044,12 @@ class NextDayWorker(QObject):
                 frame["T+1 Yüzdelik"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("percentile"))
                 frame["T+2 Yüzdelik"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("percentile"))
                 frame["Feature Hash"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("feature_hash"))
-                frame["T+1/T+2 Durumu"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("status"))
+                frame["T+1 Kararı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("final_decision"))
+                frame["T+2 Kararı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("final_decision"))
+                frame["T+1/T+2 Durumu"] = frame["T+1 Kararı"]
+                frame["Teknik Ön Değerlendirme"] = frame["Durum"]
+                frame["Teknik Ön Değerlendirme Skoru"] = frame["Referans Skor"]
+                frame["Durum"] = frame["T+1 Kararı"].fillna("VERİ YETERSİZ")
                 frame["T+1 %5+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_5"))
                 frame["T+1 %7+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_7"))
                 frame["T+1 %8+ Olasılığı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("max_8"))
@@ -1919,32 +2061,60 @@ class NextDayWorker(QObject):
                 frame["T+2 Tavan Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("limit_up"))
                 frame["T+2 Pozitif Kapanış Olasılığı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("probabilities", {}).get("close_positive"))
                 frame["Hedef Stop'tan Önce T+1"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("probabilities", {}).get("target_before_stop"))
-                frame["Hisseye Özel Nedenler"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("reasons", [])))
+                frame["Hisseye Özel Nedenler"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("decision_reasons", [])))
                 frame["Hisseye Özel Riskler"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("risks", [])))
+                frame["T+1 Neden Kodları"] = frame["Hisse"].map(lambda s: " | ".join(rank1.get(str(s), {}).get("gate_codes", [])))
+                frame["T+2 Neden Kodları"] = frame["Hisse"].map(lambda s: " | ".join(rank2.get(str(s), {}).get("gate_codes", [])))
+                frame["T+1 Elendiği Kapı"] = frame["Hisse"].map(lambda s: rank1.get(str(s), {}).get("rejected_by"))
+                frame["T+2 Elendiği Kapı"] = frame["Hisse"].map(lambda s: rank2.get(str(s), {}).get("rejected_by"))
+                frame["T+1 Geniş Radar"] = frame["Hisse"].map(lambda s: bool(rank1.get(str(s), {}).get("eligible_wide")))
+                frame["T+2 Geniş Radar"] = frame["Hisse"].map(lambda s: bool(rank2.get(str(s), {}).get("eligible_wide")))
+                frame["T+1 Seçkin Aday"] = frame["Hisse"].map(lambda s: bool(rank1.get(str(s), {}).get("eligible_elite")))
+                frame["T+2 Seçkin Aday"] = frame["Hisse"].map(lambda s: bool(rank2.get(str(s), {}).get("eligible_elite")))
+                frame["Olasılık Güvenilir"] = frame["Hisse"].map(lambda s: bool(rank1.get(str(s), {}).get("probability_reliable")))
+                calibration_samples={h:min((a.calibration_samples for a in artifacts.values() if a.horizon==h),default=0) for h in ("T+1","T+2")}
+                frame["Geçmiş Örnek Sayısı"] = calibration_samples["T+1"]
                 frame["Menkul Türü"] = frame["Hisse"].map(lambda s: security_types.get(str(s)+".IS", "BELIRSIZ"))
                 for prefix, ranks in (("T+1", rank1), ("T+2", rank2)):
-                    frame[f"{prefix} Giriş"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("entry_high"))
-                    frame[f"{prefix} Hedef"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("target_7"))
+                    frame[f"{prefix} Giriş"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("entry"))
+                    frame[f"{prefix} Hedef"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("target"))
                     frame[f"{prefix} Stop"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("stop"))
                     frame[f"{prefix} Risk/Getiri"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("risk_reward"))
-                    frame[f"{prefix} Net EV"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("net_ev_pct"))
-                    frame[f"{prefix} Seviye Doğrulandı"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("levels_valid", False))
+                    frame[f"{prefix} Net EV"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("net_ev"))
+                    frame[f"{prefix} Seviye Doğrulandı"] = frame["Hisse"].map(lambda s, r=ranks: "LEVELS_NOT_VALIDATED" not in r.get(str(s), {}).get("gate_codes", ()))
                 # Aksam siralamasi degistirilemez snapshot olarak saklanir.
+                snapshot_saved = 0
                 for item in (*t1_ranked, *t2_ranked):
-                    snapshot_store.save(item)
-                duplicate_hashes = pd.Series([p.feature_hash for p in t1_predictions]).duplicated(keep=False)
-                if duplicate_hashes.any():
-                    message_hash = f" | UYARI: {int(duplicate_hashes.sum())} sembolde ayni feature hash"
+                    if snapshot_is_timely(item["as_of_timestamp"]):
+                        saved, _ = snapshot_store.save(item)
+                        snapshot_saved += int(saved)
+                duplicate_hashes = duplicate_feature_hashes(t1_decisions)
+                if duplicate_hashes:
+                    sample = next(iter(duplicate_hashes.values()))
+                    shared_features = sorted({name for artifact in artifacts.values() for name in artifact.feature_names})
+                    message_hash = (f" | UYARI: {sum(len(x) for x in duplicate_hashes.values())} sembolde ayni feature hash: "
+                                    f"{', '.join(sample[:5])}; aynı kalan model özellikleri: {', '.join(shared_features)}")
                 else:
                     message_hash = " | Feature hashler sembol bazinda ayrik"
+                ev1, ev2 = net_ev_audit(t1_decisions), net_ev_audit(t2_decisions)
+                message_hash += (f" | Net EV T+1: {ev1['calculated']} hesap, {ev1['positive']} pozitif; "
+                                 f"T+2: {ev2['calculated']} hesap, {ev2['positive']} pozitif")
+                if not snapshot_saved:
+                    message_hash += " | Snapshot yazılmadı: seans sonrası tahmin penceresi dışında"
             evren = son_evren_durumu()
             message = summary.metin()
             if evren.get("warning"):
                 message += " | UYARI: " + evren["warning"]
+            if security_cache.get("warning"):
+                message += " | KAP menkul türü cache uyarısı: " + str(security_cache["warning"])
+            if benchmark_warning:
+                message += " | BIST 100 rejim verisi yok: " + benchmark_warning
             message += " | Kalibre model yoksa olasiliklar bilincli olarak bos gosterilir."
             message += f" | T+1/T+2 artefakt: {len(artifacts)}/12"
             message += (f" | Gerçekleşme: {settlement['settled']} işlendi, "
                         f"{settlement['not_ready']} seans bekliyor")
+            message += (f" | Kaçırılan Hareketler raporu: {daily_reports['written']} yeni, "
+                        f"{daily_reports['existing']} değişmez kayıt")
             if not frame.empty:
                 message += message_hash
             if frame.empty:
@@ -1955,27 +2125,80 @@ class NextDayWorker(QObject):
 
 
 class NextDayPage(NextDayDashboard):
+    central_finished = Signal(str, bool, str)
+    central_progress = Signal(str, int, int, str)
+
     def __init__(self):
         super().__init__(veri_klasoru() / "tahmin_gecmisi.sqlite3")
-        self.thread = None; self.worker = None; self.scan_requested.connect(self.start_scan)
+        self.thread = None; self.worker = None; self._run_id = None
+        self._result_cache_path = veri_klasoru() / "yuksek_hareket_son_snapshot.json"
+        self._load_cached_results()
+        self.scan_requested.connect(self.start_scan)
 
-    def start_scan(self):
-        if self.thread and self.thread.isRunning(): return
+    def _load_cached_results(self):
+        if not self._result_cache_path.exists():
+            return
+        try:
+            frame = pd.read_json(self._result_cache_path, orient="records")
+            if not frame.empty:
+                self.load_results(frame, "Son kaydedilmiş Yüksek Hareket snapshotı")
+        except Exception as exc:
+            self.stats.set_error("Son Yüksek Hareket snapshotı okunamadı; yeni tarama bekleniyor.")
+            hata_gunlugune_yaz("Yüksek Hareket snapshotı", str(exc))
+
+    def start_scan(self, run_id=None, symbols=None):
+        if self.thread and self.thread.isRunning(): return False
+        self._run_id = run_id or uuid.uuid4().hex
         self.set_loading("T+1 erken aday taraması başlatılıyor…")
-        self.thread = QThread(self); self.worker = NextDayWorker(); self.worker.moveToThread(self.thread)
+        self.thread = QThread(self); self.worker = NextDayWorker(symbols=symbols); self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.stats.setText)
-        self.worker.finished.connect(self.done); self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.structured_progress.connect(
+            lambda done, total, message: self.central_progress.emit(self._run_id or "", done, total, message))
+        token = self._run_id
+        self.worker.finished.connect(lambda ok, frame, message: self.done(ok, frame, message, token)); self.worker.finished.connect(self.worker.deleteLater)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self._clear); self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
+        return True
 
-    def done(self, ok, frame, message):
+    def done(self, ok, frame, message, run_id=None):
+        if run_id is not None and run_id != self._run_id:
+            return
         if ok:
-            self.load_results(frame, message)
+            tagged = tag_analysis_result(frame, "high_movement", run_id) if run_id else frame
+            try:
+                self._result_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                tagged.to_json(self._result_cache_path, orient="records", force_ascii=False)
+            except Exception as exc:
+                hata_gunlugune_yaz("Yüksek Hareket snapshotı kaydı", str(exc))
+            self.load_results(tagged, message)
         else: self.set_error(message.splitlines()[-1])
+        self.central_finished.emit(run_id or self._run_id or "", ok, message)
 
     def _clear(self):
         self.worker = None; self.thread = None
+
+
+class ScanProgressPanel(QFrame):
+    """Gercek is olaylarini gosteren, 1366x768'e sigan merkezi tarama ozeti."""
+    def __init__(self):
+        super().__init__(); self.setObjectName("scanProgressPanel"); self.setVisible(False)
+        row = QHBoxLayout(self); row.setContentsMargins(14, 5, 14, 5); row.setSpacing(10)
+        self.status = QLabel("Tarama hazırlanıyor"); self.status.setObjectName("subText"); self.status.setMinimumWidth(210)
+        self.counts = QLabel("0 / 0"); self.counts.setMinimumWidth(75)
+        self.bar = QProgressBar(); self.bar.setRange(0, 100); self.bar.setValue(0); self.bar.setTextVisible(True); self.bar.setMinimumWidth(210)
+        self.phase = QLabel("Tarama hazırlanıyor"); self.phase.setObjectName("muted"); self.phase.setMinimumWidth(230)
+        self.started = QLabel("Başlangıç: —"); self.started.setObjectName("muted")
+        self.elapsed = QLabel("Geçen süre: 0 sn"); self.elapsed.setObjectName("muted")
+        for widget in (self.status, self.counts, self.bar, self.phase, self.started, self.elapsed): row.addWidget(widget)
+        row.setStretchFactor(self.bar, 1); row.setStretchFactor(self.phase, 1)
+
+    @staticmethod
+    def duration_text(seconds):
+        seconds = max(0, int(seconds)); minutes, second = divmod(seconds, 60); hours, minutes = divmod(minutes, 60)
+        if hours: return f"{hours} sa {minutes} dk {second} sn"
+        if minutes: return f"{minutes} dk {second} sn"
+        return f"{second} sn"
 
 
 class MainWindow(QMainWindow):
@@ -1988,9 +2211,17 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon)))
 
         self.scan_process = None
+        self.scan_coordinator = None
+        self._scan_started_at = None
+        self._scan_result_mtime_before = None
+        self._scan_cancelled = False
+        self._scan_failure_shown = False
         self._last_view_profile = None
         self._scan_stdout_buffer = ""
         self._scan_stderr_buffer = ""
+        self._analysis_workers_started = False
+        self._analysis_result_cache = {}
+        self._scan_universe_meta = {}
         self.pages = QStackedWidget()
 
         self.home = HomePage()
@@ -2006,7 +2237,9 @@ class MainWindow(QMainWindow):
         self.funds = FundAnalysisPage()
         self.daily_trade = DailyTradePage()
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
-        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
+        self.short_term.info.setText("Kısa Vade · BIST30")
+        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Orta Vade · BIST30 · Ayrı orta-vade modeli en fazla 5 aday gösterir.")
+        self.medium_term.info.setText("Orta Vade · BIST30")
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
         self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
@@ -2029,6 +2262,8 @@ class MainWindow(QMainWindow):
         self.top_header.scan_requested.connect(self.scan)
         self.top_header.search_requested.connect(self._search_symbol)
         outer.addWidget(self.top_header)
+        self.scan_progress = ScanProgressPanel()
+        outer.addWidget(self.scan_progress)
         root = QHBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         self.sidebar = Sidebar(); self.sidebar.page_requested.connect(self._show_page); root.addWidget(self.sidebar)
@@ -2052,10 +2287,25 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, self._load_market_cards)
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
+        self.next_day.central_finished.connect(self._high_movement_finished)
+        self.next_day.central_progress.connect(
+            lambda run_id, done, total, message: self._worker_progress("high_movement", run_id, done, total, message))
+        self.daily_trade.central_finished.connect(
+            lambda run_id, ok, frame, message: self._analysis_worker_finished("daily_trade", run_id, ok, frame, message))
+        self.daily_trade.central_progress.connect(
+            lambda run_id, done, total, message: self._worker_progress("daily_trade", run_id, done, total, message))
+        self.under_50.central_finished.connect(
+            lambda run_id, ok, frame, message: self._analysis_worker_finished("under_50", run_id, ok, frame, message))
+        self.under_50.central_progress.connect(
+            lambda run_id, done, total, message: self._worker_progress("under_50", run_id, done, total, message))
+        self.home.trade_button.setVisible(False)
         self.pages.setCurrentWidget(self.next_day)
         self.sidebar.set_active("next")
 
-        self.load_report()
+        if not os.getenv("BORSA_UI_SMOKE_SCREENSHOT", "").strip():
+            self.load_report()
+        self._scan_elapsed_timer = QTimer(self)
+        self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
         QTimer.singleShot(0,self._apply_responsive_profile)
 
     def resizeEvent(self,event):
@@ -2123,7 +2373,7 @@ class MainWindow(QMainWindow):
     def load_report(self):
         path = rapor_yolu()
         if not path.exists():
-            return
+            return False
         try:
             from analiz_deposu import anlik_goruntu_oku
             sheets = anlik_goruntu_oku(path)
@@ -2147,8 +2397,10 @@ class MainWindow(QMainWindow):
             trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
             if trade_frame.empty:
                 trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
+            central_active = self.scan_coordinator is not None and not self.scan_coordinator.all_terminal
             self.daily_trade.report_fallback = trade_frame.copy()
-            self.daily_trade.table.load(trade_frame)
+            if not central_active:
+                self.daily_trade.table.load(trade_frame)
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
@@ -2182,8 +2434,11 @@ class MainWindow(QMainWindow):
             self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
             self.medium_term.load(medium_frame)
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
-            under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
-            self.under_50.load(under_frame)
+            # 50 TL Altı kesin ürün evreni tüm aktif BIST'tir; rapor yeniden
+            # yüklenirken 120 likit hisseye daraltmak BIST30 dışı adayları saklar.
+            under_frame = elli_tl_adaylari(all_results, limit=20)
+            if not central_active:
+                self.under_50.load(under_frame)
             self.history.refresh()
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
@@ -2198,6 +2453,8 @@ class MainWindow(QMainWindow):
             market = "OLUMLU" if pd.notna(market_score) and market_score >= 65 else "RİSKLİ" if pd.notna(market_score) and market_score < 45 else "NÖTR"
             self.home.index_value.setText(f"BIST EVRENİ\n{len(all_results)} hisse analiz edildi")
             self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
+            valid_count = int(all_results.get("Fiyat", pd.Series(dtype=float)).notna().sum()) if "Fiyat" in all_results else 0
+            self.home.scan_stats.setText(f"Taranan: {len(all_results)}  ·  Veri alınan: {valid_count}  ·  Veri alınamayan: {max(0, len(all_results)-valid_count)}  ·  Son tarama: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
             self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame))
 
             def numeric(name, default=0):
@@ -2245,8 +2502,11 @@ class MainWindow(QMainWindow):
                 conviction=len(high_conviction),
             )
             self.report_path_label.setText("Tahminler sürümlü SQLite geçmişinde saklanır.")
+            return True
         except Exception as exc:
             QMessageBox.warning(self, "Rapor", str(exc))
+            hata_gunlugune_yaz("Sonuç sayfalarını yenileme", traceback.format_exc())
+            return False
 
     def open_report(self):
         path = rapor_yolu()
@@ -2261,9 +2521,36 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def scan(self):
-        if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
-            return
-        self.scan_button.setEnabled(False)
+        if self.scan_coordinator is not None and not self.scan_coordinator.all_terminal:
+            self.scan_progress.setVisible(True)
+            self.scan_progress.status.setText("Tarama zaten devam ediyor")
+            self.log.append("Tarama zaten devam ediyor; ikinci süreç başlatılmadı.")
+            return False
+        if self.scan_process is not None:
+            if self.scan_process.state() != QProcess.NotRunning:
+                self.scan_progress.setVisible(True); self.scan_progress.status.setText("Tarama zaten devam ediyor")
+                return False
+            self.scan_process.deleteLater(); self.scan_process = None
+        self._scan_run_id = uuid.uuid4().hex
+        self.scan_coordinator = ScanCoordinator(self._scan_run_id)
+        for component in ("core", "daily_trade", "short_term", "medium_term", "under_50", "high_movement"):
+            self.scan_coordinator.start_component(component)
+        self._analysis_workers_started = False
+        self._scan_universe_meta = {}
+        self._scan_started_at = time.monotonic()
+        self._scan_started_clock = datetime.now()
+        result_path = rapor_yolu()
+        self._scan_result_mtime_before = result_path.stat().st_mtime_ns if result_path.exists() else None
+        self._scan_cancelled = False; self._scan_failure_shown = False
+        self.top_header.set_scanning(True)
+        self.scan_progress.setVisible(True)
+        self.scan_progress.status.setText("Tarama hazırlanıyor")
+        self.scan_progress.phase.setText("Tarama hazırlanıyor")
+        self.scan_progress.counts.setText("0 / 0")
+        self.scan_progress.bar.setValue(0)
+        self.scan_progress.started.setText("Başlangıç: " + self._scan_started_clock.strftime("%H:%M:%S"))
+        self.scan_progress.elapsed.setText("Geçen süre: 0 sn")
+        self._scan_elapsed_timer.start(1000)
         target = getattr(self, "_scan_target", self.home)
         if target is self.daily_trade:
             self.pages.setCurrentWidget(self.daily_trade)
@@ -2281,18 +2568,18 @@ class MainWindow(QMainWindow):
         self.scan_process.setWorkingDirectory(str(uygulama_klasoru()))
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
-        environment.insert("BORSA_TARAMA_EVRENI", getattr(self, "_scan_universe", "BIST30"))
+        environment.insert("PYTHONUTF8", "1")
+        environment.insert("PYTHONIOENCODING", "utf-8")
+        environment.insert("BORSA_TARAMA_EVRENI", "ALL")
+        environment.insert("BORSA_SCAN_ID", self._scan_run_id)
         self.scan_process.setProcessEnvironment(environment)
         self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
         self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
         self.scan_process.errorOccurred.connect(self._scan_process_error)
         self.scan_process.finished.connect(self._scan_process_finished)
         self.scan_process.start()
-        # Tam tarama isteği özel evrenli sayfaları da birbirinden bağımsız worker'larla başlatır.
-        if getattr(self, "_scan_target", self.home) is self.home:
-            self.daily_trade.start_scan()
-            self.under_50.start_scan()
-            self.next_day.start_scan()
+        self.log.append(f"Tarama kimliği: {self._scan_run_id[:12]}")
+        return True
 
     def scan_daily_trade(self):
         self._scan_target = self.daily_trade
@@ -2307,6 +2594,18 @@ class MainWindow(QMainWindow):
         if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
             self.scan_process.terminate()
             self.log.append("Tarama kullanıcı tarafından durduruldu.")
+        if self.next_day.thread and self.next_day.thread.isRunning():
+            self.next_day.thread.requestInterruption()
+        if self.daily_trade.thread and self.daily_trade.thread.isRunning():
+            self.daily_trade.thread.requestInterruption()
+        if self.under_50.thread and self.under_50.thread.isRunning():
+            self.under_50.thread.requestInterruption()
+        if self.scan_coordinator is not None and not self.scan_coordinator.all_terminal:
+            self._scan_cancelled = True
+            for component, state in list(self.scan_coordinator.components.items()):
+                if state not in TERMINAL_STATES:
+                    self.scan_coordinator.finish_component(component, "IPTAL")
+            self._finalize_central_scan()
 
     def _append_process_text(self, text, is_error=False):
         attr = "_scan_stderr_buffer" if is_error else "_scan_stdout_buffer"
@@ -2316,22 +2615,49 @@ class MainWindow(QMainWindow):
         for line in lines:
             if line.strip():
                 self.log.append(line.rstrip())
+                if line.startswith("UNIVERSE_META|"):
+                    parts = line.rstrip().split("|", 5)
+                    if len(parts) == 6 and self.scan_coordinator and parts[1] == self.scan_coordinator.scan_id:
+                        self._scan_universe_meta = {
+                            "count": parts[2], "source": parts[3], "created_at": parts[4], "warning": parts[5],
+                        }
+                elif line.startswith("UNIVERSE|"):
+                    parts = line.rstrip().split("|", 2)
+                    if len(parts) == 3 and self.scan_coordinator and parts[1] == self.scan_coordinator.scan_id:
+                        self._start_analysis_workers([item for item in parts[2].split(",") if item])
+                elif self.scan_coordinator and self.scan_coordinator.accept_line(line.rstrip()):
+                    self._render_scan_progress()
+                elif line.startswith("SCAN_RESULT|"):
+                    parts = line.rstrip().split("|", 4)
+                    if len(parts) == 5 and self.scan_coordinator and parts[1] == self.scan_coordinator.scan_id:
+                        try:
+                            self.scan_coordinator.stock_valid = int(parts[2]); self.scan_coordinator.stock_failed = int(parts[3])
+                        except ValueError:
+                            pass
                 if getattr(self, "_scan_target", None) is self.daily_trade:
                     self.daily_trade.info.setText(line.rstrip())
 
     def _read_scan_stdout(self):
         if self.scan_process is not None:
-            text = bytes(self.scan_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            payload = bytes(self.scan_process.readAllStandardOutput())
+            try: text = payload.decode("utf-8")
+            except UnicodeDecodeError: text = payload.decode("cp1254", errors="replace")
             self._append_process_text(text)
 
     def _read_scan_stderr(self):
         if self.scan_process is not None:
-            text = bytes(self.scan_process.readAllStandardError()).decode("utf-8", errors="replace")
+            payload = bytes(self.scan_process.readAllStandardError())
+            try: text = payload.decode("utf-8")
+            except UnicodeDecodeError: text = payload.decode("cp1254", errors="replace")
             self._append_process_text(text, is_error=True)
 
     def _scan_process_error(self, error):
         if self.scan_process is not None:
-            self.log.append(f"Tarama işlemi başlatma/çalışma hatası: {self.scan_process.errorString()} ({error})")
+            detail = f"{self.scan_process.errorString()} ({error})"
+            self.log.append(f"Tarama işlemi başlatma/çalışma hatası: {detail}")
+            hata_gunlugune_yaz("Tarama alt süreci hatası", detail)
+            if error == QProcess.FailedToStart:
+                self._fail_central_scan("Tarama başlatılamadı", "Alt süreç dosyası bulunamadı veya çalıştırılamadı.")
 
     def _scan_process_finished(self, exit_code, exit_status):
         self._read_scan_stdout()
@@ -2341,29 +2667,181 @@ class MainWindow(QMainWindow):
             if tail:
                 self.log.append(tail)
             setattr(self, attr, "")
-        ok = exit_status == QProcess.NormalExit and exit_code == 0
-        if not ok and rapor_yolu().exists():
-            self.log.append(
-                "Tarama alt süreci normal kapanmadı; ana program korundu ve oluşan son rapor yükleniyor."
-            )
-        self.scan_done(ok, f"Alt süreç çıkış kodu: {exit_code}")
+        if self.scan_coordinator is None or self.scan_coordinator.components["core"] in TERMINAL_STATES:
+            self._cleanup_scan_process(); return
+        ok = exit_status == QProcess.NormalExit and exit_code == 0 and not self._scan_cancelled
+        if ok:
+            path = rapor_yolu()
+            new_result = path.exists() and (self._scan_result_mtime_before is None or path.stat().st_mtime_ns > self._scan_result_mtime_before)
+            if not new_result:
+                self._component_failed("core", "Tarama çalıştı ancak yeni sonuç kaydı oluşturulamadı. Önceki sonuçlar korunuyor.")
+                self._fail_dependent_components()
+            elif self.load_report():
+                # QProcess'in başarılı çıkışı bütün hisse görevlerinin join edildiğini
+                # kanıtlar. Son stdout satırı tamponda kaybolmuş olsa bile sayaç eksik
+                # kalıp taramanın %97/%99'da görünmesine izin verme.
+                self.scan_coordinator.finish_stock_work()
+                self.scan_coordinator.finish_component("core")
+                for name in ("short_term", "medium_term", "watchlist", "portfolio", "performance"):
+                    self.scan_coordinator.finish_component(name)
+                self._refresh_portfolio_from_report()
+                if self.scan_coordinator.components["high_movement"] not in TERMINAL_STATES:
+                    self.scan_coordinator.phase = "high_movement"
+                    self.scan_coordinator.message = "Yüksek Hareket sonuçları hazırlanıyor"
+            else:
+                self._component_failed("core", "Yeni sonuç kaydı okunamadı. Önceki sonuçlar korunuyor.")
+                self._fail_dependent_components()
+        else:
+            reason = "Tarama kullanıcı tarafından iptal edildi." if self._scan_cancelled else f"Alt süreç normal kapanmadı (çıkış kodu {exit_code})."
+            self._component_failed("core", reason, state="IPTAL" if self._scan_cancelled else "HATA")
+            self._fail_dependent_components(state="IPTAL" if self._scan_cancelled else "HATA")
+        self._render_scan_progress()
+        self._maybe_finalize_central_scan()
+        self._cleanup_scan_process()
+
+    def _cleanup_scan_process(self):
         if self.scan_process is not None:
             self.scan_process.deleteLater()
             self.scan_process = None
 
-    def scan_done(self, ok, message):
-        self.scan_button.setEnabled(True)
+    def _start_analysis_workers(self, all_symbols):
+        if self._analysis_workers_started or not self.scan_coordinator:
+            return
+        universes = build_analysis_universes(all_symbols, bist30_hisseleri())
+        self._analysis_workers_started = True
+        run_id = self.scan_coordinator.scan_id
+        self.log.append(
+            f"Görev evrenleri: Günlük {len(universes['daily_trade'])} · "
+            f"Kısa {len(universes['short_term'])} · Orta {len(universes['medium_term'])} · "
+            f"50 TL {len(universes['under_50'])} · Yüksek Hareket {len(universes['high_movement'])}"
+        )
+        try:
+            universe_state = dict(self._scan_universe_meta)
+            if not universe_state:
+                from bist_evreni import son_evren_durumu
+                universe_state = son_evren_durumu()
+            source = universe_state.get("source") or "bilinmiyor"
+            updated = universe_state.get("created_at") or universe_state.get("last_used_at") or "bilinmiyor"
+            self.home.source.setText(f"VERİ KAYNAĞI\n{source}")
+            self.log.append(f"Aktif BIST evreni: {len(all_symbols)} hisse | Kaynak: {source} | Güncelleme: {updated}")
+            warning = universe_state.get("warning")
+            if warning:
+                self.log.append("EVREN UYARISI: " + str(warning))
+                self.scan_progress.phase.setText("Eksik/önbellek evren uyarısı: " + str(warning))
+        except Exception as exc:
+            self.log.append("Evren kaynak bilgisi okunamadı: " + str(exc))
+        self.daily_trade.start_scan(run_id, universes["daily_trade"])
+        self.under_50.start_scan(run_id, universes["under_50"])
+        self.next_day.start_scan(run_id, universes["high_movement"])
+
+    def _worker_progress(self, component, run_id, completed, total, message):
+        if not self.scan_coordinator or run_id != self.scan_coordinator.scan_id:
+            return
+        self.scan_coordinator.update_component_progress(component, completed, total, message)
+        self._render_scan_progress()
+
+    def _analysis_worker_finished(self, component, run_id, ok, frame, message):
+        if not self.scan_coordinator or run_id != self.scan_coordinator.scan_id:
+            return
+        if self.scan_coordinator.components[component] in TERMINAL_STATES:
+            return
+        self._analysis_result_cache[(run_id, component)] = frame.copy()
+        self.scan_coordinator.finish_component(component, "TAMAMLANDI" if ok else "HATA")
+        if not ok:
+            hata_gunlugune_yaz(f"{component} worker hatası", message)
+        self._render_scan_progress()
+        self._maybe_finalize_central_scan()
+
+    def _high_movement_finished(self, run_id, ok, message):
+        if self.scan_coordinator is None or run_id != self.scan_coordinator.scan_id:
+            return
+        current = self.scan_coordinator.components["high_movement"]
+        if current in TERMINAL_STATES:
+            return
+        self.scan_coordinator.finish_component("high_movement", "TAMAMLANDI" if ok else "HATA")
         if ok:
-            self.log.append("\nTARAMA TAMAMLANDI.")
-            self.load_report()
-            self.log.append("Tarama tamamlandı; tahmin geçmişi SQLite içinde korunur.")
-            self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home))
-            self._scan_target = self.home
-            self._scan_universe = "BIST30"
+            frame = getattr(self.next_day, "_full", pd.DataFrame())
+            self._analysis_result_cache[(run_id, "high_movement")] = tag_analysis_result(frame, "high_movement", run_id)
+        if not ok:
+            hata_gunlugune_yaz("Yüksek Hareket worker hatası", message)
+            self.log.append("Yüksek Hareket sonuçları hazırlanamadı; önceki sonuçlar korunuyor.")
+        self._render_scan_progress(); self._maybe_finalize_central_scan()
+
+    def _component_failed(self, name, message, state="HATA"):
+        if self.scan_coordinator and self.scan_coordinator.components[name] not in TERMINAL_STATES:
+            self.scan_coordinator.finish_component(name, state)
+        self.log.append(message); hata_gunlugune_yaz(f"Tarama bileşeni: {name}", message)
+
+    def _fail_dependent_components(self, state="HATA"):
+        if not self.scan_coordinator: return
+        for name in ("daily_trade", "short_term", "medium_term", "under_50", "watchlist", "portfolio", "performance"):
+            if self.scan_coordinator.components[name] not in TERMINAL_STATES:
+                self.scan_coordinator.finish_component(name, state)
+
+    def _fail_central_scan(self, title, message):
+        if self._scan_failure_shown: return
+        self._scan_failure_shown = True
+        if self.scan_coordinator:
+            self._component_failed("core", message)
+            self._fail_dependent_components()
+            if self.scan_coordinator.components["high_movement"] not in TERMINAL_STATES:
+                self.scan_coordinator.finish_component("high_movement", "HATA")
+        if self.next_day.thread and self.next_day.thread.isRunning(): self.next_day.thread.requestInterruption()
+        self._cleanup_scan_process(); self._finalize_central_scan()
+        detail = message + " Önceki sonuçlar korundu."
+        self.scan_progress.status.setText(title); self.scan_progress.phase.setText(detail)
+        self.home.scan_status.setText(title + " · " + detail)
+
+    def _refresh_portfolio_from_report(self):
+        try:
+            from analiz_deposu import anlik_goruntu_oku
+            all_results = anlik_goruntu_oku(rapor_yolu()).get("Tum Sonuclar", pd.DataFrame())
+            if all_results.empty or "Hisse" not in all_results: return
+            wanted = {s.replace(".IS", "").upper() for s in self.track.symbols}
+            frame = all_results[all_results["Hisse"].astype(str).str.replace(".IS", "", regex=False).str.upper().isin(wanted)].copy()
+            if "Fiyat" in frame: frame["Güncel Fiyat"] = frame["Fiyat"]
+            self.track.load(frame)
+        except Exception as exc:
+            self.log.append("Takip listesi/portföy görünümü yenilenemedi: " + str(exc))
+
+    def _update_scan_elapsed(self):
+        if self._scan_started_at is not None:
+            self.scan_progress.elapsed.setText("Geçen süre: " + ScanProgressPanel.duration_text(time.monotonic() - self._scan_started_at))
+
+    def _render_scan_progress(self):
+        if not self.scan_coordinator: return
+        item = self.scan_coordinator
+        if item.phase in item.component_progress:
+            completed, total = item.component_progress[item.phase]
+            self.scan_progress.counts.setText(f"{completed} / {total}")
         else:
-            self.log.append(message)
-            if rapor_yolu().exists():
-                self.load_report()
+            self.scan_progress.counts.setText(f"{item.stock_completed} / {item.stock_total or '—'}")
+        self.scan_progress.bar.setValue(item.percent)
+        self.scan_progress.status.setText(item.message)
+        self.scan_progress.phase.setText(item.message)
+
+    def _maybe_finalize_central_scan(self):
+        if self.scan_coordinator and self.scan_coordinator.all_terminal:
+            self._finalize_central_scan()
+
+    def _finalize_central_scan(self):
+        if not self.scan_coordinator or not self.scan_coordinator.all_terminal: return
+        self._scan_elapsed_timer.stop(); self._update_scan_elapsed(); self.top_header.set_scanning(False)
+        item = self.scan_coordinator; ended = datetime.now(); elapsed = time.monotonic() - self._scan_started_at if self._scan_started_at else 0
+        self.scan_progress.bar.setValue(100)
+        if self._scan_cancelled:
+            title = "Tarama iptal edildi"; detail = "Önceki sonuçlar korundu."
+        elif item.any_error:
+            title = "Tarama tamamlanamadı"; detail = "Hata ayrıntısı kaydedildi. Önceki geçerli sonuçlar korundu."
+        else:
+            title = f"Tarama tamamlandı: {ended.strftime('%H:%M:%S')}"
+            detail = (f"Toplam süre: {ScanProgressPanel.duration_text(elapsed)} · {item.stock_total} hisse tarandı · "
+                      f"{item.stock_valid} hisse için geçerli veri alındı · {item.stock_failed} hissede veri alınamadı")
+            self.log.append("\nTARAMA TAMAMLANDI.")
+        self.scan_progress.status.setText(title); self.scan_progress.phase.setText(detail)
+        self.home.scan_status.setText(title + " · " + detail)
+        self.log.append(title + " | " + detail)
+        self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home)); self._scan_target = self.home
 
 
 def exception_hook(exc_type, exc_value, exc_tb):
@@ -2373,6 +2851,45 @@ def exception_hook(exc_type, exc_value, exc_tb):
         QMessageBox.critical(None, "Kritik Hata", text)
     except Exception:
         pass
+
+
+def install_qt_smoke_test(window, app):
+    """Yalniz test ortaminda gercek Qt tiklamasi, ekran goruntusu ve guvenli kapanis."""
+    screenshot = os.getenv("BORSA_UI_SMOKE_SCREENSHOT", "").strip()
+    if not screenshot:
+        return
+    started = time.monotonic()
+    QTimer.singleShot(500, window.scan_button.click)
+    timer = QTimer(window)
+
+    def capture_when_started():
+        coordinator = window.scan_coordinator
+        visible = window.scan_progress.isVisible() and not window.scan_button.isEnabled()
+        progressed = bool(coordinator and coordinator.stock_completed > 0)
+        if not (visible and progressed) and time.monotonic() - started < 25:
+            return
+        path = Path(screenshot); path.parent.mkdir(parents=True, exist_ok=True)
+        window.grab().save(str(path), "PNG")
+        evidence = path.with_suffix(".txt")
+        evidence.write_text(
+            "\n".join((
+                f"button_enabled={window.scan_button.isEnabled()}",
+                f"button_text={window.scan_button.text()}",
+                f"progress_visible={window.scan_progress.isVisible()}",
+                f"process_program={window.scan_process.program() if window.scan_process else ''}",
+                f"process_arguments={window.scan_process.arguments() if window.scan_process else []}",
+                f"scan_id={coordinator.scan_id if coordinator else ''}",
+                f"stock_progress={coordinator.stock_completed if coordinator else 0}/{coordinator.stock_total if coordinator else 0}",
+            )), encoding="utf-8",
+        )
+        timer.stop(); window.cancel_scan()
+        if window.scan_process is not None and window.scan_process.state() != QProcess.NotRunning:
+            window.scan_process.kill(); window.scan_process.waitForFinished(1000)
+        # Ağ çağrısında bekleyen test worker'ı Qt kapanışını geciktirebilir. Bu yalnız
+        # BORSA_UI_SMOKE_SCREENSHOT ile etkinleşen, sonuç yazmayan smoke sürecidir.
+        QTimer.singleShot(750, lambda: os._exit(0))
+
+    timer.timeout.connect(capture_when_started); timer.start(250)
 
 
 if __name__ == "__main__":
@@ -2389,7 +2906,7 @@ if __name__ == "__main__":
         crash_log = veri_klasoru() / "tarama_cokme.log"
         with crash_log.open("a", encoding="utf-8") as crash_stream:
             faulthandler.enable(file=crash_stream, all_threads=True)
-            analiz_main.main()
+            raise SystemExit(int(analiz_main.main() or 0))
     else:
         import faulthandler
 
@@ -2400,4 +2917,5 @@ if __name__ == "__main__":
         app = QApplication(sys.argv)
         win = MainWindow()
         win.show()
+        install_qt_smoke_test(win, app)
         sys.exit(app.exec())

@@ -31,8 +31,7 @@ def main() -> int:
         faulthandler.enable(file=crash_stream, all_threads=True)
         import main as analiz_main
 
-        analiz_main.main()
-    return 0
+        return int(analiz_main.main() or 0)
 
 
 if __name__ == "__main__":

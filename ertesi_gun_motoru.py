@@ -14,6 +14,8 @@ import pandas as pd
 
 from fiyat_limitleri import pay_fiyat_limitleri
 from yeni_halka_arz import AYARLAR as IPO_AYARLARI, NEDEN_ACIKLAMALARI, model_yolu, yeni_halka_arz_analizi
+from sinyal_pipeline import daily_features
+from momentum_baslangici import evaluate_momentum_start
 
 
 ADAY_DURUMLARI = {"ERKEN BİRİKİM ADAYI", "GÜÇLÜ ERTESİ GÜN ADAYI", "TEYİT BEKLİYOR", "YÜKSEK RİSK", "VERİ YETERSİZ"}
@@ -42,37 +44,26 @@ def teknik_ozellikler(frame: pd.DataFrame) -> dict[str, float]:
     """Yalnızca verilen T-kesimli günlük çerçeveden özellik çıkarır."""
     if frame is None or len(frame) < 60 or not {"High", "Low", "Close", "Volume"}.issubset(frame.columns):
         return {}
-    close, high, low, volume = (_series(frame, c) for c in ("Close", "High", "Low", "Volume"))
-    ema20, ema50, ema200 = (close.ewm(span=n, adjust=False).mean() for n in (20, 50, 200))
-    delta = close.diff(); up = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean(); down = -delta.clip(upper=0).ewm(alpha=1/14, adjust=False).mean()
-    rsi = 100 - 100 / (1 + up / down.replace(0, np.nan))
-    tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/14, adjust=False).mean()
-    typical = (high+low+close)/3
-    money_flow = typical*volume
-    positive = money_flow.where(typical.diff() > 0, 0).rolling(14).sum()
-    negative = money_flow.where(typical.diff() < 0, 0).rolling(14).sum()
-    mfi = 100 - 100/(1+positive/negative.replace(0, np.nan))
-    mf_multiplier = ((close-low)-(high-close))/(high-low).replace(0, np.nan)
-    cmf = (mf_multiplier*volume).rolling(20).sum()/volume.rolling(20).sum().replace(0, np.nan)
-    obv = (np.sign(close.diff()).fillna(0)*volume).cumsum()
-    macd = close.ewm(span=12, adjust=False).mean()-close.ewm(span=26, adjust=False).mean()
-    mid = close.rolling(20).mean(); std = close.rolling(20).std(); width = 4*std/mid
+    enriched = daily_features(frame)
+    close, high, low, volume = (_series(enriched, c) for c in ("Close", "High", "Low", "Volume"))
     last = float(close.iloc[-1]); rng = float(high.iloc[-1]-low.iloc[-1])
+    momentum = evaluate_momentum_start(enriched)
     return {
         "price": last, "ret_1": float(close.pct_change(1).iloc[-1]), "ret_3": float(close.pct_change(3).iloc[-1]),
         "ret_5": float(close.pct_change(5).iloc[-1]), "ret_10": float(close.pct_change(10).iloc[-1]), "ret_20": float(close.pct_change(20).iloc[-1]),
-        "ema20_distance": last/float(ema20.iloc[-1])-1, "ema50_distance": last/float(ema50.iloc[-1])-1,
-        "ema200_distance": last/float(ema200.iloc[-1])-1 if len(frame) >= 200 else np.nan,
-        "macd": float(macd.iloc[-1]), "macd_hist": float((macd-macd.ewm(span=9, adjust=False).mean()).iloc[-1]),
-        "rsi": float(rsi.iloc[-1]), "atr_pct": float(atr.iloc[-1]/last),
-        "bb_width": float(width.iloc[-1]), "bb_compression": float(width.iloc[-1]/width.rolling(60).median().iloc[-1]),
+        "ema20_distance": float(enriched["EMA20_DISTANCE"].iloc[-1]), "ema50_distance": last/float(enriched["EMA50"].iloc[-1])-1,
+        "ema200_distance": last/float(enriched["EMA200"].iloc[-1])-1 if len(frame) >= 200 else np.nan,
+        "macd": float(enriched["MACD"].iloc[-1]), "macd_hist": float(enriched["MACD_HIST"].iloc[-1]),
+        "rsi": float(enriched["RSI"].iloc[-1]), "atr_pct": float(enriched["ATR"].iloc[-1]/last),
+        "bb_width": float(enriched["BBW"].iloc[-1]), "bb_compression": float(enriched["BBW"].iloc[-1]/enriched["BBW"].rolling(60).median().iloc[-1]),
         "resistance20_distance": float(high.iloc[-20:].max()/last-1), "resistance60_distance": float(high.iloc[-60:].max()/last-1),
         "close_location": float((last-low.iloc[-1])/rng) if rng > 0 else .5,
-        "relative_volume": float(volume.iloc[-1]/volume.iloc[-20:].mean()),
+        "relative_volume": float(enriched["RVOL_COMPLETED20"].iloc[-1]),
         "volume_persistence": float((volume.iloc[-5:] > volume.iloc[-20:].median()).mean()),
-        "obv_slope": float(obv.diff(5).iloc[-1]/max(volume.iloc[-20:].mean(), 1)), "cmf": float(cmf.iloc[-1]), "mfi": float(mfi.iloc[-1]),
+        "obv_slope": float(enriched["OBV"].diff(5).iloc[-1]/max(volume.iloc[-20:].mean(), 1)), "cmf": float(enriched["CMF"].iloc[-1]), "mfi": float(enriched["MFI"].iloc[-1]),
         "turnover": float(last*volume.iloc[-20:].mean()),
+        "momentum_setup": momentum.get("momentum_setup"), "momentum_score": momentum.get("momentum_score"),
+        "momentum_reasons": momentum.get("momentum_reasons", []), "momentum_risks": momentum.get("momentum_risks", []),
     }
 
 
@@ -122,7 +113,9 @@ def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any
     if f["close_location"] >= .7: score += 7; reasons.append("Güçlü günlük kapanış konumu")
     if sector_score is not None and sector_score > 0: score += min(8, sector_score); reasons.append("Sektör göreceli gücü pozitif")
     if kap.get("kap_etiket") == "Olumlu": score += min(10, max(0, float(kap.get("kap_skor", 0)))); reasons.append("Doğrulanmış olumlu KAP katalizörü")
-    if kap.get("kap_etiket") in {None, "Veri Yok", "Hata"}: risks.append("KAP doğrulaması yapılamadı."); score -= 8
+    if kap.get("kap_etiket") in {None, "Veri Yok", "Hata"}:
+        # Baglanti/eksik veri olumsuz haber degildir; belirsizlik olarak gorunur.
+        risks.append("KAP doğrulaması yapılamadı; olumsuz haber varsayılmadı.")
     if kap.get("kap_etiket") == "Olumsuz": risks.append("Negatif KAP riski"); score -= 25
     if f["ema20_distance"] > .10 or f["ret_5"] > .15: risks.append("Hareket başladı – geri çekilme/teyit bekle."); score -= 30
     if f["turnover"] < 10_000_000: risks.append("Likidite yetersiz"); score -= 25
@@ -143,7 +136,23 @@ def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any
             "Sektör Puanı": sector_score, "Veri Zamanı": str(frame.index[-1]),
             "Olasılık Güvenilir": calibration.guvenilir, "Model Sürümü": calibration.model_version,
             "Model Yolu": "STANDART", "Neden Kodu": "INCLUDED_STANDARD",
-            "Eleme Nedeni": NEDEN_ACIKLAMALARI["INCLUDED_STANDARD"]}
+            "Eleme Nedeni": NEDEN_ACIKLAMALARI["INCLUDED_STANDARD"],
+            "Momentum Kurulumu": f.get("momentum_setup"),
+            "Momentum Başlangıç Skoru": f.get("momentum_score"),
+            "Momentum Nedenleri": f.get("momentum_reasons", []),
+            "Momentum Riskleri": f.get("momentum_risks", []),
+            "Aşırı İlerleme Durumu": "GEÇ GİRİŞ RİSKİ" if f.get("momentum_setup") == "HAREKET_ILERLEMIS" else "AŞIRI İLERLEMEMİŞ",
+            "Hacim Teyidi": bool(f.get("relative_volume", 0) >= 1.2),
+            "Takas Durumu": "Takas/kurumsal dağılım doğrulanamadı",
+            "momentum_setup": f.get("momentum_setup"),
+            "momentum_score": f.get("momentum_score"),
+            "momentum_reasons": f.get("momentum_reasons", []),
+            "momentum_risks": f.get("momentum_risks", []),
+            "overextension_status": "GEÇ GİRİŞ RİSKİ" if f.get("momentum_setup") == "HAREKET_ILERLEMIS" else "AŞIRI İLERLEMEMİŞ",
+            "volume_confirmation": bool(f.get("relative_volume", 0) >= 1.2),
+            "trend_confirmation": f.get("momentum_setup") in {"YENI_MOMENTUM_BASLANGICI", "GUCLU_MOMENTUM_TEYIDI"},
+            "momentum_trigger_date": str(frame.index[-1]) if f.get("momentum_score") is not None else None,
+            "momentum_age_bars": None}
 
 
 def canli_teyit(aday: dict[str, Any], intraday: pd.DataFrame | None, metadata: Any) -> dict[str, Any]:

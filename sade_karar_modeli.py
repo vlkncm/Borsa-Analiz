@@ -15,6 +15,17 @@ VADE_ADAYLARI = {
     "kisa": (5, 10, 15, 20, 30, 40),
     "orta": (40, 60, 90, 120, 180, 252),
 }
+SUNUM_KANITI = ("Veri Durumu","Veri Tarihi","Doğrulanmış Olasılık %","Doğrulama Örnek Sayısı",
+                 "OOS Örnek Sayısı","Başarılılarda Medyan Süre","Piyasa Rejimi","KAP Etiket",
+                 "RSI","EMA20","EMA50","Hacim Oranı","CMF 20","Karar Nedenleri")
+
+
+def _kaniti_koru(result: pd.DataFrame, source: pd.DataFrame, index) -> pd.DataFrame:
+    """Ana tabloda gizlenecek kaniti sade kayitla birlikte detay ekranina tasir."""
+    for column in SUNUM_KANITI:
+        if column in source.columns:
+            result[column]=source.loc[index,column]
+    return result
 
 
 def _num(frame: pd.DataFrame, names: Iterable[str], default=0.0) -> pd.Series:
@@ -77,6 +88,7 @@ def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None
         "Güven Skoru": sc.clip(0, 100).round(0).astype(int),
         "Risk": _risk(((p - st) / p * 100).fillna(99)),
     }, index=idx)
+    result=_kaniti_koru(result,work,idx)
     return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
 
 
@@ -116,6 +128,7 @@ def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
         "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
         "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
     }, index=idx)
+    result=_kaniti_koru(result,work,idx)
     return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
 
 
@@ -144,6 +157,7 @@ def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iter
         "Tahmini Süre": sure, "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
         "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
     }, index=idx)
+    result=_kaniti_koru(result,work,idx)
     return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
 
 

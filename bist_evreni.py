@@ -23,6 +23,7 @@ MIN_GECERLI_EVREN = 400
 _LOGGER = logging.getLogger(__name__)
 _LOCK = threading.RLock()
 _SON_DURUM: dict = {}
+_SON_KAP_DURUM: dict = {}
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,11 @@ class EvrenDurumu:
 
 def son_evren_durumu() -> dict:
     return dict(_SON_DURUM)
+
+
+def son_kap_menkul_durumu() -> dict:
+    """Son menkul turu okumasinin kaynak/zaman/eskilik kanitini dondurur."""
+    return dict(_SON_KAP_DURUM)
 
 
 def _atomik_json_yaz(path: Path, payload: dict) -> None:
@@ -100,12 +106,17 @@ def kap_menkul_turleri(cache_dir: str | Path | None = None, refresh: bool = Fals
 
     KAP şirket tablosunda bulunmayan bülten kodları normal pay varsayılmaz.
     """
+    global _SON_KAP_DURUM
     folder = Path(cache_dir) if cache_dir else Path(os.getenv("LOCALAPPDATA") or (Path.home()/"AppData"/"Local"))/"BorsaAnalizProMAX"
     cache=folder/"menkul_turleri.json"; now=datetime.now()
     if cache.exists() and not refresh:
         try:
             payload=json.loads(cache.read_text(encoding="utf-8")); created=datetime.fromisoformat(payload["created_at"])
-            if now-created<timedelta(hours=24): return dict(payload.get("types",{}))
+            if now-created<timedelta(hours=24):
+                types=dict(payload.get("types",{}))
+                _SON_KAP_DURUM={"source":payload.get("source",KAP_URL),"created_at":payload["created_at"],
+                                "stale":False,"fallback":False,"symbol_count":len(types),"warning":""}
+                return types
         except (OSError,ValueError,KeyError,TypeError): pass
     try:
         tables=pd.read_html(KAP_URL); table=tables[0]
@@ -122,10 +133,22 @@ def kap_menkul_turleri(cache_dir: str | Path | None = None, refresh: bool = Fals
             types[normalize_bist_sembolu(code)]=kind
         if len(types)<MIN_GECERLI_EVREN: raise ValueError("KAP menkul türü tablosu yetersiz")
         _atomik_json_yaz(cache,{"created_at":now.isoformat(timespec="seconds"),"source":KAP_URL,"types":types})
+        _SON_KAP_DURUM={"source":KAP_URL,"created_at":now.isoformat(timespec="seconds"),
+                        "stale":False,"fallback":False,"symbol_count":len(types),"warning":""}
         return types
-    except Exception:
-        try: return dict(json.loads(cache.read_text(encoding="utf-8")).get("types",{}))
-        except Exception: return {}
+    except Exception as exc:
+        try:
+            payload=json.loads(cache.read_text(encoding="utf-8")); types=dict(payload.get("types",{}))
+            created=str(payload.get("created_at","bilinmiyor"))
+            try: stale=now-datetime.fromisoformat(created)>=timedelta(hours=24)
+            except ValueError: stale=True
+            _SON_KAP_DURUM={"source":payload.get("source",KAP_URL),"created_at":created,
+                            "stale":stale,"fallback":True,"symbol_count":len(types),"warning":str(exc)}
+            return types
+        except Exception:
+            _SON_KAP_DURUM={"source":KAP_URL,"created_at":None,"stale":True,"fallback":True,
+                            "symbol_count":0,"warning":str(exc)}
+            return {}
 
 
 def _yerel_liste() -> list[str]:

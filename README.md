@@ -1,4 +1,29 @@
-# Borsa Analiz Pro MAX v10.3.0
+# Borsa Analiz Pro MAX v10.3.1
+
+## Sade Yatırımcı Modu
+
+- Ana analiz tabloları yalnız `Hisse, Karar, Beklenen süre, Güven düzeyi, Güncel fiyat, Alım bölgesi, Hedef, Stop` gösterir.
+- Her sayfada eşikleri düşürmeden en fazla beş sonuç bulunur; uygun aday yoksa liste boş kalır.
+- Teknik göstergeler ve sistem kayıtları silinmez; **Teknik Ayrıntıları Göster** ve **Sistem Denetimi** altında açılır.
+- Portföy hisseleri gerçek alış fiyatı ve tarihine göre `BEKLE`, `KÂR AL` veya `SAT` olarak yeniden değerlendirilir.
+- Yeterli örnek dışı geçmiş yoksa sahte başarı yüzdesi yerine `Güven düzeyi: Ölçülemedi` yazılır.
+
+## Ortak yüksek hareket karar sistemi
+
+- T+1/T+2 sonuçları artık worker, dashboard, detay ekranı ve SQLite snapshot'ta aynı `CandidateDecision` kararını kullanır.
+- T+1/T+2 ilk 50 Geniş Radar ile güvenlik koşullarını geçen Seçkin Adaylar ayrı gösterilir.
+- Her satır “neden aday”, “neden AL değil”, eksik veri, eleme kapısı, giriş, hedef, stop, risk/getiri ve veri zamanını taşır.
+- Yeni halka arzlar kalibre yüzde uydurulmadan ayrı radarda; menkul türü belirsiz yüksek sıralı hisseler uyarıyla geniş radarda kalır.
+- Günlük değiştirilemez Kaçırılan Hareketler raporu eski snapshot ile ayrı gerçekleşme kaydını karşılaştırır.
+- 28 Ağustos incelemesi `KACIRILAN_HAREKETLER_2026-08-28.md` dosyasındadır.
+
+## Uygulama içi kullanım ve yatırım kontrol rehberi
+
+- Sol menüye **Nasıl Kullanılır?** ekranı eklendi.
+- Veri güncelliği, karar ifadeleri, alış bandı, hedef, stop ve risk/getiri birlikte açıklanır.
+- Pozisyon büyüklüğü için risk tutarı ve azami adet hesabı örnekle gösterilir.
+- İşlem öncesi kontrol listesi ve işlem açılmaması gereken durumlar görünür hâle getirildi.
+- Ayrıntılı metin `KULLANIM_VE_YATIRIM_REHBERI.md` dosyasındadır.
 
 ## v10.3.0 yüksek hareket radarı ve toplu tarama düzeltmesi
 
@@ -236,8 +261,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.8.0 kurulum dosyasını indir](downloads/v8.8.0/Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe)
-- SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
+- [Borsa Analiz Pro MAX v10.3.1 kurulum dosyasını aç](SetupOutput/Setup_Borsa_Analiz_Pro_MAX_v10.3.1.exe)
+- SHA-256: `1136EBADA4F5239AA092384225D6BB06BF97BEABF465AD739205F3F4E1B7973C`
 
 ## v7.2 merkezi veri katmanı
 

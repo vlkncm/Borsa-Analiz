@@ -12,6 +12,7 @@ from bist30 import BIST30_SEMBOLLERI
 from rsi_supertrend_stratejisi import hesapla as rsi_supertrend_hesapla
 from teknik_gostergeler import adx, atr, macd, rsi
 from sinyal_pipeline import daily_features
+from momentum_baslangici import evaluate_momentum_start
 
 _BENCHMARK_LOCK = threading.Lock()
 _BENCHMARK_CACHE = None
@@ -244,6 +245,7 @@ def teknik_analiz(symbol, kategori):
             return None
 
         df = daily_features(df)
+        momentum = evaluate_momentum_start(df)
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
@@ -483,6 +485,7 @@ def teknik_analiz(symbol, kategori):
             ,**uluslararasi_faktorler
             ,**rsi_supertrend
             ,**gunluk_trade
+            ,**momentum
         }
 
     except Exception as e:

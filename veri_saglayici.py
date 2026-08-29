@@ -22,6 +22,7 @@ from sembol_esleme import saglayici_sembolu
 
 _LOCK = threading.RLock()
 ISTANBUL = ZoneInfo("Europe/Istanbul")
+DAILY_SESSION_CLOSE = (18, 15)
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,27 @@ class VeriMetadatasi:
 class PiyasaVeriAdapteri(Protocol):
     def get_daily_ohlcv(self, symbol: str, period: str = "6mo") -> tuple[pd.DataFrame, VeriMetadatasi]: ...
     def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d") -> tuple[pd.DataFrame, VeriMetadatasi]: ...
+
+
+def completed_daily_frame(frame: pd.DataFrame, fetched_at: datetime | None = None) -> pd.DataFrame:
+    """Gunun olusmakta olan barini aksam tahminine sizdirmadan ayirir.
+
+    Tarama seans kapanisindan once calistirilmissa bugun tarihli gunluk bar
+    tamamlanmis kabul edilmez. Fonksiyon girdiyi degistirmez.
+    """
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame.copy()
+    now = fetched_at or datetime.now(ISTANBUL)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ISTANBUL)
+    else:
+        now = now.astimezone(ISTANBUL)
+    out = frame.copy().sort_index()
+    dates = pd.DatetimeIndex(out.index).date
+    before_close = (now.hour, now.minute) < DAILY_SESSION_CLOSE
+    if now.weekday() < 5 and before_close:
+        out = out[dates < now.date()].copy()
+    return out
 
 
 def uygulama_klasoru() -> Path:
@@ -245,12 +267,15 @@ class YahooPiyasaVeriAdapteri:
         frame = download(symbol, period=period, interval="1d", progress=False, auto_adjust=False)
         frame = _istanbul_index(frame)
         last = frame.index[-1].to_pydatetime() if not frame.empty else None
+        current_bar_incomplete = bool(last and last.date() == fetched.date() and
+                                      fetched.weekday() < 5 and
+                                      (fetched.hour, fetched.minute) < DAILY_SESSION_CLOSE)
         meta = VeriMetadatasi(
             source=frame.attrs.get("veri_kaynagi", self.source), fetched_at=fetched,
             last_bar_at=last, symbol=symbol, first_bar_at=(frame.index[0].to_pydatetime() if not frame.empty else None),
             interval="1d", is_delayed=True, delay_minutes=None,
             is_stale=frame.empty or last is None or (fetched.date() - last.date()).days > 4,
-            is_complete_bar=True, price_basis="raw",
+            is_complete_bar=not current_bar_incomplete, price_basis="raw",
             official_close_verified="Borsa" in frame.attrs.get("veri_kaynagi", ""),
             corporate_action_warning=bool(frame.attrs.get("corporate_action_warning", False)),
         )
