@@ -9,8 +9,8 @@ import pandas as pd
 
 ANALYSIS_UNIVERSES = {
     "daily_trade": "ALL_ACTIVE_BIST",
-    "short_term": "BIST30",
-    "medium_term": "BIST30",
+    "short_term": "ALL_ACTIVE_BIST",
+    "medium_term": "ALL_ACTIVE_BIST",
     "under_50": "ALL_ACTIVE_BIST_UNDER_50",
     "high_movement": "ALL_ACTIVE_BIST",
 }
@@ -39,12 +39,10 @@ def normalize_symbols(symbols) -> list[str]:
 
 def build_analysis_universes(all_active, bist30) -> dict[str, list[str]]:
     all_symbols = normalize_symbols(all_active)
-    all_set = set(all_symbols)
-    bist30_symbols = [symbol for symbol in normalize_symbols(bist30) if symbol in all_set]
     return {
         "daily_trade": list(all_symbols),
-        "short_term": list(bist30_symbols),
-        "medium_term": list(bist30_symbols),
+        "short_term": list(all_symbols),
+        "medium_term": list(all_symbols),
         # Fiyat filtresi veri alindiktan sonra ilgili motorda uygulanir.
         "under_50": list(all_symbols),
         "high_movement": list(all_symbols),

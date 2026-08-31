@@ -11,6 +11,7 @@ import pandas as pd
 
 from mum_formasyonlari import mum_formasyonu_tespit
 from teknik_gostergeler import atr as canonical_atr, bollinger_bands, ema, macd_v as canonical_macd_v, rsi as canonical_rsi
+from scan_candidate_policy import normalize_data_status
 
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -88,7 +89,15 @@ def en_iyi_gunluk_trade_adaylari(frame: pd.DataFrame, limit: int = 5) -> pd.Data
         return pd.DataFrame(columns=[] if frame is None else frame.columns)
     growth = pd.to_numeric(frame["Gün İçi Yükseliş %"], errors="coerce").fillna(0)
     score = pd.to_numeric(frame["Günlük Trade Skoru"], errors="coerce").fillna(0)
-    valid = frame["Veri Durumu"].astype(str).eq("GÜVENİLİR") & growth.gt(0)
-    return (frame[valid].assign(_skor=score[valid], _yukselis=growth[valid])
+    status = frame["Veri Durumu"].map(normalize_data_status)
+    eligible = status.isin({"RELIABLE", "PARTIAL"}) & growth.gt(0)
+    # Güçlü sonuç yoksa aynı geçerli veri kümesindeki en yüksek skorları TAKİP
+    # amacıyla döndür; eski/geçersiz veri asla işlem adayı yapılmaz.
+    strong = eligible & score.ge(58)
+    result = (frame[eligible].assign(_skor=score[eligible], _yukselis=growth[eligible])
             .sort_values(["_skor", "_yukselis"], ascending=False).head(max(0, int(limit)))
             .drop(columns=["_skor", "_yukselis"]).reset_index(drop=True))
+    if not strong.any() and not result.empty:
+        result["Karar"] = "TAKİP"
+        result["Seçilme Nedeni"] = "Güçlü günlük trade teyidi yok; en yüksek skorlu izleme adayları"
+    return result

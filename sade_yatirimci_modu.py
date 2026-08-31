@@ -144,8 +144,8 @@ def simplify_record(row: Mapping[str, Any], analysis_id: str, held: bool=False) 
     current=_data_is_current(row)
     reliable=confidence!="Ölçülemedi" or _truth(row,("Olasılık Güvenilir","probability_reliable"))
     elite=_truth(row,("T+1 Seçkin Aday","T+2 Seçkin Aday","eligible_elite"))
-    strong=any(token in raw for token in ("AL ADAYI","BUGÜN AL","UYGUN BÖLGEDE AL","ALIM BÖLGESİNDE","GÜÇLÜ ADAY"))
-    watch=strong or any(token in raw for token in ("BEKLE","İZLE","IZLE","TAKİP","TEYİT")) or elite
+    strong=raw.strip()=="AL" or any(token in raw for token in ("AL ADAYI","BUGÜN AL","UYGUN BÖLGEDE AL","ALIM BÖLGESİNDE","GÜÇLÜ ADAY"))
+    watch=strong or raw.strip() in {"TAKİP","TAKIP","İZLE","IZLE","BEKLE"} or any(token in raw for token in ("BEKLE","İZLE","IZLE","TAKİP","TEYİT")) or elite
 
     if held:
         if "SAT" in raw: decision="SAT"

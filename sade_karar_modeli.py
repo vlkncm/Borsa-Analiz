@@ -6,10 +6,19 @@ from typing import Iterable
 
 import pandas as pd
 
+from scan_candidate_policy import (
+    STRATEGY_THRESHOLDS,
+    ScanDiagnostics,
+    normalize_data_status,
+    normalize_professional_class,
+    safe_trade_plan,
+)
+
 
 SADE_KOLONLAR = [
     "Hisse", "Karar", "Referans Fiyat", "Alım Bölgesi", "Hedef", "Stop",
-    "Potansiyel %", "Tahmini Süre", "Güven Skoru", "Risk",
+    "Potansiyel %", "Risk/Getiri", "Güven Skoru", "Risk", "Tahmini Süre",
+    "Seçilme Nedeni", "Veri Zamanı", "Aday Seviyesi", "Plan Kaynağı",
 ]
 VADE_ADAYLARI = {
     "kisa": (5, 10, 15, 20, 30, 40),
@@ -61,35 +70,94 @@ def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None
     if df is None or df.empty:
         return pd.DataFrame(columns=SADE_KOLONLAR)
     work = df.copy()
+    strategy = {"gunluk": "daily_trade", "kisa": "short_term", "orta": "medium_term"}.get(vade, vade)
+    thresholds = STRATEGY_THRESHOLDS.get(strategy, STRATEGY_THRESHOLDS["short_term"])
     price = _num(work, ("Referans Fiyat", "Fiyat"))
     buy_low = _num(work, ("Önerilen Alış Alt", "Alış Alt"), price)
     buy_high = _num(work, ("Önerilen Alış Üst", "Alış Üst"), price)
     target_names = ("Gün İçi Hedef", "Önerilen Satış", "Hedef") if vade == "gunluk" else ("Önerilen Satış", "Hedef 1", "Hedef")
-    target = _num(work, target_names)
-    stop = _num(work, ("Önerilen Stop", "Stop Loss", "Stop"))
+    raw_target = _num(work, target_names, float("nan"))
+    raw_stop = _num(work, ("Önerilen Stop", "Stop Loss", "Stop"), float("nan"))
+    atr = _num(work, ("ATR", "ATR 14", "ATR(14)"), float("nan"))
+    support = _num(work, ("Destek", "Destek 1", "Pivot Destek"), float("nan"))
+    resistance = _num(work, ("Direnç", "Direnç 1", "Pivot Direnç"), float("nan"))
     score = _num(work, ("Günlük Trade Skoru", "Vade Skoru", "v4 Güven Puanı", "AI Güven Puanı"))
-    potential = ((target / price.replace(0, pd.NA)) - 1).mul(100).fillna(0)
-    rr = (target - price) / (price - stop).replace(0, pd.NA)
-    valid = (price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 60) & (rr >= 1.3)
-    if "Veri Durumu" in work:
-        valid &= work["Veri Durumu"].astype(str).str.upper().eq("GÜVENİLİR")
-    work = work.loc[valid].copy()
-    if work.empty:
-        return pd.DataFrame(columns=SADE_KOLONLAR)
-    idx = work.index
-    p, lo, hi, tg, st, sc, pot = price.loc[idx], buy_low.loc[idx], buy_high.loc[idx], target.loc[idx], stop.loc[idx], score.loc[idx], potential.loc[idx]
+    plans = [safe_trade_plan(price.loc[index], raw_target.loc[index], raw_stop.loc[index],
+                             atr.loc[index], support.loc[index], resistance.loc[index], strategy)
+             for index in work.index]
+    target = pd.Series([plan.target for plan in plans], index=work.index, dtype=float)
+    stop = pd.Series([plan.stop for plan in plans], index=work.index, dtype=float)
+    rr = pd.Series([plan.rr for plan in plans], index=work.index, dtype=float)
+    plan_source = pd.Series([plan.source for plan in plans], index=work.index, dtype=object)
+    data_status = _text(work, ("Veri Durumu", "Veri Kalitesi"), "KONTROL GEREKLİ").map(normalize_data_status)
+    professional = _text(work, ("Profesyonel Karar", "Yatırım Kararı", "Broker Aksiyon"), "").map(normalize_professional_class)
+    valid_price = price.gt(0)
+    valid_plan = target.gt(price) & stop.gt(0) & stop.lt(price) & rr.notna()
+    hard_veto = professional.isin({"DO_NOT_TRADE", "INSUFFICIENT_DATA"})
+    valid_data = data_status.ne("INVALID")
+    strong = (valid_price & valid_plan & valid_data & data_status.eq("RELIABLE") & ~hard_veto &
+              score.ge(thresholds["strong_score"]) & rr.ge(thresholds["strong_rr"]))
+    watch = (valid_price & valid_plan & valid_data & data_status.isin({"RELIABLE", "PARTIAL"}) & ~hard_veto &
+             score.ge(thresholds["watch_score"]) & rr.ge(thresholds["watch_rr"]) & ~strong)
+    fallback = valid_price & valid_plan & valid_data & ~hard_veto & ~strong & ~watch
+
+    level = pd.Series("", index=work.index, dtype=object)
+    level.loc[strong] = "A"; level.loc[watch] = "B"; level.loc[fallback] = "C"
+    selected = strong | watch
+    # A/B yoksa eşikleri gizlice gevşetmeden yalnız en iyi izleme adaylarını göster.
+    if not selected.any():
+        selected = fallback
+    idx = work.index[selected]
+    diagnostics = ScanDiagnostics(
+        strategy=strategy, symbols_total=len(work), data_ok=int((valid_price & valid_data).sum()),
+        analysis_ok=int((valid_price & valid_plan & valid_data).sum()),
+        invalid_price=int((~valid_price).sum()), invalid_target_stop=int((valid_price & ~valid_plan).sum()),
+        data_quality_rejected=int((data_status == "INVALID").sum()), professional_veto=int(hard_veto.sum()),
+        score_rejected=int((valid_price & valid_plan & score.lt(thresholds["watch_score"])).sum()),
+        rr_rejected=int((valid_price & valid_plan & rr.lt(thresholds["watch_rr"])).sum()),
+        strong_candidates=int(strong.sum()), watch_candidates=int((watch | (fallback if not (strong | watch).any() else False)).sum()),
+        errors=int((~valid_price | (data_status == "INVALID")).sum()),
+    )
+    if idx.empty:
+        empty = pd.DataFrame(columns=SADE_KOLONLAR)
+        empty.attrs["scan_diagnostics"] = diagnostics
+        empty.attrs["empty_reason"] = diagnostics.summary()
+        return empty
+    p, lo, hi, tg, st, sc = (series.loc[idx] for series in (price, buy_low, buy_high, target, stop, score))
+    pot = ((tg / p) - 1).mul(100)
+    selected_level = level.loc[idx]
+    decision = selected_level.map({"A": "AL", "B": "BEKLE", "C": "TAKİP"})
+    reasons = []
+    for index in idx:
+        if level.loc[index] == "A":
+            reasons.append(f"Skor {score.loc[index]:.0f}, R/R {rr.loc[index]:.2f}; güçlü aday koşulları sağlandı")
+        elif level.loc[index] == "B":
+            reasons.append(f"Skor {score.loc[index]:.0f}, R/R {rr.loc[index]:.2f}; ek teyit bekleniyor")
+        else:
+            missing = []
+            if score.loc[index] < thresholds["watch_score"]: missing.append(f"skor {score.loc[index]:.0f}")
+            if rr.loc[index] < thresholds["watch_rr"]: missing.append(f"R/R {rr.loc[index]:.2f}")
+            if data_status.loc[index] != "RELIABLE": missing.append(f"veri {data_status.loc[index]}")
+            reasons.append("Güçlü AL koşulu yok; eksik teyit: " + ", ".join(missing or ["trend/momentum teyidi"]))
     result = pd.DataFrame({
-        "Hisse": _text(work, ("Hisse",)),
-        "Karar": "GÜÇLÜ ADAY" if vade == "gunluk" else "UYGUN BÖLGEDE AL",
+        "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
+        "Karar": decision,
         "Referans Fiyat": p.round(2),
         "Alım Bölgesi": [f"{a:.2f} – {b:.2f} TL" for a, b in zip(lo, hi)],
         "Hedef": tg.round(2), "Stop": st.round(2), "Potansiyel %": pot.round(2),
-        "Tahmini Süre": sure or ("Gün içi" if vade == "gunluk" else "Model belirleyecek"),
+        "Risk/Getiri": rr.loc[idx].round(2),
         "Güven Skoru": sc.clip(0, 100).round(0).astype(int),
         "Risk": _risk(((p - st) / p * 100).fillna(99)),
+        "Tahmini Süre": sure or ("Gün içi" if vade == "gunluk" else "Model belirleyecek"),
+        "Seçilme Nedeni": reasons,
+        "Veri Zamanı": _text(work.loc[idx], ("Veri Tarihi", "Veri Zaman Damgası"), "Bilinmiyor"),
+        "Aday Seviyesi": selected_level,
+        "Plan Kaynağı": plan_source.loc[idx],
     }, index=idx)
     result=_kaniti_koru(result,work,idx)
-    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+    result = result.sort_values(["Aday Seviyesi", "Güven Skoru", "Risk/Getiri"], ascending=[True, False, False]).head(limit).reset_index(drop=True)
+    result.attrs["scan_diagnostics"] = diagnostics
+    return result
 
 
 def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:

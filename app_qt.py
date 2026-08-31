@@ -3,6 +3,8 @@ import sys
 import traceback
 import uuid
 import time
+import json
+import faulthandler
 from pathlib import Path
 from datetime import datetime
 
@@ -17,6 +19,7 @@ from bist30 import bist30_hisseleri, normalize_bist_sembolu
 from analysis_orchestration import (
     ANALYSIS_UNIVERSES, build_analysis_universes, tag_analysis_result,
 )
+from scan_candidate_policy import ScanDiagnostics, write_scan_diagnostics
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import (
@@ -1446,20 +1449,45 @@ class DailyTradeWorker(QObject):
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
-                self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
-                self.structured_progress.emit(index, len(symbols), "Günlük Trade · Tüm Aktif BIST")
-                row = gunluk_trade_analiz(
-                    symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
-                    risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
-                    sadece_teyitli=self.confirmed_only,
-                )
+                if index == 1 or index == len(symbols) or index % 5 == 0:
+                    self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
+                    self.structured_progress.emit(index, len(symbols), "Günlük Trade · Tüm Aktif BIST")
                 attempted += 1
+                try:
+                    row = gunluk_trade_analiz(
+                        symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
+                        risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
+                        sadece_teyitli=self.confirmed_only,
+                    )
+                except Exception:
+                    unavailable += 1
+                    hata_gunlugune_yaz(f"Günlük Trade sembol hatası: {symbol}", traceback.format_exc())
+                    continue
                 if row.get("Neden Kodu") in {"MISSING_PRICE_DATA", "SYMBOL_MAPPING_FAILED"}: unavailable += 1
                 else: received += 1
                 if not self.confirmed_only or row.get("Sonuç") == "AL ADAYI":
                     rows.append(row)
+                QThread.msleep(2)  # Ana Qt olay döngüsüne düzenli çalışma fırsatı ver.
             warning = son_evren_durumu().get("warning", "")
-            message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Veri alınamayan: {unavailable} | Gösterilen: {len(rows)}"
+            insufficient_count = sum(str(row.get("Sonuç")) == "VERİ YETERSİZ" for row in rows)
+            analysis_ok = max(0, received - insufficient_count)
+            message = (f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | "
+                       f"Analiz tamamlanan: {analysis_ok} | Veri alınamayan: {unavailable} | Gösterilen: {len(rows)}")
+            strong_count = sum(str(row.get("Sonuç")) == "AL ADAYI" for row in rows)
+            watch_count = sum(str(row.get("Sonuç")) not in {"AL ADAYI", "VERİ YETERSİZ"} for row in rows)
+            diagnostics = ScanDiagnostics(
+                strategy="daily_trade", symbols_total=len(symbols), data_ok=received,
+                analysis_ok=analysis_ok, data_quality_rejected=insufficient_count,
+                strong_candidates=strong_count, watch_candidates=watch_count,
+                errors=unavailable,
+            )
+            write_scan_diagnostics(diagnostics)
+            if received < max(1, len(symbols) // 2):
+                message += " | Veri kaynağı problemi nedeniyle sonuç güvenilir değil"
+            elif strong_count == 0 and watch_count:
+                message += " | Güçlü AL adayı yok; en iyi takip adayları gösteriliyor"
+            elif strong_count == 0:
+                message += f" | Güçlü aday yok; {insufficient_count} sembolde intraday geçmiş yetersiz, günlük rapor fallback'i kullanılacak"
             if warning: message += " | UYARI: " + warning
             self.finished.emit(True, pd.DataFrame(rows), message)
         except Exception:
@@ -1867,8 +1895,9 @@ class Under50Worker(QObject):
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
-                self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
-                self.structured_progress.emit(index, len(symbols), "50 TL Altı · geçerli fiyat filtresi uygulanıyor")
+                if index == 1 or index == len(symbols) or index % 5 == 0:
+                    self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
+                    self.structured_progress.emit(index, len(symbols), "50 TL Altı · geçerli fiyat filtresi uygulanıyor")
                 attempted += 1; got_data = False
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "1y")
@@ -1880,12 +1909,25 @@ class Under50Worker(QObject):
                         rows.append(candidate)
                 except Exception:
                     if not got_data: unavailable += 1
+                    hata_gunlugune_yaz(f"50 TL Altı sembol hatası: {symbol}", traceback.format_exc())
+                QThread.msleep(2)
             frame = pd.DataFrame(rows)
             if not frame.empty:
                 frame = frame.sort_values(["Skor", "Risk/Getiri", "Ortalama İşlem Tutarı"], ascending=False).head(20)
                 frame = frame.drop(columns=["Ortalama İşlem Tutarı"], errors="ignore").reset_index(drop=True)
             warning = son_evren_durumu().get("warning", "")
             message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Yeni halka arz: {ipo_count} | Veri alınamayan: {unavailable} | Gösterilen: {len(frame)}"
+            scores = pd.to_numeric(frame.get("Skor", pd.Series(dtype=float)), errors="coerce")
+            strong_count = int(scores.ge(65).sum())
+            diagnostics = ScanDiagnostics(
+                strategy="under_50", symbols_total=len(symbols), data_ok=received,
+                analysis_ok=received,
+                score_rejected=max(0, received - len(frame)), strong_candidates=strong_count,
+                watch_candidates=max(0, len(frame) - strong_count), errors=unavailable,
+            )
+            write_scan_diagnostics(diagnostics)
+            if received < max(1, len(symbols) // 2):
+                message += " | Veri kaynağı problemi nedeniyle sonuçlar eksik"
             if warning: message += " | UYARI: " + warning
             self.finished.emit(True, frame, message)
         except Exception:
@@ -1988,8 +2030,9 @@ class NextDayWorker(QObject):
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
-                self.progress.emit(f"{index}/{len(symbols)} aktif BIST hissesi T+1 için inceleniyor · {len(rows)} güçlü/erken aday")
-                self.structured_progress.emit(index, len(symbols), "Yüksek Hareket · Tüm Aktif BIST")
+                if index == 1 or index == len(symbols) or index % 5 == 0:
+                    self.progress.emit(f"{index}/{len(symbols)} aktif BIST hissesi T+1 için inceleniyor · {len(rows)} güçlü/erken aday")
+                    self.structured_progress.emit(index, len(symbols), "Yüksek Hareket · Tüm Aktif BIST")
                 try:
                     history_raw, _meta = get_daily_ohlcv(symbol, "2y")
                     history = completed_daily_frame(history_raw, _meta.fetched_at)
@@ -2025,6 +2068,7 @@ class NextDayWorker(QObject):
                              "Model Yolu": "BELİRLENEMEDİ", "Neden Kodu": "MISSING_PRICE_DATA",
                              "Eleme Nedeni": str(exc), "Riskler": [str(exc)]}
                     summary.kaydet(error, False); rows.append(error)
+                QThread.msleep(2)
             frame = pd.DataFrame(rows)
             if not frame.empty:
                 frame["Referans Skor"] = pd.to_numeric(frame.get("Referans Skor"), errors="coerce").fillna(0)
@@ -2130,7 +2174,7 @@ class NextDayPage(NextDayDashboard):
 
     def __init__(self):
         super().__init__(veri_klasoru() / "tahmin_gecmisi.sqlite3")
-        self.thread = None; self.worker = None; self._run_id = None
+        self.thread = None; self.worker = None; self._run_id = None; self._pending_render = None
         self._result_cache_path = veri_klasoru() / "yuksek_hareket_son_snapshot.json"
         self._load_cached_results()
         self.scan_requested.connect(self.start_scan)
@@ -2171,9 +2215,21 @@ class NextDayPage(NextDayDashboard):
                 tagged.to_json(self._result_cache_path, orient="records", force_ascii=False)
             except Exception as exc:
                 hata_gunlugune_yaz("Yüksek Hareket snapshotı kaydı", str(exc))
-            self.load_results(tagged, message)
+            if self.isVisible():
+                self.load_results(tagged, message)
+            else:
+                self._full = tagged.copy()
+                self._pending_render = (tagged.copy(), message)
         else: self.set_error(message.splitlines()[-1])
         self.central_finished.emit(run_id or self._run_id or "", ok, message)
+
+    def render_pending(self):
+        if self._pending_render is None:
+            return False
+        frame, message = self._pending_render
+        self._pending_render = None
+        self.load_results(frame, message)
+        return True
 
     def _clear(self):
         self.worker = None; self.thread = None
@@ -2222,6 +2278,10 @@ class MainWindow(QMainWindow):
         self._analysis_workers_started = False
         self._analysis_result_cache = {}
         self._scan_universe_meta = {}
+        self._lazy_page_renderers = {}
+        self._applying_scan_result = False
+        self._scan_apply_count = 0
+        self._heartbeat_last = time.monotonic()
         self.pages = QStackedWidget()
 
         self.home = HomePage()
@@ -2237,15 +2297,16 @@ class MainWindow(QMainWindow):
         self.funds = FundAnalysisPage()
         self.daily_trade = DailyTradePage()
         self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
-        self.short_term.info.setText("Kısa Vade · BIST30")
-        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Orta Vade · BIST30 · Ayrı orta-vade modeli en fazla 5 aday gösterir.")
-        self.medium_term.info.setText("Orta Vade · BIST30")
+        self.short_term.info.setText("Kısa Vade · Tüm Aktif BIST")
+        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Orta Vade · Tüm Aktif BIST · Ayrı orta-vade modeli en fazla 5 aday gösterir.")
+        self.medium_term.info.setText("Orta Vade · Tüm Aktif BIST")
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
         self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.log.document().setMaximumBlockCount(1200)
 
         for p in [self.home, self.next_day, self.daily_trade, self.short_term, self.medium_term,
                   self.under_50, self.funds, self.track, self.history, self.settings_page,
@@ -2306,6 +2367,9 @@ class MainWindow(QMainWindow):
             self.load_report()
         self._scan_elapsed_timer = QTimer(self)
         self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
+        self._heartbeat_timer = QTimer(self)
+        self._heartbeat_timer.timeout.connect(self._gui_heartbeat)
+        self._heartbeat_timer.start(250)
         QTimer.singleShot(0,self._apply_responsive_profile)
 
     def resizeEvent(self,event):
@@ -2326,6 +2390,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.pages.setCurrentWidget(page)
             self.sidebar.set_active(key)
+            self._render_lazy_page(page)
             if key == "performance" and hasattr(page, "refresh"):
                 page.refresh()
 
@@ -2334,7 +2399,47 @@ class MainWindow(QMainWindow):
         for key, page in self._page_map.items():
             if page is current:
                 self.sidebar.set_active(key)
+                self._render_lazy_page(page)
                 break
+
+    def _render_lazy_page(self, page):
+        renderer = self._lazy_page_renderers.pop(page, None)
+        if renderer is None:
+            if hasattr(page, "render_pending"):
+                page.render_pending()
+            return False
+        started = time.perf_counter()
+        renderer()
+        self._post_scan_trace("lazy_render", page=getattr(page, "analysis_id", type(page).__name__), duration=time.perf_counter()-started)
+        return True
+
+    def _post_scan_trace(self, event, **fields):
+        payload = {"time": datetime.now().isoformat(timespec="milliseconds"), "event": event,
+                   "scan_id": getattr(self, "_scan_run_id", None), **fields}
+        try:
+            path = veri_klasoru() / "logs" / "post_scan_trace.log"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+        except Exception:
+            pass
+
+    def _active_worker_count(self):
+        workers = (self.daily_trade.thread, self.under_50.thread, self.next_day.thread, self._market_thread)
+        return sum(bool(thread and thread.isRunning()) for thread in workers) + int(
+            bool(self.scan_process and self.scan_process.state() != QProcess.NotRunning)
+        )
+
+    def _gui_heartbeat(self):
+        now = time.monotonic(); gap = now - self._heartbeat_last; self._heartbeat_last = now
+        if gap > 1.0 and self.scan_coordinator is not None:
+            self._post_scan_trace("gui_heartbeat_lost", gap=gap, phase=self.scan_coordinator.phase,
+                                  active_threads=self._active_worker_count())
+
+    def _defer_page_render(self, page, renderer):
+        self._lazy_page_renderers[page] = renderer
+        if self.pages.currentWidget() is page:
+            self._render_lazy_page(page)
 
     def _search_symbol(self, text):
         symbol = normalize_symbol(text)
@@ -2374,9 +2479,19 @@ class MainWindow(QMainWindow):
         path = rapor_yolu()
         if not path.exists():
             return False
+        if self._applying_scan_result:
+            self._post_scan_trace("apply_skipped_reentrant")
+            return False
+        self._applying_scan_result = True
+        self._scan_apply_count += 1
+        total_started = time.perf_counter()
+        timings = {}
+        self._post_scan_trace("apply_scan_result_started", apply_count=self._scan_apply_count)
         try:
             from analiz_deposu import anlik_goruntu_oku
+            stage_started = time.perf_counter()
             sheets = anlik_goruntu_oku(path)
+            timings["cache_read"] = time.perf_counter() - stage_started
             all_results = sheets.get("Tum Sonuclar", pd.DataFrame()).copy()
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
@@ -2392,15 +2507,15 @@ class MainWindow(QMainWindow):
                 "Karar Nedenleri",
             ]
             compact = all_results[[c for c in visible_columns if c in all_results.columns]].copy()
-            self.tum.load(compact)
 
+            stage_started = time.perf_counter()
             trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
             if trade_frame.empty:
                 trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
             central_active = self.scan_coordinator is not None and not self.scan_coordinator.all_terminal
             self.daily_trade.report_fallback = trade_frame.copy()
             if not central_active:
-                self.daily_trade.table.load(trade_frame)
+                self._defer_page_render(self.daily_trade, lambda frame=trade_frame.copy(): self.daily_trade.table.load(frame))
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
@@ -2430,16 +2545,30 @@ class MainWindow(QMainWindow):
                     all_results, sure_metni(medium_days), limit=5,
                     haric=short_frame.get("Hisse", pd.Series(dtype=str)).tolist(),
                 )
-            self.short_term.load(short_frame)
-            self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
-            self.medium_term.load(medium_frame)
-            self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
+            short_strong = int(short_frame.get("Karar", pd.Series(dtype=str)).eq("AL").sum())
+            short_watch = max(0, len(short_frame) - short_strong)
+            short_note = (f"{len(all_results)} hisse analiz edildi · {short_strong} güçlü aday · {short_watch} takip adayı"
+                          if short_strong else
+                          f"{len(all_results)} hisse analiz edildi · Güçlü AL koşulunu sağlayan hisse yok · En iyi {short_watch} takip adayı gösteriliyor")
+            def render_short(frame=short_frame.copy(), note=short_note, evidence=short_evidence):
+                self.short_term.load(frame)
+                self.short_term.info.setText(note + f" · Süre dayanağı: {evidence}")
+            self._defer_page_render(self.short_term, render_short)
+            medium_strong = int(medium_frame.get("Karar", pd.Series(dtype=str)).eq("AL").sum())
+            medium_watch = max(0, len(medium_frame) - medium_strong)
+            medium_note = (f"{len(all_results)} hisse analiz edildi · {medium_strong} güçlü aday · {medium_watch} takip adayı"
+                           if medium_strong else
+                           f"{len(all_results)} hisse analiz edildi · Güçlü AL koşulunu sağlayan hisse yok · En iyi {medium_watch} takip adayı gösteriliyor")
+            def render_medium(frame=medium_frame.copy(), note=medium_note, evidence=medium_evidence):
+                self.medium_term.load(frame)
+                self.medium_term.info.setText(note + f" · Süre dayanağı: {evidence}")
+            self._defer_page_render(self.medium_term, render_medium)
             # 50 TL Altı kesin ürün evreni tüm aktif BIST'tir; rapor yeniden
             # yüklenirken 120 likit hisseye daraltmak BIST30 dışı adayları saklar.
             under_frame = elli_tl_adaylari(all_results, limit=20)
+            timings["post_processing"] = time.perf_counter() - stage_started
             if not central_active:
-                self.under_50.load(under_frame)
-            self.history.refresh()
+                self._defer_page_render(self.under_50, lambda frame=under_frame.copy(): self.under_50.load(frame))
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
             )
@@ -2455,7 +2584,9 @@ class MainWindow(QMainWindow):
             self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
             valid_count = int(all_results.get("Fiyat", pd.Series(dtype=float)).notna().sum()) if "Fiyat" in all_results else 0
             self.home.scan_stats.setText(f"Taranan: {len(all_results)}  ·  Veri alınan: {valid_count}  ·  Veri alınamayan: {max(0, len(all_results)-valid_count)}  ·  Son tarama: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+            stage_started = time.perf_counter()
             self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame))
+            timings["home_render"] = time.perf_counter() - stage_started
 
             def numeric(name, default=0):
                 if name not in all_results.columns:
@@ -2472,9 +2603,9 @@ class MainWindow(QMainWindow):
                 "Model Olasılığı %", "Veri Durumu", "Karar Nedenleri",
             ]
             decision_columns = [c for c in decision_columns if c in all_results.columns]
-            self.buy.load(buy_results[decision_columns].copy())
-            self.wait.load(wait_results[decision_columns].copy())
-            self.avoid.load(avoid_results[decision_columns].copy())
+            buy_display = buy_results[decision_columns].copy()
+            wait_display = wait_results[decision_columns].copy()
+            avoid_display = avoid_results[decision_columns].copy()
             mtf = all_results.get("MTF Uyum", pd.Series("", index=all_results.index)).astype(str)
             strict = (
                 decision.eq("BUGÜN AL") & (numeric("Veri Yaşı (Gün)", 999) <= 4) &
@@ -2494,7 +2625,15 @@ class MainWindow(QMainWindow):
                 "Beklenen Getiri %", "Karar Risk/Getiri", "Model Olasılığı %",
                 "v4 Güven Puanı", "Karar Nedenleri",
             ]
-            self.onay.load(high_conviction[[c for c in conviction_columns if c in high_conviction.columns]])
+            conviction_display = high_conviction[[c for c in conviction_columns if c in high_conviction.columns]].copy()
+            def render_terminal(all_frame=compact.copy(), buy=buy_display, wait=wait_display,
+                                avoid=avoid_display, conviction=conviction_display):
+                self.tum.load(all_frame)
+                self.buy.load(buy)
+                self.wait.load(wait)
+                self.avoid.load(avoid)
+                self.onay.load(conviction)
+            self._defer_page_render(self.terminal, render_terminal)
             self.terminal.update_summary(
                 path,
                 (self.buy.table.rowCount(), self.wait.table.rowCount(), self.avoid.table.rowCount()),
@@ -2502,11 +2641,25 @@ class MainWindow(QMainWindow):
                 conviction=len(high_conviction),
             )
             self.report_path_label.setText("Tahminler sürümlü SQLite geçmişinde saklanır.")
+            rows = len(all_results)
+            unique = int(all_results["Hisse"].astype(str).nunique()) if "Hisse" in all_results else rows
+            self._post_scan_trace(
+                "apply_scan_result_finished", duration=time.perf_counter()-total_started,
+                timings=timings, shapes={
+                    "raw_scan": list(all_results.shape), "daily": list(trade_frame.shape),
+                    "short": list(short_frame.shape), "medium": list(medium_frame.shape),
+                    "under50": list(under_frame.shape), "terminal_compact": list(compact.shape),
+                }, rows=rows, unique_symbols=unique, duplicate_rows=max(0, rows-unique),
+                lazy_pages=len(self._lazy_page_renderers), active_threads=self._active_worker_count(),
+            )
             return True
         except Exception as exc:
             QMessageBox.warning(self, "Rapor", str(exc))
             hata_gunlugune_yaz("Sonuç sayfalarını yenileme", traceback.format_exc())
+            self._post_scan_trace("apply_scan_result_error", duration=time.perf_counter()-total_started, error=str(exc))
             return False
+        finally:
+            self._applying_scan_result = False
 
     def open_report(self):
         path = rapor_yolu()
@@ -2532,6 +2685,7 @@ class MainWindow(QMainWindow):
                 return False
             self.scan_process.deleteLater(); self.scan_process = None
         self._scan_run_id = uuid.uuid4().hex
+        self._scan_apply_count = 0
         self.scan_coordinator = ScanCoordinator(self._scan_run_id)
         for component in ("core", "daily_trade", "short_term", "medium_term", "under_50", "high_movement"):
             self.scan_coordinator.start_component(component)
@@ -2660,6 +2814,10 @@ class MainWindow(QMainWindow):
                 self._fail_central_scan("Tarama başlatılamadı", "Alt süreç dosyası bulunamadı veya çalıştırılamadı.")
 
     def _scan_process_finished(self, exit_code, exit_status):
+        callback_started = time.perf_counter()
+        self._post_scan_trace("scan_worker_finished", exit_code=exit_code, exit_status=str(exit_status))
+        if _CRASH_STREAM is not None:
+            faulthandler.dump_traceback_later(5.0, repeat=False, file=_CRASH_STREAM)
         self._read_scan_stdout()
         self._read_scan_stderr()
         for attr in ("_scan_stdout_buffer", "_scan_stderr_buffer"):
@@ -2668,7 +2826,9 @@ class MainWindow(QMainWindow):
                 self.log.append(tail)
             setattr(self, attr, "")
         if self.scan_coordinator is None or self.scan_coordinator.components["core"] in TERMINAL_STATES:
-            self._cleanup_scan_process(); return
+            self._cleanup_scan_process()
+            if _CRASH_STREAM is not None: faulthandler.cancel_dump_traceback_later()
+            return
         ok = exit_status == QProcess.NormalExit and exit_code == 0 and not self._scan_cancelled
         if ok:
             path = rapor_yolu()
@@ -2676,7 +2836,10 @@ class MainWindow(QMainWindow):
             if not new_result:
                 self._component_failed("core", "Tarama çalıştı ancak yeni sonuç kaydı oluşturulamadı. Önceki sonuçlar korunuyor.")
                 self._fail_dependent_components()
-            elif self.load_report():
+            else:
+                self.scan_progress.status.setText("Tarama bitti · Sonuçlar hazırlanıyor…")
+                self.scan_progress.phase.setText("Snapshot okunuyor ve görünür ekran hazırlanıyor")
+            if new_result and self.load_report():
                 # QProcess'in başarılı çıkışı bütün hisse görevlerinin join edildiğini
                 # kanıtlar. Son stdout satırı tamponda kaybolmuş olsa bile sayaç eksik
                 # kalıp taramanın %97/%99'da görünmesine izin verme.
@@ -2698,6 +2861,10 @@ class MainWindow(QMainWindow):
         self._render_scan_progress()
         self._maybe_finalize_central_scan()
         self._cleanup_scan_process()
+        self._post_scan_trace("scan_finished_callback_returned", duration=time.perf_counter()-callback_started,
+                              apply_count=self._scan_apply_count, active_threads=self._active_worker_count())
+        if _CRASH_STREAM is not None:
+            faulthandler.cancel_dump_traceback_later()
 
     def _cleanup_scan_process(self):
         if self.scan_process is not None:
@@ -2710,6 +2877,7 @@ class MainWindow(QMainWindow):
         universes = build_analysis_universes(all_symbols, bist30_hisseleri())
         self._analysis_workers_started = True
         run_id = self.scan_coordinator.scan_id
+        self._pending_analysis_universes = universes
         self.log.append(
             f"Görev evrenleri: Günlük {len(universes['daily_trade'])} · "
             f"Kısa {len(universes['short_term'])} · Orta {len(universes['medium_term'])} · "
@@ -2730,9 +2898,25 @@ class MainWindow(QMainWindow):
                 self.scan_progress.phase.setText("Eksik/önbellek evren uyarısı: " + str(warning))
         except Exception as exc:
             self.log.append("Evren kaynak bilgisi okunamadı: " + str(exc))
-        self.daily_trade.start_scan(run_id, universes["daily_trade"])
-        self.under_50.start_scan(run_id, universes["under_50"])
-        self.next_day.start_scan(run_id, universes["high_movement"])
+        # Bu görevlerin üçü de Python ağırlıklı hesap ve aynı piyasa verisi
+        # önbelleğini kullanır. Aynı anda QThread olarak çalıştırılmaları Windows'ta
+        # Qt olay döngüsünü aç bırakıp AppHangTransient üretiyordu. Kapsamı
+        # daraltmadan sırayla çalıştır.
+        if not self.daily_trade.start_scan(run_id, universes["daily_trade"]):
+            self._component_failed("daily_trade", "Günlük Trade worker başlatılamadı.")
+            self._start_next_auxiliary_worker("daily_trade", run_id)
+
+    def _start_next_auxiliary_worker(self, completed_component, run_id):
+        if not self.scan_coordinator or run_id != self.scan_coordinator.scan_id:
+            return
+        universes = getattr(self, "_pending_analysis_universes", {})
+        if completed_component == "daily_trade":
+            if not self.under_50.start_scan(run_id, universes.get("under_50", [])):
+                self._component_failed("under_50", "50 TL Altı worker başlatılamadı.")
+                self._start_next_auxiliary_worker("under_50", run_id)
+        elif completed_component == "under_50":
+            if not self.next_day.start_scan(run_id, universes.get("high_movement", [])):
+                self._component_failed("high_movement", "Yüksek Hareket worker başlatılamadı.")
 
     def _worker_progress(self, component, run_id, completed, total, message):
         if not self.scan_coordinator or run_id != self.scan_coordinator.scan_id:
@@ -2746,9 +2930,13 @@ class MainWindow(QMainWindow):
         if self.scan_coordinator.components[component] in TERMINAL_STATES:
             return
         self._analysis_result_cache[(run_id, component)] = frame.copy()
+        self._post_scan_trace("aux_worker_finished", component=component, ok=ok,
+                              shape=list(frame.shape) if isinstance(frame, pd.DataFrame) else None)
         self.scan_coordinator.finish_component(component, "TAMAMLANDI" if ok else "HATA")
         if not ok:
             hata_gunlugune_yaz(f"{component} worker hatası", message)
+        if component in {"daily_trade", "under_50"}:
+            self._start_next_auxiliary_worker(component, run_id)
         self._render_scan_progress()
         self._maybe_finalize_central_scan()
 
@@ -2759,8 +2947,10 @@ class MainWindow(QMainWindow):
         if current in TERMINAL_STATES:
             return
         self.scan_coordinator.finish_component("high_movement", "TAMAMLANDI" if ok else "HATA")
+        frame = getattr(self.next_day, "_full", pd.DataFrame())
+        self._post_scan_trace("aux_worker_finished", component="high_movement", ok=ok,
+                              shape=list(frame.shape) if isinstance(frame, pd.DataFrame) else None)
         if ok:
-            frame = getattr(self.next_day, "_full", pd.DataFrame())
             self._analysis_result_cache[(run_id, "high_movement")] = tag_analysis_result(frame, "high_movement", run_id)
         if not ok:
             hata_gunlugune_yaz("Yüksek Hareket worker hatası", message)
@@ -2842,6 +3032,9 @@ class MainWindow(QMainWindow):
         self.home.scan_status.setText(title + " · " + detail)
         self.log.append(title + " | " + detail)
         self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home)); self._scan_target = self.home
+        self._render_lazy_page(self.pages.currentWidget())
+        self._post_scan_trace("scan_ui_ready", apply_count=self._scan_apply_count,
+                              active_threads=self._active_worker_count(), lazy_pages=len(self._lazy_page_renderers))
 
 
 def exception_hook(exc_type, exc_value, exc_tb):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import os
 import pandas as pd
 
-from bist30 import BIST30_KUMESI
-
+from scan_candidate_policy import ScanDiagnostics, write_scan_diagnostics
 
 GORUNEN_KOLONLAR = [
     "Hisse",
@@ -41,11 +41,8 @@ def vade_listeleri_uret(df: pd.DataFrame):
         return bos, bos.copy(), bos.copy()
 
     work = df.copy()
-    # Kısa/orta/uzun toplu listeler yalnızca resmi dönemsel BIST 30 evrenidir.
-    if "Hisse" in work.columns:
-        symbols = work["Hisse"].astype(str).str.strip().str.upper()
-        symbols = symbols.where(symbols.str.endswith(".IS"), symbols + ".IS")
-        work = work[symbols.isin(BIST30_KUMESI)].copy()
+    # Kısa ve orta vade tüm aktif BIST içinde göreceli sıralanır. Evreni burada
+    # yeniden daraltmak, worker'ın taradığı BIST30 dışı adayları sessizce yok eder.
 
     guven = _num(work, "v4 Güven Puanı", 50)
     olasilik = _num(work, "Model Olasılığı %", 50)
@@ -75,12 +72,6 @@ def vade_listeleri_uret(df: pd.DataFrame):
     stop = _num(work, "Önerilen Stop")
     veri_yasi = _num(work, "Veri Yaşı (Gün)", 999)
     risk_pct = ((alis_ust - stop) / alis_ust.mask(alis_ust == 0) * 100).fillna(0)
-    temel_kalite = (
-        uygun & (fiyat > 0) & (alis_alt > 0) & (alis_ust >= alis_alt) &
-        (hedef > alis_ust) & (stop < alis_alt) & (rr >= 1.2) &
-        (olasilik >= 55) & (veri_yasi <= 4) & risk_pct.between(0.5, 15)
-    )
-
     work["_kisa"] = (
         guven * 0.22 + olasilik * 0.18 + fib * 0.13 + form * 0.13 +
         adx.clip(0, 50) * 0.10 + hacim.clip(0, 3) / 3 * 100 * 0.10 +
@@ -110,16 +101,35 @@ def vade_listeleri_uret(df: pd.DataFrame):
 
     def sec(score_col: str, sure: str, min_score: float, min_rr: float) -> pd.DataFrame:
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
-        kalite = temel_kalite & (work[score_col] >= min_score) & (rr >= min_rr) & (kanit >= 50) & (vade_kaniti >= 35)
-        aday = work[kalite].copy()
+        base_quality = (
+            uygun & (fiyat > 0) & (alis_alt > 0) & (alis_ust >= alis_alt) &
+            (hedef > alis_ust) & (stop < alis_alt) & (rr >= 1.0) &
+            (veri_yasi <= 4) & risk_pct.between(0.5, 15)
+        )
+        strong = (base_quality & (work[score_col] >= min_score) & (rr >= min_rr) &
+                  (kanit >= 50) & (vade_kaniti >= 35))
+        watch = (base_quality & ~strong & (work[score_col] >= 54) & (rr >= 1.15))
+        selected = strong | watch
+        fallback_used = not selected.any()
+        if fallback_used:
+            selected = base_quality
+        aday = work[selected].copy()
         if aday.empty:
             return pd.DataFrame(columns=["Hisse", "Vade", "Vade Skoru"] + GORUNEN_KOLONLAR[1:])
+
+        levels = pd.Series("C" if fallback_used else "", index=aday.index, dtype=object)
+        if not fallback_used:
+            levels.loc[strong[strong].index.intersection(aday.index)] = "A"
+            levels.loc[watch[watch].index.intersection(aday.index)] = "B"
+        aday["Aday Seviyesi"] = levels
 
         aday_fiyat = fiyat.loc[aday.index]
         aday_alt = alis_alt.loc[aday.index]
         aday_ust = alis_ust.loc[aday.index]
-        durum = pd.Series("TEYİT BEKLE", index=aday.index, dtype=object)
-        durum.loc[aday_fiyat.between(aday_alt, aday_ust)] = "ALIM BÖLGESİNDE"
+        durum = pd.Series("TAKİP", index=aday.index, dtype=object)
+        is_strong = aday["Aday Seviyesi"].eq("A")
+        durum.loc[~is_strong] = "TEYİT BEKLE"
+        durum.loc[is_strong & aday_fiyat.between(aday_alt, aday_ust)] = "ALIM BÖLGESİNDE"
         durum.loc[aday_fiyat > aday_ust] = "GERİ ÇEKİLME BEKLE"
         durum.loc[aday_fiyat < aday_alt] = "KIRILIM/TEYİT BEKLE"
         aday["İşlem Durumu"] = durum
@@ -137,6 +147,21 @@ def vade_listeleri_uret(df: pd.DataFrame):
         sonuc = aday[cols].copy()
         sonuc.insert(1, "Vade", sure)
         sonuc.insert(2, "Vade Skoru", aday[score_col].round(1).values)
+        sonuc["Aday Seviyesi"] = aday["Aday Seviyesi"].values
+        strategy = {"_kisa": "short_term", "_orta": "medium_term", "_uzun": "long_term"}[score_col]
+        diagnostics = ScanDiagnostics(
+            strategy=strategy, symbols_total=len(work), data_ok=int((fiyat > 0).sum()),
+            analysis_ok=int(base_quality.sum()), invalid_price=int((fiyat <= 0).sum()),
+            invalid_target_stop=int(((fiyat > 0) & ~((hedef > alis_ust) & (stop < alis_alt))).sum()),
+            score_rejected=int((base_quality & (work[score_col] < 54)).sum()),
+            rr_rejected=int(((fiyat > 0) & (rr < 1.0)).sum()),
+            strong_candidates=int(strong.sum()),
+            watch_candidates=int((watch | (base_quality if fallback_used else False)).sum()),
+            errors=int((fiyat <= 0).sum()),
+        )
+        sonuc.attrs["scan_diagnostics"] = diagnostics
+        if os.getenv("BORSA_SCAN_ID"):
+            write_scan_diagnostics(diagnostics)
         return sonuc.reset_index(drop=True)
 
     return (

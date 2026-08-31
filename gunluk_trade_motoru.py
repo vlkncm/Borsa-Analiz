@@ -143,6 +143,29 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
              and rs.get("rs_sektor_5") is not None and rs.get("rs_sektor_20") is not None
              and rs["rs_sektor_5"] > 0 and rs["rs_sektor_20"] > 0)
     rvol_ok = rvol["rvol"] is not None and rvol["rvol"] >= .8
+    trade_score = int(max(0, min(100,
+        15 * int(ema21 > ema50) +
+        15 * int(50 < rsi14 < 70) +
+        15 * int(macd_up) +
+        10 * int(volume_ratio >= 1.20) +
+        10 * int(above_vwap) +
+        10 * int(momentum) +
+        10 * int(adx14 >= 20) +
+        5 * int(rvol_ok) +
+        5 * int(positive_doji) +
+        5 * int(rr >= min_risk_getiri) -
+        15 * int(negative_doji)
+    )))
+    if trade_score >= 80:
+        candidate_class = "GÜÇLÜ ADAY"
+    elif trade_score >= 68:
+        candidate_class = "UYGUN ADAY"
+    elif trade_score >= 58:
+        candidate_class = "TEYİT BEKLİYOR"
+    elif trade_score >= 45:
+        candidate_class = "İZLE"
+    else:
+        candidate_class = "ALMA"
     net_expectancy = None if expectancy is None else expectancy["net_beklenti_pct"]
     probability_gate_evidence = {"yeterli": horizon_evidence["probability_target_before_stop"] is not None}
     gates = decision_gates(data_ok=not meta.is_stale, evidence=probability_gate_evidence, regime=regime,
@@ -227,6 +250,7 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         "Doji": doji["tur"], "Doji Bağlamı": context["baglam"], "Doji Teyidi": "EVET" if context["teyit"] else "HAYIR",
         "VWAP": vwap, "VWAP Konumu": "ÜSTÜNDE" if above_vwap else "ALTINDA", **piv,
         "ATR": atr, "Stop Katsayısı": 1.5, "Hacim Oranı": volume_ratio, "ADX": adx14,
+        "Günlük Trade Skoru": trade_score, "Aday Sınıfı": candidate_class,
         "Strateji Kimliği": STRATEGY_CONFIG.strategy_id, "Strateji Sürümü": STRATEGY_CONFIG.version,
         "EMA21": ema21, "EMA50": ema50, "RSI": rsi14, "MACD": float(macd_series.iloc[-1]),
         "MACD Signal": float(macd_signal.iloc[-1]), "5'li Kombo": f"{combo_count}/5",

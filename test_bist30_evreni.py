@@ -18,6 +18,10 @@ class Bist30EvreniTests(unittest.TestCase):
         with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "ALL"}), patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
             self.assertEqual(main.hisseleri_txt_oku(), ["ASELS.IS", "MEGMT.IS"])
 
+    def test_varsayilan_genel_tarama_aktif_bist_kullanir(self):
+        with patch.dict("os.environ", {}, clear=True), patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
+            self.assertEqual(main.hisseleri_txt_oku(), ["ASELS.IS", "MEGMT.IS"])
+
     def test_genel_tarama_bist30_kullanir(self):
         with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "BIST30"}), patch("main.karantinadaki_semboller", return_value=set()):
             self.assertEqual(main.hisseleri_txt_oku(), list(BIST30_SEMBOLLERI))

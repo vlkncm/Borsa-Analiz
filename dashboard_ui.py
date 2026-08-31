@@ -138,7 +138,7 @@ class TopHeader(QFrame):
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
-    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · BIST 30"),("medium","▥","Orta Vade · BIST 30"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Sistem Denetimi"),("settings","⚙","Ayarlar")]
+    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Sistem Denetimi"),("settings","⚙","Ayarlar")]
     def __init__(self):
         super().__init__(); self.setObjectName("sidebar"); self._settings=QSettings("VSoftware","BorsaAnalizProMAX")
         self.expanded=str(self._settings.value("sidebar/expanded","true")).lower() not in {"false","0"}; self.setFixedWidth(190 if self.expanded else 54)
@@ -178,7 +178,7 @@ class DetailPanel(QFrame):
     def set_row(self,row):
         symbol=self._value(row,"Hisse",default="—"); status=self._value(row,"T+1 Kararı","Canlı Durum","Durum")
         self.title.setText(f"Seçili Hisse Detayı · {symbol}   [{status}]")
-        facts=[("Piyasa rejimi",self._value(row,"Piyasa Rejimi")),("Sektör gücü",self._value(row,"Sektör Puanı")),("Göreceli hacim",self._value(row,"Göreceli Hacim","RVOL")),("Para akışı",self._value(row,"Para Akışı","CMF")),("KAP katalizörü",self._value(row,"KAP Etiket")),("Risk seviyesi",self._value(row,"Risk Seviyesi",default="Yüksek" if "RİSK" in str(status) else "Veri yetersiz")),("Giriş bölgesi",self._value(row,"Giriş Bölgesi","Alım Bölgesi")),("Hedef",self._value(row,"Hedef","Tahmini En Yüksek Fiyat")),("Stop",self._value(row,"Stop")),("Risk/getiri",self._value(row,"Risk/Getiri","Karar Risk/Getiri")),("Tahmini süre",self._value(row,"Tahmini Süre","Beklenen Süre")),("Veri zamanı",self._value(row,"Veri Zamanı","Veri Tarihi"))]
+        facts=[("Piyasa rejimi",self._value(row,"Piyasa Rejimi")),("Sektör gücü",self._value(row,"Sektör Puanı")),("Göreceli hacim",self._value(row,"Göreceli Hacim","RVOL")),("Para akışı",self._value(row,"Para Akışı","CMF")),("KAP katalizörü",self._value(row,"KAP Etiket")),("Risk seviyesi",self._value(row,"Risk Seviyesi",default="Yüksek" if "RİSK" in str(status) else "Veri yetersiz")),("Giriş bölgesi",self._value(row,"Giriş Bölgesi","Alım Bölgesi")),("Hedef",self._value(row,"Hedef","Tahmini En Yüksek Fiyat")),("Stop",self._value(row,"Stop")),("Risk/getiri",self._value(row,"Risk/Getiri","Karar Risk/Getiri")),("Tahmini süre",self._value(row,"Tahmini Süre","Beklenen Süre")),("Veri kaynağı",self._value(row,"Veri Kaynağı","source")),("Son veri zamanı",self._value(row,"Veri Zamanı","Veri Tarihi","last_bar_at")),("Veri gecikmesi",self._value(row,"Gecikme Dakika","delay_minutes")),("Veri durumu",self._value(row,"Veri Durumu","Tazelik","is_stale")),("Analiz zamanı",self._value(row,"Analiz Zamanı","fetched_at"))]
         self.facts.setText("\n".join(f"{k}:  {v}" for k,v in facts)); self.chart.set_values(row.get("Fiyat Serisi",[]) or [])
         def lines(value):
             if isinstance(value,str):
@@ -200,6 +200,72 @@ class DetailPanel(QFrame):
         self.reasons.setText("\n\n".join(chunks) if chunks else "Aday gerekçesi için veri bekleniyor")
 
 
+def _first_numeric(frame: pd.DataFrame, names: tuple[str, ...]) -> pd.Series:
+    """Coalesce available numeric columns without inventing market data.
+
+    A prediction column can legitimately exist but be entirely empty when there
+    is no calibrated model artifact.  In that case the next measured score must
+    remain available to the observation/watch radar.
+    """
+    result = pd.Series(float("nan"), index=frame.index, dtype=float)
+    for name in names:
+        if name in frame:
+            result = result.fillna(pd.to_numeric(frame[name], errors="coerce"))
+            if result.notna().all():
+                break
+    return result
+
+
+def _current_market_rows(frame: pd.DataFrame) -> pd.Series:
+    freshness = frame.get(
+        "Tazelik", frame.get("Veri Durumu", pd.Series("GÜNCEL", index=frame.index))
+    ).astype(str).str.upper()
+    return ~freshness.str.contains(
+        "ESKİ|ESKI|STALE|YETERSİZ|YETERSIZ|HATA|MISSING", regex=True, na=False
+    )
+
+
+def radar_movement_candidates(frame: pd.DataFrame | None, limit: int = 20) -> pd.DataFrame:
+    """Rank actual daily movement independently from investment recommendation gates."""
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    previous = _first_numeric(work, ("Önceki Kapanış", "previous_close"))
+    current = _first_numeric(work, ("Güncel Fiyat", "Referans Fiyat", "Fiyat", "last_price"))
+    calculated = (current / previous - 1.0) * 100.0
+    supplied = _first_numeric(work, ("Günlük Değişim %", "change_pct"))
+    work["Günlük Değişim %"] = calculated.where(previous.gt(0) & current.gt(0), supplied)
+    valid = previous.gt(0) & current.gt(0) & work["Günlük Değişim %"].notna() & _current_market_rows(work)
+    work = work.loc[valid].sort_values("Günlük Değişim %", ascending=False).head(limit).copy()
+    work["Karar"] = "İZLE"
+    return work.reset_index(drop=True)
+
+
+def strongest_five_candidates(frame: pd.DataFrame | None, limit: int = 5) -> pd.DataFrame:
+    """Return relative leaders even when none of them qualifies for an AL decision."""
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    work = frame.copy()
+    price = _first_numeric(work, ("Güncel Fiyat", "Referans Fiyat", "Fiyat"))
+    score = _first_numeric(
+        work,
+        ("T+1 Güç Skoru", "Referans Skor", "Vade Skoru", "Günlük Trade Skoru", "v4 Güven Puanı", "T+1 %7+ Olasılığı"),
+    )
+    valid = price.gt(0) & score.notna() & _current_market_rows(work)
+    # When the T+1 probability artifact is not calibrated, CandidateDecision
+    # deliberately says VERI YETERSIZ.  That must not mix truly broken market
+    # data with rows that passed the complete technical-data path.  The watch
+    # radar may use INCLUDED_* rows; rejected/missing-history rows stay out.
+    inclusion_column = "Neden Kodu" if "Neden Kodu" in work else "Model Yolu"
+    if inclusion_column in work:
+        inclusion = work[inclusion_column].astype(str).str.upper()
+        valid &= inclusion.str.startswith("INCLUDED_")
+    work = work.loc[valid].assign(_relative_score=score.loc[valid])
+    work = work.sort_values("_relative_score", ascending=False).head(limit).copy()
+    work["Karar"] = "TAKİP"
+    return work.drop(columns="_relative_score").reset_index(drop=True)
+
+
 class NextDayDashboard(QWidget):
     scan_requested = Signal()
     COLUMNS=["Hisse","Önceki Kapanış","Güncel Fiyat","Günlük Değişim %","Tavan Fiyatı","Tavana Kalan %","%8+ Olasılığı","Tavan Olasılığı","Tahmini En Yüksek Fiyat","Durum"]
@@ -212,7 +278,7 @@ class NextDayDashboard(QWidget):
     def __init__(self, prediction_path: Path):
         super().__init__(); self.responsive_layout=True; self.analysis_id="high_movement_radar"; self.prediction_path=prediction_path; self._records=[]; self._full=pd.DataFrame(); root=QVBoxLayout(self); root.setContentsMargins(10,8,10,8); root.setSpacing(6)
         self._detail_window=AnalysisDetailWindow(self)
-        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("YÜKSEK HAREKET RADARI"); title.setObjectName("pageTitle"); self.subtitle=QLabel("T+1 / T+2 gün içi %7–10 hareket hazırlığı · Tüm aktif BIST"); self.subtitle.setObjectName("muted"); self.subtitle.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); titles.addWidget(title); titles.addWidget(self.subtitle); header.addLayout(titles); header.addStretch(); self.header_pills=[]
+        header=QHBoxLayout(); titles=QVBoxLayout(); title=QLabel("YÜKSEK HAREKET RADARI"); title.setObjectName("pageTitle"); self.subtitle=QLabel("Tamamlanmış kapanış verileriyle ertesi işlem günü tavan / güçlü hareket potansiyeli · Tüm aktif BIST"); self.subtitle.setObjectName("muted"); self.subtitle.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred); titles.addWidget(title); titles.addWidget(self.subtitle); header.addLayout(titles); header.addStretch(); self.header_pills=[]
         for text,obj in (("◎ Seans Sonrası","pillBlue"),("● Canlı Teyit","pillGreen")):
             lab=QLabel(text); lab.setObjectName(obj); lab.hide(); header.addWidget(lab); self.header_pills.append(lab)
         self.last_scan=QLabel("Son Tarama: —"); self.last_scan.setObjectName("muted"); header.addWidget(self.last_scan)
@@ -241,7 +307,7 @@ class NextDayDashboard(QWidget):
     def set_loading(self,text="Aktif BIST hisseleri taranıyor…"): self.stats.set_loading(text=text); self.scan.setEnabled(False)
     def set_error(self,text): self.stats.set_error("Tarama hatası: "+text+"\nÖnceki geçerli sonuç korunuyor."); self.scan.setEnabled(True)
     def load_results(self,frame,message=""):
-        from sade_yatirimci_modu import MAIN_COLUMNS, simple_investor_frame
+        from sade_yatirimci_modu import MAIN_COLUMNS, simple_investor_frame, simplify_record
         self.scan.setEnabled(True); self._full=frame.copy() if frame is not None else pd.DataFrame(); self.last_scan.setText("Son Tarama: "+datetime.now().strftime("%H:%M"))
         status=self._full.get("Durum",pd.Series(dtype=str)).astype(str)
         model=self._full.get("Model Yolu",pd.Series("",index=self._full.index)).astype(str)
@@ -257,10 +323,31 @@ class NextDayDashboard(QWidget):
                 t2[t2["T+2 Geniş Radar"].fillna(False).astype(bool)])
         t1elite=t1[t1.get("T+1 Seçkin Aday",pd.Series(False,index=t1.index)).fillna(False).astype(bool)]
         t2elite=t2[t2.get("T+2 Seçkin Aday",pd.Series(False,index=t2.index)).fillna(False).astype(bool)]
-        ceiling=t1wide.sort_values("T+1 Tavan Olasılığı",ascending=False,na_position="last").head(20) if "T+1 Tavan Olasılığı" in t1wide else t1wide.head(0)
-        strongest=pd.concat([t1elite,t2elite],ignore_index=True).drop_duplicates("Hisse") if not (t1elite.empty and t2elite.empty) else t1elite
+        ceiling=radar_movement_candidates(self._full.loc[standard],20)
+        strongest=strongest_five_candidates(self._full.loc[standard],5)
         raw_groups={"t1wide":strongest,"t1elite":t1elite,"t2wide":t2wide,"t2elite":t2elite,"ceiling":ceiling,"ipo":self._full[model.eq("YENI_HALKA_ARZ")]}
         groups={key:simple_investor_frame(data,"high_movement_radar",max_results=5) for key,data in raw_groups.items()}
+        # Relative strength and price-movement radar are observations, not AL
+        # recommendations.  Do not erase them merely because a target/stop or
+        # elite investment flag is absent.
+        for key in ("t1wide", "ceiling"):
+            data = raw_groups[key].head(5)
+            raw_rows = data.to_dict("records")
+            if key == "t1wide":
+                for row in raw_rows:
+                    decision = str(row.get("T+1 Kararı", row.get("Durum", ""))).upper()
+                    if "YETERS" in decision:
+                        row["Karar"] = "TAKİP"
+                        row["Durum"] = "MODEL TEYİDİ BEKLİYOR"
+                        reasons = list(row.get("Aday Nedenleri") or [])
+                        reasons.append("Teknik veri yeterli; kalibre T+1 olasılık teyidi bekleniyor")
+                        row["Aday Nedenleri"] = reasons
+                    else:
+                        row.pop("Karar", None)  # Preserve a validated worker decision.
+            rows = [simplify_record(row, "high_movement_radar") for row in raw_rows]
+            groups[key] = pd.DataFrame(rows)
+            if key == "ceiling" and not groups[key].empty:
+                groups[key]["Karar"] = "BEKLE"
         for key,data in groups.items():
             self._fill(self.tables[key],data,MAIN_COLUMNS,MAIN_COLUMNS)
         if groups["t1wide"].empty:
@@ -274,7 +361,8 @@ class NextDayDashboard(QWidget):
             elite_message = ""
         state_text=(message or (f"{len(self._full)} hisse sıralandı" if not self._full.empty else "")) + elite_message
         self.stats.set_empty() if self._full.empty else self.stats.set_ready(state_text)
-        self.summary_bar.update_metrics({"Taranan":len(self._full),"En Güçlü":len(groups["t1wide"]),"Güvenilir":len(groups["t1wide"]),"Veri Zamanı":datetime.now().strftime("%H:%M")})
+        reliable = int(self._full.get("Olasılık Güvenilir", pd.Series(False, index=self._full.index)).fillna(False).astype(bool).sum())
+        self.summary_bar.update_metrics({"Taranan":len(self._full),"En Güçlü":len(groups["t1wide"]),"Olasılık Teyitli":reliable,"Veri Zamanı":datetime.now().strftime("%H:%M")})
         labels=(("t1wide","En Güçlü 5"),("t1elite","Yakın Dönem Seçkin"),("t2wide","1–3 Gün İzleme"),("t2elite","Güçlü İzleme"),("ceiling","Hızlı Hareket İzleme"),("ipo","Yeni Halka Arz İzleme"))
         for index,(key,label) in enumerate(labels): self.tabs.setTabText(index,f"{label}  {len(groups[key])}")
         if not self._full.empty: self.detail.set_row(self._full.iloc[0].to_dict())

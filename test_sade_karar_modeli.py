@@ -24,9 +24,11 @@ class SadeKararModeliTests(unittest.TestCase):
         self.assertNotIn("RSI", result.columns)
         self.assertIn("Alım Bölgesi", result.columns)
 
-    def test_zayif_veride_liste_bos(self):
+    def test_zayif_veride_sahte_al_yok_takip_fallback_var(self):
         frame = self.frame.copy(); frame["v4 Güven Puanı"] = 20
-        self.assertTrue(sade_firsatlar(frame, "gunluk").empty)
+        result = sade_firsatlar(frame, "gunluk")
+        self.assertFalse(result.empty)
+        self.assertTrue(result["Karar"].eq("TAKİP").all())
 
     def test_vade_out_of_sample_sonucundan_secilir(self):
         backtest = pd.DataFrame({"Tutma Süresi": [5, 10, 20], "Ortalama Getiri %": [2, 4, 8], "Max Drawdown %": [4, 3, 3], "Başarı %": [52, 60, 65], "İşlem Sayısı": [30, 30, 30]})

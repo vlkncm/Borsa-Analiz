@@ -80,7 +80,7 @@ from faktor_model_portfoy import faktor_model_portfoyu
 from usta_yatirimci_modeli import usta_model_portfoyu
 from bist30 import BIST30_DONEMI, BIST30_KUMESI, bist30_hisseleri
 from bist_evreni import son_evren_durumu, tum_bist_hisseleri
-from analysis_orchestration import filter_frame_to_symbols, tag_analysis_result
+from analysis_orchestration import tag_analysis_result
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -140,8 +140,8 @@ def dogrulanmis_hisse_dosyasi():
 
 
 def hisseleri_txt_oku(dosya_adi=None):
-    """Genel taramada BIST 30; özel büyüme görevinde aktif BIST evreni."""
-    tum_evren = os.getenv("BORSA_TARAMA_EVRENI", "BIST30").strip().upper() == "ALL"
+    """Genel taramada varsayılan olarak tüm aktif BIST evrenini döndürür."""
+    tum_evren = os.getenv("BORSA_TARAMA_EVRENI", "ALL").strip().upper() == "ALL"
     symbols = tum_bist_hisseleri() if tum_evren else bist30_hisseleri()
     quarantined = set(karantinadaki_semboller())
     if quarantined:
@@ -1086,16 +1086,15 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
         return {"sqlite": None, "text": None, "csv_backup": None, "skipped": True}
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
-    # Kisa ve orta motorlarina tum BIST tablosu degil, dogrudan guncel BIST30
-    # sembollerinin snapshot'i verilir. Motorlar ayni evrende ayri puan uretir.
-    bist30_frame = filter_frame_to_symbols(df, bist30_hisseleri())
-    progress_event("short_term", 0, len(bist30_frame), "Kısa Vade · BIST30 analiz ediliyor")
-    progress_event("medium_term", 0, len(bist30_frame), "Orta Vade · BIST30 analiz ediliyor")
-    kisa_df, orta_df, uzun_df = vade_listeleri_uret(bist30_frame)
+    # Kısa ve orta motorları ana taramanın tüm aktif BIST snapshot'ını kullanır;
+    # strateji puanları ayrı kalır, evren sessizce BIST30'a düşmez.
+    progress_event("short_term", 0, len(df), "Kısa Vade · Tüm Aktif BIST analiz ediliyor")
+    progress_event("medium_term", 0, len(df), "Orta Vade · Tüm Aktif BIST analiz ediliyor")
+    kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
     kisa_df = tag_analysis_result(kisa_df, "short_term", scan_id)
-    progress_event("short_term", len(bist30_frame), len(bist30_frame), "Kısa Vade · BIST30 tamamlandı")
+    progress_event("short_term", len(df), len(df), "Kısa Vade · Tüm Aktif BIST tamamlandı")
     orta_df = tag_analysis_result(orta_df, "medium_term", scan_id)
-    progress_event("medium_term", len(bist30_frame), len(bist30_frame), "Orta Vade · BIST30 tamamlandı")
+    progress_event("medium_term", len(df), len(df), "Orta Vade · Tüm Aktif BIST tamamlandı")
     potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
     firsatlar_df = bugunun_firsatlari_hazirla(df)
     formasyon_kolonlari = [

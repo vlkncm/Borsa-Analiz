@@ -1,5 +1,6 @@
 """Canlı tarama ve backtest için ortak, sürümlü günlük feature/sinyal pipeline'ı."""
 from __future__ import annotations
+import numpy as np
 import pandas as pd
 from teknik_gostergeler import adx, atr, ema, macd, rsi, sma, bollinger_bands, obv, cmf, mfi
 from teknik_gostergeler.ayarlar import IndicatorConfig
@@ -27,13 +28,13 @@ def daily_features(frame: pd.DataFrame, config: IndicatorConfig | None = None) -
     out["RET20"], out["RET60"], out["RET252"] = (out["Close"].pct_change(p, fill_method=None)*100 for p in (20, 60, 252))
     out["RET3"], out["RET5"] = (out["Close"].pct_change(p, fill_method=None)*100 for p in (3, 5))
     out["CLV"] = ((2*out["Close"]-out["High"]-out["Low"]) /
-                   (out["High"]-out["Low"]).replace(0, pd.NA)).astype(float)
+                   (out["High"]-out["Low"]).replace(0, np.nan)).astype(float)
     out["OBV"] = obv(out)
     out["CMF"] = cmf(out)
     out["MFI"] = mfi(out)
     out = out.join(bollinger_bands(out["Close"]), how="left")
     out["EMA20_DISTANCE"] = out["Close"] / out["EMA20"] - 1
-    out["MOVE_REALIZED_ATR"] = (out["Close"]-out["Close"].shift(3)).abs() / out["ATR"].replace(0, pd.NA)
+    out["MOVE_REALIZED_ATR"] = (out["Close"]-out["Close"].shift(3)).abs() / out["ATR"].replace(0, np.nan)
     out.attrs.update({"formula_version": FORMULA_VERSION, "strategy_version": STRATEGY_VERSION})
     return out
 

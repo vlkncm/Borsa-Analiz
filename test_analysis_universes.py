@@ -20,11 +20,11 @@ class AnalysisUniverseContractTests(unittest.TestCase):
     def test_01_daily_trade_gets_all_active_bist(self):
         self.assertEqual(self.universes["daily_trade"], ALL_BIST)
 
-    def test_02_short_term_gets_only_bist30(self):
-        self.assertEqual(self.universes["short_term"], BIST30)
+    def test_02_short_term_gets_all_active_bist(self):
+        self.assertEqual(self.universes["short_term"], ALL_BIST)
 
-    def test_03_medium_term_gets_only_bist30(self):
-        self.assertEqual(self.universes["medium_term"], BIST30)
+    def test_03_medium_term_gets_all_active_bist(self):
+        self.assertEqual(self.universes["medium_term"], ALL_BIST)
 
     def test_04_under_50_starts_from_all_active_bist(self):
         self.assertEqual(self.universes["under_50"], ALL_BIST)
@@ -47,13 +47,13 @@ class AnalysisUniverseContractTests(unittest.TestCase):
         frame = pd.DataFrame({"Hisse": ["CCC"], "Fiyat": [25.0]})
         self.assertEqual(valid_under_50(frame)["Hisse"].tolist(), ["CCC"])
 
-    def test_10_non_bist30_never_reaches_short_frame(self):
+    def test_10_non_bist30_reaches_short_frame(self):
         frame = pd.DataFrame({"Hisse": ALL_BIST, "Fiyat": [1, 2, 3, 4]})
-        self.assertEqual(filter_frame_to_symbols(frame, self.universes["short_term"])["Hisse"].tolist(), BIST30)
+        self.assertEqual(filter_frame_to_symbols(frame, self.universes["short_term"])["Hisse"].tolist(), ALL_BIST)
 
-    def test_11_non_bist30_never_reaches_medium_frame(self):
+    def test_11_non_bist30_reaches_medium_frame(self):
         frame = pd.DataFrame({"Hisse": ALL_BIST, "Fiyat": [1, 2, 3, 4]})
-        self.assertEqual(filter_frame_to_symbols(frame, self.universes["medium_term"])["Hisse"].tolist(), BIST30)
+        self.assertEqual(filter_frame_to_symbols(frame, self.universes["medium_term"])["Hisse"].tolist(), ALL_BIST)
 
     def test_12_short_and_medium_have_separate_results(self):
         source = pd.DataFrame({"Hisse": ["AAA"], "Skor": [70]})
@@ -71,7 +71,7 @@ class AnalysisUniverseContractTests(unittest.TestCase):
 
     def test_14_cache_key_contains_analysis_type(self):
         first = AnalysisCacheKey("AAA", "daily_trade", "ALL_ACTIVE_BIST", "t", "v", "s")
-        second = AnalysisCacheKey("AAA", "short_term", "BIST30", "t", "v", "s")
+        second = AnalysisCacheKey("AAA", "short_term", "ALL_ACTIVE_BIST", "t", "v", "s")
         self.assertNotEqual(first.value(), second.value())
         self.assertEqual(first.analysis_type, "daily_trade")
 
