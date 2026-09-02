@@ -40,6 +40,7 @@ class VeriMetadatasi:
     price_basis: str = "raw"
     official_close_verified: bool = False
     corporate_action_warning: bool = False
+    fallback_used: bool = False
 
     def dict(self) -> dict:
         return asdict(self)
@@ -175,7 +176,7 @@ def _bist_ile_birlestir(symbol: str, interval: str, df: pd.DataFrame) -> pd.Data
 def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -> pd.DataFrame:
     """yfinance.download uyumlu, kalite kontrollu ve onbellekli indirme."""
     symbol = saglayici_sembolu(symbol, "yahoo")
-    key = json.dumps([symbol, period, interval], ensure_ascii=False)
+    key = json.dumps(["YAHOO", symbol, period, interval, datetime.now(ISTANBUL).date().isoformat()], ensure_ascii=False)
     cached = _oku(key, _ttl(interval))
     if not cached.empty:
         birlesik = _bist_ile_birlestir(symbol, interval, cached)
@@ -231,7 +232,7 @@ def _istanbul_index(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _interval_dakika(interval: str) -> int:
-    return {"5m": 5, "15m": 15}.get(interval, 15)
+    return {"1m": 1, "5m": 5, "15m": 15, "60m": 60}.get(interval, 15)
 
 
 class YahooPiyasaVeriAdapteri:
@@ -258,7 +259,7 @@ class YahooPiyasaVeriAdapteri:
 
     def get_intraday_ohlcv(self, symbol: str, interval: str = "15m", period: str = "5d") -> tuple[pd.DataFrame, VeriMetadatasi]:
         symbol = saglayici_sembolu(symbol, "yahoo")
-        if interval not in {"5m", "15m"}:
+        if interval not in {"1m", "5m", "15m", "60m"}:
             raise ValueError("Intraday aralık yalnızca 5m veya 15m olabilir")
         fetched = datetime.now(ISTANBUL)
         # Intraday işlem adayı eski cache'den üretilmez; kaynak hatası doğrudan üst katmana taşınır.
@@ -292,6 +293,18 @@ class YahooPiyasaVeriAdapteri:
         )
         return completed, meta
 
+    def get_hourly_ohlcv(self, symbol: str, period: str = "3mo"):
+        return self.get_intraday_ohlcv(symbol, "60m", period)
+
+    def get_intraday_15m(self, symbol: str, period: str = "5d"):
+        return self.get_intraday_ohlcv(symbol, "15m", period)
+
+    def get_intraday_5m(self, symbol: str, period: str = "5d"):
+        return self.get_intraday_ohlcv(symbol, "5m", period)
+
+    def get_intraday_1m(self, symbol: str, period: str = "1d"):
+        raise ValueError("Yahoo 1m veri erişimi güvenilir değil")
+
 
 class HistoricalDataProvider(YahooPiyasaVeriAdapteri):
     """Gecmis/aksam analizi; canli teyit yetkisi yoktur."""
@@ -312,7 +325,35 @@ class RealtimeDataProvider:
         raise RuntimeError("Gercek zamanli veri yok; canli teyit kapali")
 
 
-_VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = YahooPiyasaVeriAdapteri()
+class PrimaryFallbackAdapter:
+    """Fintables primary, Yahoo fallback; başarısız provider uygulamayı durdurmaz."""
+    def __init__(self):
+        from fintables_provider import FintablesProvider
+        self.primary = FintablesProvider()
+        self.fallback = YahooPiyasaVeriAdapteri()
+
+    def _call(self, method, *args, **kwargs):
+        try:
+            frame, meta = getattr(self.primary, method)(*args, **kwargs)
+            return frame, meta
+        except Exception as primary_error:
+            frame, meta = getattr(self.fallback, method)(*args, **kwargs)
+            meta = VeriMetadatasi(**{**meta.dict(), "source": f"{meta.source} (Fallback: Fintables hata)", "fallback_used": True})
+            frame.attrs["fintables_error"] = str(primary_error)
+            return frame, meta
+
+    def get_daily_ohlcv(self, symbol, period="6mo"): return self._call("get_daily_ohlcv", symbol, period)
+    def get_hourly_ohlcv(self, symbol, period="3mo"): return self._call("get_hourly_ohlcv", symbol, period)
+    def get_intraday_ohlcv(self, symbol, interval="15m", period="5d"): return self._call("get_intraday_ohlcv", symbol, interval, period)
+    def get_intraday_15m(self, symbol, period="5d"): return self._call("get_intraday_15m", symbol, period)
+    def get_intraday_5m(self, symbol, period="5d"): return self._call("get_intraday_5m", symbol, period)
+    def get_intraday_1m(self, symbol, period="1d"): return self._call("get_intraday_1m", symbol, period)
+
+
+_primary_name = os.getenv("DATA_PROVIDER_PRIMARY", "FINTABLES").upper()
+_fallback_name = os.getenv("DATA_PROVIDER_FALLBACK", "YAHOO").upper()
+_VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = (PrimaryFallbackAdapter() if _primary_name == "FINTABLES" and _fallback_name == "YAHOO"
+                                            else YahooPiyasaVeriAdapteri())
 
 
 def get_daily_ohlcv(symbol: str, period: str = "6mo", adapter: PiyasaVeriAdapteri | None = None):
@@ -322,3 +363,39 @@ def get_daily_ohlcv(symbol: str, period: str = "6mo", adapter: PiyasaVeriAdapter
 def get_intraday_ohlcv(symbol: str, interval: str = "15m", period: str = "5d",
                        adapter: PiyasaVeriAdapteri | None = None):
     return (adapter or _VARSAYILAN_ADAPTER).get_intraday_ohlcv(symbol, interval, period)
+
+
+def get_hourly_ohlcv(symbol: str, period: str = "3mo", adapter=None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_hourly_ohlcv(symbol, period)
+
+
+def get_intraday_15m(symbol: str, period: str = "5d", adapter=None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_intraday_15m(symbol, period)
+
+
+def get_intraday_5m(symbol: str, period: str = "5d", adapter=None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_intraday_5m(symbol, period)
+
+
+def get_intraday_1m(symbol: str, period: str = "1d", adapter=None):
+    return (adapter or _VARSAYILAN_ADAPTER).get_intraday_1m(symbol, period)
+
+
+def get_latest_price(symbol: str, adapter=None):
+    frame, meta = get_daily_ohlcv(symbol, "1mo", adapter)
+    return (float(frame["Close"].iloc[-1]) if not frame.empty else None), meta
+
+
+def get_previous_close(symbol: str, adapter=None):
+    frame, meta = get_daily_ohlcv(symbol, "1mo", adapter)
+    return (float(frame["Close"].iloc[-2]) if len(frame) >= 2 else None), meta
+
+
+def get_volume(symbol: str, adapter=None):
+    frame, meta = get_daily_ohlcv(symbol, "1mo", adapter)
+    return (float(frame["Volume"].iloc[-1]) if not frame.empty else None), meta
+
+
+def get_source_metadata(symbol: str, interval: str = "1d", adapter=None):
+    if interval == "1d": return get_daily_ohlcv(symbol, "1mo", adapter)[1]
+    return get_intraday_ohlcv(symbol, interval, "5d", adapter)[1]

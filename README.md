@@ -1,4 +1,11 @@
-# Borsa Analiz Pro MAX v10.3.0
+# Borsa Analiz Pro MAX v10.3.3
+
+## v10.3.3 kurtarma sürümü
+
+- Son çalışan v10.3.1 arayüzündeki gerçek tarama ilerleme görünümü geri getirildi.
+- Ana, kısa ve orta vade akışları aynı Tüm Aktif BIST snapshot'ını kullanır.
+- T+1/T+2 tahmin geçmişi değişmeden korunur; performans tablosu en iyi 5 kaydı gösterir.
+- Tarama ayrı süreçte çalışmaya devam eder; sonuç hazırlanırken arayüz bloke edilmez.
 
 ## v10.3.0 yüksek hareket radarı ve toplu tarama düzeltmesi
 

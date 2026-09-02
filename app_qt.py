@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QTextEdit, QMessageBox, QFrame, QLineEdit, QAbstractItemView, QTabWidget,
     QDialog, QGridLayout, QScrollArea, QSizePolicy, QComboBox, QDoubleSpinBox,
-    QCheckBox
+    QCheckBox, QProgressBar
 )
 from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
@@ -31,7 +32,7 @@ from dashboard_ui import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.3.0"
+APP_VERSION = "10.3.3"
 _CRASH_STREAM = None
 
 
@@ -64,6 +65,10 @@ def tarama_alt_sureci_komutu():
         # Paket kendi headless tarama girişini ayrı bir işletim sistemi sürecinde
         # çalıştırır. Böylece eksik ikinci EXE yüzünden toplu tarama başlamamazlık
         # etmez; analiz çökse bile ana arayüz süreci korunur.
+        # Windowed GUI EXE stdout üretmez; sayaçlar için konsol alt-süreci kullan.
+        console_runner = Path(sys.executable).resolve().with_name("BorsaTaramaMotoru.exe")
+        if console_runner.exists():
+            return str(console_runner), []
         return str(Path(sys.executable).resolve()), ["--headless-scan"]
     return sys.executable, [str(Path(__file__).resolve().with_name("scan_runner.py"))]
 
@@ -2013,6 +2018,30 @@ class NextDayPage(NextDayDashboard):
         self.worker = None; self.thread = None
 
 
+class ScanProgressPanel(QFrame):
+    """Gerçek alt-süreç olaylarını gösteren merkezi tarama özeti."""
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("card")
+        root = QHBoxLayout(self)
+        root.setContentsMargins(12, 7, 12, 7)
+        self.phase = QLabel("Tarama hazırlanıyor")
+        self.phase.setObjectName("sectionTitle")
+        self.counts = QLabel("0 / 0")
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setFormat("%p%")
+        self.bar.setMinimumWidth(260)
+        self.status = QLabel("Bekliyor")
+        self.status.setObjectName("muted")
+        self.started = QLabel("")
+        self.elapsed = QLabel("Geçen süre: 0 sn")
+        for widget in (self.phase, self.counts, self.bar, self.status, self.started, self.elapsed):
+            root.addWidget(widget)
+        root.setStretchFactor(self.bar, 1)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2025,6 +2054,11 @@ class MainWindow(QMainWindow):
         self.scan_process = None
         self._scan_stdout_buffer = ""
         self._scan_stderr_buffer = ""
+        self._scan_started_at = None
+        self._scan_total = 0
+        self._scan_completed = 0
+        self._scan_elapsed_timer = QTimer(self)
+        self._scan_elapsed_timer.timeout.connect(self._update_scan_elapsed)
         self.pages = QStackedWidget()
 
         self.home = HomePage()
@@ -2062,6 +2096,9 @@ class MainWindow(QMainWindow):
         self.top_header.scan_requested.connect(self.scan)
         self.top_header.search_requested.connect(self._search_symbol)
         outer.addWidget(self.top_header)
+        self.scan_progress = ScanProgressPanel()
+        self.scan_progress.setVisible(False)
+        outer.addWidget(self.scan_progress)
         root = QHBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         self.sidebar = Sidebar(); self.sidebar.page_requested.connect(self._show_page); root.addWidget(self.sidebar)
@@ -2281,6 +2318,17 @@ class MainWindow(QMainWindow):
         if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
             return
         self.scan_button.setEnabled(False)
+        self._scan_started_at = datetime.now()
+        self._scan_total = 0
+        self._scan_completed = 0
+        self.scan_progress.setVisible(True)
+        self.scan_progress.phase.setText("Hisseler taranıyor")
+        self.scan_progress.counts.setText("0 / 0")
+        self.scan_progress.bar.setValue(0)
+        self.scan_progress.status.setText("Tarama hazırlanıyor")
+        self.scan_progress.started.setText("Başlangıç: " + self._scan_started_at.strftime("%H:%M:%S"))
+        self.scan_progress.elapsed.setText("Geçen süre: 0 sn")
+        self._scan_elapsed_timer.start(1000)
         target = getattr(self, "_scan_target", self.home)
         if target is self.daily_trade:
             self.pages.setCurrentWidget(self.daily_trade)
@@ -2298,7 +2346,7 @@ class MainWindow(QMainWindow):
         self.scan_process.setWorkingDirectory(str(uygulama_klasoru()))
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
-        environment.insert("BORSA_TARAMA_EVRENI", getattr(self, "_scan_universe", "BIST30"))
+        environment.insert("BORSA_TARAMA_EVRENI", getattr(self, "_scan_universe", "ALL"))
         self.scan_process.setProcessEnvironment(environment)
         self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
         self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
@@ -2326,6 +2374,8 @@ class MainWindow(QMainWindow):
             self.log.append("Tarama kullanıcı tarafından durduruldu.")
 
     def _append_process_text(self, text, is_error=False):
+        # QProcess çıktısı CRLF/parçalı gelebilir; panel tarama boyunca görünür kalır.
+        self.scan_progress.setVisible(True)
         attr = "_scan_stderr_buffer" if is_error else "_scan_stdout_buffer"
         buffer = getattr(self, attr) + text
         lines = buffer.split("\n")
@@ -2333,6 +2383,7 @@ class MainWindow(QMainWindow):
         for line in lines:
             if line.strip():
                 self.log.append(line.rstrip())
+                self._render_scan_progress(line.rstrip())
                 if getattr(self, "_scan_target", None) is self.daily_trade:
                     self.daily_trade.info.setText(line.rstrip())
 
@@ -2370,17 +2421,54 @@ class MainWindow(QMainWindow):
 
     def scan_done(self, ok, message):
         self.scan_button.setEnabled(True)
+        self._scan_elapsed_timer.stop()
         if ok:
+            if self._scan_total:
+                self._scan_completed = self._scan_total
+                self.scan_progress.counts.setText(f"{self._scan_total} / {self._scan_total}")
+            self.scan_progress.bar.setValue(100)
+            self.scan_progress.phase.setText("Tamamlandı")
+            self.scan_progress.status.setText("Tarama tamamlandı")
             self.log.append("\nTARAMA TAMAMLANDI.")
             self.load_report()
             self.log.append("Tarama tamamlandı; tahmin geçmişi SQLite içinde korunur.")
             self.pages.setCurrentWidget(getattr(self, "_scan_target", self.home))
             self._scan_target = self.home
-            self._scan_universe = "BIST30"
+            self._scan_universe = "ALL"
         else:
+            self.scan_progress.phase.setText("Tarama tamamlanamadı")
+            self.scan_progress.status.setText(message)
             self.log.append(message)
             if rapor_yolu().exists():
                 self.load_report()
+
+    def _update_scan_elapsed(self):
+        if self._scan_started_at is None:
+            return
+        seconds = max(0, int((datetime.now() - self._scan_started_at).total_seconds()))
+        self.scan_progress.elapsed.setText(f"Geçen süre: {seconds} sn")
+
+    def _render_scan_progress(self, message):
+        """Alt sürecin gerçek sayaçlarını kullanıcıya yansıtır."""
+        universe = re.search(r"(?:analiz evreni|Toplam taranacak hisse):\s*(\d+)", message, re.IGNORECASE)
+        if universe:
+            self._scan_total = int(universe.group(1))
+        # Sembol satırının Türkçe son eki kodlama yüzünden bozulsa bile sayaç okunur.
+        progress = re.search(r"(?:^|\s)(\d+)\s*/\s*(\d+)(?:\s|$)", message, re.IGNORECASE)
+        if progress:
+            self._scan_completed, self._scan_total = map(int, progress.groups())
+            percent = int(round(100 * self._scan_completed / self._scan_total)) if self._scan_total else 0
+            self.scan_progress.counts.setText(f"{self._scan_completed} / {self._scan_total}")
+            self.scan_progress.bar.setValue(max(0, min(100, percent)))
+            symbol = re.search(r":\s*([A-Z0-9]+(?:\.IS)?)", message)
+            self.scan_progress.status.setText(
+                f"Mevcut sembol: {symbol.group(1) if symbol else '—'} · Hisseler taranıyor"
+            )
+        elif self._scan_total:
+            self.scan_progress.counts.setText(f"{self._scan_completed} / {self._scan_total}")
+        if "tamamen bitti" in message.lower() or "tarama tamamlandı" in message.lower():
+            self.scan_progress.phase.setText("Tamamlandı")
+            self.scan_progress.status.setText("Tarama tamamlandı")
 
 
 def exception_hook(exc_type, exc_value, exc_tb):

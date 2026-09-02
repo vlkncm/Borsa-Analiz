@@ -405,6 +405,12 @@ def cross_sectional_rank(predictions: Iterable[Prediction]) -> list[dict[str, An
         return None if any(value is None for value in values) else .45*values[0]+.40*values[1]+.15*values[2]
     frame["ranking_score"]=frame["probabilities"].map(ranking_score)
     frame["calibrated"]=frame["ranking_score"].notna()
+    # Kalibrasyon yokken radarı boşaltmamak için point-in-time kural skoru hareket skoru olarak korunur.
+    frame["movement_score"] = frame["raw_score"].clip(0, 100)
+    frame["trade_quality_score"] = frame.apply(
+        lambda r: max(0.0, min(100.0, float(r.get("movement_score") or 0) +
+                               (10.0 if r.get("levels_valid") else -8.0) +
+                               (min(10.0, float(r.get("net_ev_pct") or 0)) if r.get("net_ev_pct") is not None else -5.0))), axis=1)
     frame = frame.sort_values(["calibrated","ranking_score","raw_score","symbol"],
                               ascending=[False,False,False,True],na_position="last").reset_index(drop=True)
     total = len(frame)
@@ -422,12 +428,12 @@ def radar_lists(predictions: Iterable[Prediction], wide_limit: int = 30) -> dict
     Liste dolsun diye bu koşullar gevşetilmez.
     """
     ranked=cross_sectional_rank(predictions)
-    wide=[row for row in ranked if row.get("calibrated") and row.get("security_type") in NORMAL_SECURITY_TYPES][:wide_limit]
+    wide=[row for row in ranked if row.get("security_type") in NORMAL_SECURITY_TYPES][:wide_limit]
     elite=[]
     for row in ranked:
         probs=row.get("probabilities",{}); risks=" ".join(row.get("risks",())).upper()
         calibrated=all(probs.get(name) is not None for name in ("max_7","max_8","limit_up"))
-        if (calibrated and row.get("percentile",0)>=95 and probs["max_7"]>=20 and
+        if (calibrated and row.get("percentile",0)>=95 and row.get("trade_quality_score", 0)>=65 and probs["max_7"]>=20 and
                 probs["max_8"]>=10 and "KAYMA" not in risks and "ILERLEMIS" not in risks and
                 row.get("security_type") in NORMAL_SECURITY_TYPES and row.get("levels_valid") and
                 row.get("net_ev_pct") is not None and row["net_ev_pct"]>0):
@@ -716,6 +722,38 @@ class EveningSnapshotStore:
                                                    prediction.get("net_ev_pct")>0 and int(rank or 999)<=5)})
             except (ValueError,TypeError,json.JSONDecodeError): continue
         return result
+
+    def performance_insights(self, minimum_winner: float = 5.0) -> dict[str, Any]:
+        """Snapshot'ları değiştirmeden son tamamlanan günün radar karnesini çıkarır."""
+        try:
+            with closing(self._connect()) as db:
+                rows = db.execute("""SELECT s.symbol,s.as_of,s.horizon,s.rank,s.payload_json,o.payload_json
+                    FROM t1t2_snapshots s JOIN t1t2_outcomes o ON o.snapshot_id=s.id
+                    ORDER BY s.as_of DESC,s.horizon,s.rank""").fetchall()
+        except sqlite3.Error:
+            return {"status": "SQLITE_HATASI", "top": {}, "missed": [], "false_positive": []}
+        records=[]
+        for symbol,as_of,horizon,rank,payload,outcome in rows:
+            try:
+                p=json.loads(payload); o=json.loads(outcome)
+                records.append({"symbol":symbol.replace(".IS",""),"as_of":as_of,"horizon":horizon,
+                                "rank":int(rank) if rank is not None else 9999,
+                                "max_return_pct":float(o.get("max_return_pct",0) or 0),
+                                "hit_7":int(o.get("hit_7",0) or 0),
+                                "wide":int((rank or 9999)<=30),"elite":bool(p.get("levels_valid") and (p.get("net_ev_pct") or 0)>0 and (rank or 9999)<=5)})
+            except (ValueError,TypeError,KeyError,json.JSONDecodeError):
+                continue
+        if not records: return {"status":"YETERLI_KAYIT_YOK","top":{},"missed":[],"false_positive":[]}
+        latest=max(r["as_of"] for r in records)
+        day=[r for r in records if r["as_of"]==latest and r["horizon"]=="T+1"]
+        top={}
+        for k in (5,10,20):
+            subset=day[:k]
+            top[str(k)]={"count":len(subset),"rising":sum(x["hit_7"] for x in subset),
+                         "avg_max_return_pct":round(float(np.mean([x["max_return_pct"] for x in subset])),2) if subset else None}
+        missed=[x for x in day if x["max_return_pct"]>=minimum_winner and not x["wide"]][:10]
+        false_positive=[x for x in day[:5] if x["max_return_pct"]<0][:10]
+        return {"status":"OK","as_of":latest,"top":top,"missed":missed,"false_positive":false_positive}
 
 
 def settle_pending_snapshots(store: EveningSnapshotStore, history_loader,

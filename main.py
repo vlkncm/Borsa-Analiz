@@ -118,9 +118,9 @@ def dogrulanmis_listeyi_kaydet(results):
 
 
 def hisse_tara(symbol):
-    if symbol not in BIST30_KUMESI:
-        return None
-    return teknik_analiz(symbol, "BIST 30")
+    # Toplu taramada seçilen aktif evreni daraltma. v10.3.0/v10.3.2'deki
+    # BIST30 kapısı, ALL seçilmiş olsa bile diğer bütün hisseleri eliyordu.
+    return teknik_analiz(symbol, "Tüm Aktif BIST")
 
 
 def sonuclari_sirala(results):
@@ -1081,7 +1081,7 @@ def ozet_yazdir(results, baslangic_zamani):
 
 def main():
     baslangic_zamani = time.time()
-    print("Borsa Analiz Pro MAX v6.5 PROFESSIONAL TERMINAL başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    print("Borsa Analiz Pro MAX v10.3.3 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     hisseler = hisseleri_txt_oku()
     print(f"Toplam taranacak hisse: {len(hisseler)}")

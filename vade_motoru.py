@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bist30 import BIST30_KUMESI
-
-
 GORUNEN_KOLONLAR = [
     "Hisse",
     "Veri Tarihi",
@@ -41,11 +38,8 @@ def vade_listeleri_uret(df: pd.DataFrame):
         return bos, bos.copy(), bos.copy()
 
     work = df.copy()
-    # Kısa/orta/uzun toplu listeler yalnızca resmi dönemsel BIST 30 evrenidir.
-    if "Hisse" in work.columns:
-        symbols = work["Hisse"].astype(str).str.strip().str.upper()
-        symbols = symbols.where(symbols.str.endswith(".IS"), symbols + ".IS")
-        work = work[symbols.isin(BIST30_KUMESI)].copy()
+    # Kısa ve orta vade aynı tarama snapshot'ındaki tüm aktif BIST evrenini
+    # kullanır. UI başlığı ile backend evreni böylece aynıdır.
 
     guven = _num(work, "v4 Güven Puanı", 50)
     olasilik = _num(work, "Model Olasılığı %", 50)
@@ -110,8 +104,12 @@ def vade_listeleri_uret(df: pd.DataFrame):
 
     def sec(score_col: str, sure: str, min_score: float, min_rr: float) -> pd.DataFrame:
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
-        kalite = temel_kalite & (work[score_col] >= min_score) & (rr >= min_rr) & (kanit >= 50) & (vade_kaniti >= 35)
+        # Sıralama motoru sert kapı zinciriyle evreni tek hisseye indirmez.
+        # Kalite koşulları puanı etkiler; veri yoksa yalnızca geçerli fiyat/target/stop tutulur.
+        kalite = (fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) & (veri_yasi <= 4)
         aday = work[kalite].copy()
+        if aday.empty:
+            aday = work[(fiyat > 0) & (hedef > fiyat) & (stop < fiyat)].copy()
         if aday.empty:
             return pd.DataFrame(columns=["Hisse", "Vade", "Vade Skoru"] + GORUNEN_KOLONLAR[1:])
 
@@ -129,9 +127,14 @@ def vade_listeleri_uret(df: pd.DataFrame):
             labels=["ORTA", "YÜKSEK", "ÇOK YÜKSEK"], right=False,
         ).astype(str)
 
+        aday["Vade Skoru"] = aday[score_col].round(1)
+        aday["Vade Kalite"] = (temel_kalite.loc[aday.index].astype(int) * 20 +
+                               (rr.loc[aday.index] >= min_rr).astype(int) * 20 +
+                               (kanit.loc[aday.index] >= 50).astype(int) * 20 +
+                               vade_kaniti.loc[aday.index].clip(0, 100) * .4).round(1)
         aday = aday.sort_values(
-            [score_col, "Model Olasılığı %", "Beklenen Getiri %"],
-            ascending=[False, False, False],
+            ["Vade Kalite", score_col, "Model Olasılığı %", "Beklenen Getiri %"],
+            ascending=[False, False, False, False],
         ).head(5)
         cols = [c for c in GORUNEN_KOLONLAR if c in aday.columns]
         sonuc = aday[cols].copy()

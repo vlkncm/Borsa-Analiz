@@ -1,5 +1,11 @@
 # Değişiklik Günlüğü
 
+## 10.3.3
+
+- Gerçek v10.3.1 installer davranışından ilerleme paneli ve T+1/T+2 görünümü kurtarıldı.
+- v10.3.2'nin eski kaynak ağacından paketlenmesiyle oluşan evren ve ekran regresyonları düzeltildi.
+- Tüm Aktif BIST kısa/orta vade akışı ve tarama aşama sayaçları eklendi.
+
 ## 10.3.0
 
 - T+1/T+2 point-in-time özellik, etiketleme, model eğitimi ve kalibrasyon altyapısı eklendi.

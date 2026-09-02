@@ -6,11 +6,15 @@ Bu modül göstergeleri karar motoruna kanıt olarak verir; tek başına AL üre
 """
 from __future__ import annotations
 
+import logging
 import numpy as np
 import pandas as pd
 
 from mum_formasyonlari import mum_formasyonu_tespit
 from teknik_gostergeler import atr as canonical_atr, bollinger_bands, ema, macd_v as canonical_macd_v, rsi as canonical_rsi
+
+
+logger = logging.getLogger(__name__)
 
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -85,10 +89,28 @@ def en_iyi_gunluk_trade_adaylari(frame: pd.DataFrame, limit: int = 5) -> pd.Data
     """Güncel ve pozitif hedefli sonuçları birleşik skorla sıralayıp en fazla 5 döndürür."""
     required = {"Günlük Trade Skoru", "Gün İçi Yükseliş %", "Veri Durumu"}
     if frame is None or frame.empty or not required.issubset(frame.columns):
+        logger.info("Günlük Trade aday hunisi | Universe=%s | eksik zorunlu kolon", 0 if frame is None else len(frame))
         return pd.DataFrame(columns=[] if frame is None else frame.columns)
     growth = pd.to_numeric(frame["Gün İçi Yükseliş %"], errors="coerce").fillna(0)
     score = pd.to_numeric(frame["Günlük Trade Skoru"], errors="coerce").fillna(0)
-    valid = frame["Veri Durumu"].astype(str).eq("GÜVENİLİR") & growth.gt(0)
-    return (frame[valid].assign(_skor=score[valid], _yukselis=growth[valid])
+    valid_data = frame["Veri Durumu"].astype(str).eq("GÜVENİLİR")
+    technical = valid_data & growth.gt(0)
+    professional = technical.copy()
+    if "Profesyonel Uygun" in frame:
+        professional &= frame["Profesyonel Uygun"].fillna(False).astype(bool)
+    # Mevcut v10.3.1 seçimi değişmez; profesyonel sayaç yalnız denetim içindir.
+    trade = technical
+    if "Günlük Trade Teyit" in frame:
+        confirmed = frame["Günlük Trade Teyit"].astype(str).eq("4/4 TEYİTLİ")
+        # Teyit bir sıralama kanıtıdır; havuzu tek hisseye indiren zorunlu veto değildir.
+        score = score + confirmed.astype(int) * 10
+    selected = (frame[trade].assign(_skor=score[trade], _yukselis=growth[trade])
             .sort_values(["_skor", "_yukselis"], ascending=False).head(max(0, int(limit)))
             .drop(columns=["_skor", "_yukselis"]).reset_index(drop=True))
+    logger.info(
+        "Günlük Trade aday hunisi | Universe=%d | Valid data=%d | Technical eligible=%d | "
+        "Professional eligible=%d | Trade eligible=%d | Final candidates=%d",
+        len(frame), int(valid_data.sum()), int(technical.sum()), int(professional.sum()),
+        int(trade.sum()), len(selected),
+    )
+    return selected

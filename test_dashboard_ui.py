@@ -21,7 +21,7 @@ class DashboardUiTests(unittest.TestCase):
         window = MainWindow()
         labels = [text for _key, _icon, text in Sidebar.ITEMS]
         self.assertEqual(labels, ["Yüksek Hareket Radarı", "Ana Sayfa", "Günlük Trade",
-            "Kısa Vade · BIST 30", "Orta Vade · BIST 30", "50 TL Altı", "Fon Analizi",
+            "Kısa Vade · Tüm BIST", "Orta Vade · Tüm BIST", "50 TL Altı", "Fon Analizi",
             "Portföy", "Tahmin Performansı", "Ayarlar"])
         self.assertNotIn("10X", " ".join(labels)); self.assertNotIn("Excel", " ".join(labels))
         window.close()

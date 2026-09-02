@@ -116,7 +116,7 @@ class TopHeader(QFrame):
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
-    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · BIST 30"),("medium","▥","Orta Vade · BIST 30"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
+    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
     def __init__(self):
         super().__init__(); self.setObjectName("sidebar"); self.expanded=True; self.setFixedWidth(190)
         self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}
@@ -266,13 +266,19 @@ class T1T2PerformanceDashboard(QWidget):
     def refresh(self):
         try:
             from t1t2_tahmin_sistemi import EveningSnapshotStore
-            store=EveningSnapshotStore(self.database_path); summary=store.performance_summary(); audit=store.winner_audit()
+            store=EveningSnapshotStore(self.database_path); summary=store.performance_summary(); audit=store.winner_audit(); insights=store.performance_insights()
             for horizon,label in (("T+1",self.t1),("T+2",self.t2)):
                 item=summary.get("horizons",{}).get(horizon,{})
                 label.setText(f"{horizon} GERÇEK SONUÇ\nÖrnek: {item.get('total',0)} · %7+: {item.get('hit_7',0)} · Tavan: {item.get('hit_limit_up',0)}\nPrecision@3: {self._fmt(item.get('precision_at_3'),True)} · Recall@20: {self._fmt(item.get('recall_at_20'),True)}\nBrier %7: {self._fmt(item.get('brier_7'))}")
-            self.data.setText(f"KAYIT DURUMU\nSonuçlanan snapshot: {summary.get('total',0)}\nGerçek %7+ hareket: {len(audit)}\nTahmin yoksa geçmiş sıra üretilmez")
+            top=insights.get("top", {})
+            top_text=" · ".join(f"İlk{k}: {v.get('rising',0)}/{v.get('count',0)} yükseldi, ort. max %{v.get('avg_max_return_pct','—')}" for k,v in top.items()) or "Yeterli günlük kayıt yok"
+            missed_text=", ".join(f"{x['symbol']} (%{x['max_return_pct']:.1f}, sıra {x['rank']})" for x in insights.get("missed", [])[:4]) or "Yok/yeterli kayıt yok"
+            fp_text=", ".join(f"{x['symbol']} (%{x['max_return_pct']:.1f})" for x in insights.get("false_positive", [])[:4]) or "Yok/yeterli kayıt yok"
+            self.data.setText(f"KAYIT DURUMU\nSonuçlanan snapshot: {summary.get('total',0)}\nGerçek %7+ hareket: {len(audit)}\nDün İlk 5/10/20: {top_text}\nKaçırılan güçlüler: {missed_text}\nYanlış pozitifler: {fp_text}")
             self.notice.setText("Sonuçlar yalnız tahmin tarihinde kaydedilmiş snapshot'larla eşleştirilir; bugünkü veriyle geriye dönük aday oluşturulmaz.")
-            frame=pd.DataFrame(audit,columns=self.COLUMNS); self.table.clear(); self.table.setColumnCount(len(self.COLUMNS)); self.table.setHorizontalHeaderLabels(self.COLUMNS); self.table.setRowCount(len(frame))
+            # Geçmiş değişmez ve veritabanında eksiksiz korunur; ekranda yalnız
+            # en güçlü/sonuçlanmış beş kayıt gösterilir.
+            frame=pd.DataFrame(audit,columns=self.COLUMNS).head(5); self.table.clear(); self.table.setColumnCount(len(self.COLUMNS)); self.table.setHorizontalHeaderLabels(self.COLUMNS); self.table.setRowCount(len(frame))
             for row_index,row in frame.iterrows():
                 for column_index,name in enumerate(self.COLUMNS):
                     value=row.get(name); text="—" if value is None else f"{value:.2f}" if isinstance(value,float) else str(value)

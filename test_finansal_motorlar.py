@@ -261,9 +261,10 @@ class HorizonSelectionTests(unittest.TestCase):
         result = vade_listeleri_uret(pd.DataFrame([stale, bad_rr]))
         self.assertTrue(all(frame.empty for frame in result))
 
-    def test_non_bist30_candidate_is_excluded_from_horizon_lists(self):
+    def test_non_bist30_candidate_is_included_in_active_bist_horizon_lists(self):
         result = vade_listeleri_uret(pd.DataFrame([self._candidate(Hisse="MEGMT.IS")]))
-        self.assertTrue(all(frame.empty for frame in result))
+        self.assertTrue(all(not frame.empty for frame in result))
+        self.assertTrue(all("MEGMT.IS" in frame["Hisse"].astype(str).tolist() for frame in result))
 
 
 class KapScoringTests(unittest.TestCase):

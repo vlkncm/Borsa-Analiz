@@ -149,7 +149,7 @@ def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iter
 
 def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     """iPhone/PWA 50 TL altı taramasındaki teknik ve likidite puanını masaüstünde uygular."""
-    columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Skor", "Risk/Getiri"]
+    columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Hedefe Ulaşma Olasılığı %", "Tahmini Hedef Süresi", "Süre Güveni", "Beklenen Getiri / Süre", "Skor", "Risk/Getiri"]
     if df is None or df.empty:
         return pd.DataFrame(columns=columns)
     work = df.copy()
@@ -178,12 +178,23 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     status.loc[(score.loc[idx] >= 75) & (price.loc[idx] <= e20.loc[idx] * 1.04)] = "ALIM BÖLGESİNDE"
     status.loc[price.loc[idx] > e20.loc[idx] * 1.08] = "GERİ ÇEKİLME BEKLE"
     potential = ((target.loc[idx] / price.loc[idx]) - 1) * 100
+    atr = _num(work.loc[idx], ("ATR", "ATR14"), 0)
+    atr_pct = (atr / price.loc[idx].replace(0, pd.NA)).fillna(0).clip(.002, .2)
+    # Sabit vade dayatmak yerine hedef mesafesi/gerçekleşen volatilite ve momentum hızından bounded tahmin.
+    momentum_speed = (_num(work.loc[idx], ("Son 20 Gün %",), 0).abs() / 20).clip(.05, 3) / 100
+    daily_capacity = (atr_pct * .8 + momentum_speed * .2).clip(.002, .12)
+    target_days = (potential.loc[idx].abs() / 100 / daily_capacity).clip(2, 252)
+    probability = (52 + (score.loc[idx] - 50) * .45 + (rr.loc[idx].clip(0, 4) - 1.5) * 5 - atr_pct * 80).clip(20, 85)
+    time_conf = pd.cut(target_days, [-1, 10, 30, 90, 999], labels=["YÜKSEK", "ORTA", "DÜŞÜK", "DÜŞÜK"], right=True).astype(str)
     result = pd.DataFrame({
         "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
         "Durum": status, "Mevcut Fiyat": price.loc[idx].round(2),
         "Alım Bölgesi": [f"{min(p * .98, e):.2f} – {p * 1.01:.2f} TL" for p, e in zip(price.loc[idx], e20.loc[idx])],
         "Hedef": target.loc[idx].round(2), "Stop": stop.loc[idx].round(2),
-        "Potansiyel %": potential.round(2), "Skor": score.loc[idx].astype(int),
+        "Potansiyel %": potential.round(2), "Hedefe Ulaşma Olasılığı %": probability.round(1),
+        "Tahmini Hedef Süresi": target_days.round(0).astype(int).astype(str) + " işlem günü",
+        "Süre Güveni": time_conf, "Beklenen Getiri / Süre": (potential / target_days).round(3),
+        "Skor": score.loc[idx].astype(int),
         "Risk/Getiri": rr.loc[idx].round(2),
     }, index=idx)
     return result.sort_values(["Skor", "Risk/Getiri"], ascending=False).head(limit).reset_index(drop=True)
@@ -242,11 +253,17 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
              5*(0<ret20<20) + 5*(ret60>0) + 5*(rr>=1.5))
     if score < 48:
         return None
+    target_probability = float(max(20, min(85, 52 + (score - 50)*.45 + (rr-1.5)*5 - (atr/price)*80)))
+    daily_capacity = max(.002, min(.12, (atr/price)*.8 + max(abs(ret20)/20/100, .0005)*.2))
+    target_days = int(max(2, min(252, ((target/price-1) / daily_capacity))))
     status = "ALIM BÖLGESİNDE" if score >= 75 and price <= e20*1.04 else "GERİ ÇEKİLME BEKLE" if price > e20*1.08 else "TEYİT BEKLE"
-    return {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
+    result = {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
             "Alım Bölgesi": f"{min(price*.98, e20):.2f} – {price*1.01:.2f} TL", "Hedef": round(target, 2),
             "Stop": round(stop, 2), "Potansiyel %": round((target/price-1)*100, 2), "Skor": int(score),
             "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover)}
+    result.update({"Hedefe Ulaşma Olasılığı %": round(target_probability, 1), "Tahmini Hedef Süresi": f"{target_days} işlem günü",
+                   "Süre Güveni": "ORTA" if target_days <= 30 else "DÜŞÜK", "Beklenen Getiri / Süre": round((target/price-1)*100/target_days, 3)})
+    return result
 
 
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:
