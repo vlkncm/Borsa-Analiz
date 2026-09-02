@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from sade_karar_modeli import buyume_adaylari, en_iyi_vade, orta_vadeden_kisa_adaylari_cikar, sade_firsatlar
+from sade_karar_modeli import buyume_adaylari, en_iyi_vade, orta_vadeden_kisa_adaylari_cikar, sade_firsatlar, elli_tl_adaylari
 from main import sade_ana_rapor
 
 
@@ -49,6 +49,17 @@ class SadeKararModeliTests(unittest.TestCase):
                           "Hedef Olasılığı %", "Olasılık Ufku — İşlem Günü", "Başarılılarda Medyan Süre",
                           "OOS Örnek Sayısı", "Güven Aralığı", "Güven Skoru", "Sonuç / Durum"], list(report.columns))
         self.assertNotIn("RSI", report.columns)
+
+    def test_elli_tl_sure_etiketleri_benzersiz(self):
+        frame = pd.DataFrame({
+            "Hisse": ["ABC"], "Fiyat": [20], "Ortalama Günlük İşlem Tutarı": [10_000_000],
+            "EMA20": [19], "EMA50": [18], "EMA200": [17], "RSI": [55],
+            "MACD": [2], "MACD Signal": [1], "Hacim Oranı": [1.3],
+            "Son 20 Gün %": [8], "Son 60 Gün %": [12], "Önerilen Stop": [18], "Önerilen Satış": [22],
+        })
+        result = elli_tl_adaylari(frame)
+        self.assertIn("Süre Güveni", result.columns)
+        self.assertFalse(result["Süre Güveni"].duplicated().all())
 
 
 if __name__ == "__main__":

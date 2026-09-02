@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pandas as pd
 from PySide6.QtWidgets import QApplication
 
-from app_qt import MainWindow
+from app_qt import MainWindow, HomePage
 from dashboard_ui import MarketCard, Sidebar, T1T2PerformanceDashboard
 
 
@@ -22,7 +22,7 @@ class DashboardUiTests(unittest.TestCase):
         labels = [text for _key, _icon, text in Sidebar.ITEMS]
         self.assertEqual(labels, ["Yüksek Hareket Radarı", "Ana Sayfa", "Günlük Trade",
             "Kısa Vade · Tüm BIST", "Orta Vade · Tüm BIST", "50 TL Altı", "Fon Analizi",
-            "Portföy", "Tahmin Performansı", "Ayarlar"])
+            "Portföy", "Tahmin Performansı", "Trade Performansı", "Ayarlar"])
         self.assertNotIn("10X", " ".join(labels)); self.assertNotIn("Excel", " ".join(labels))
         window.close()
 
@@ -33,6 +33,17 @@ class DashboardUiTests(unittest.TestCase):
             self.assertIs(window.pages.currentWidget(), page)
             self.assertTrue(window.sidebar.buttons[key].isChecked())
         window.close()
+
+    def test_home_scan_result_preview_is_rendered(self):
+        page = HomePage()
+        frame = pd.DataFrame({"Hisse": ["AAA"] * 5, "Alım Bölgesi": ["10-11"] * 5,
+                              "Hedef": [12] * 5, "Stop": [9] * 5, "Potansiyel %": [10] * 5,
+                              "Güven Skoru": [80] * 5})
+        page.update_state(frame, frame, frame, "OLUMLU", 5)
+        self.assertEqual(page.preview_tables["trade"].rowCount(), 5)
+        self.assertEqual(page.preview_tables["short"].rowCount(), 5)
+        self.assertEqual(page.preview_tables["medium"].rowCount(), 5)
+        page.close()
 
     def test_next_day_selection_updates_detail_and_tabs_do_not_mix(self):
         window = MainWindow(); page = window.next_day

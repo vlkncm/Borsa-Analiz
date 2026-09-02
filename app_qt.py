@@ -2239,7 +2239,12 @@ class MainWindow(QMainWindow):
             self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
             self.under_50.load(under_frame)
-            self.history.refresh()
+            # Performans raporu ayrı bir ekranın sorumluluğudur; kategorik/DB
+            # hatası ana sayfa kartlarının render zincirini kesmemelidir.
+            try:
+                self.history.refresh()
+            except Exception as exc:
+                hata_gunlugune_yaz("Tahmin Performansı render hatası", traceback.format_exc())
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
             )

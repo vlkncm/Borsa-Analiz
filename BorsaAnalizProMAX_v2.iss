@@ -31,6 +31,7 @@ Name: "desktopicon"; Description: "Masaüstüne kısayol oluştur"; GroupDescrip
 
 [Files]
 Source: "dist\BorsaAnalizProMAX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\BorsaTaramaMotoru\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "KULLANIM_KOSULLARI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "SORUMLULUK_REDDI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "GIZLILIK_BILDIRIMI.txt"; DestDir: "{app}"; Flags: ignoreversion

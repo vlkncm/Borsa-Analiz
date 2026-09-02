@@ -185,7 +185,9 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     daily_capacity = (atr_pct * .8 + momentum_speed * .2).clip(.002, .12)
     target_days = (potential.loc[idx].abs() / 100 / daily_capacity).clip(2, 252)
     probability = (52 + (score.loc[idx] - 50) * .45 + (rr.loc[idx].clip(0, 4) - 1.5) * 5 - atr_pct * 80).clip(20, 85)
-    time_conf = pd.cut(target_days, [-1, 10, 30, 90, 999], labels=["YÜKSEK", "ORTA", "DÜŞÜK", "DÜŞÜK"], right=True).astype(str)
+    # Dört aralık için dört benzersiz sıralı etiket gerekir; aynı ``DÜŞÜK`` etiketi
+    # pandas tarafından ordered categorical olarak reddediliyordu.
+    time_conf = pd.cut(target_days, [-1, 10, 30, 90, 999], labels=["YÜKSEK", "ORTA", "DÜŞÜK", "ÇOK DÜŞÜK"], right=True).astype(str)
     result = pd.DataFrame({
         "Hisse": _text(work.loc[idx], ("Hisse",)).str.replace(".IS", "", regex=False),
         "Durum": status, "Mevcut Fiyat": price.loc[idx].round(2),
