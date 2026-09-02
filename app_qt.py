@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
-    Sidebar, T1T2PerformanceDashboard, TopHeader,
+    Sidebar, T1T2PerformanceDashboard, TradePerformanceDashboard, TopHeader,
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
@@ -2078,12 +2078,13 @@ class MainWindow(QMainWindow):
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
         self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+        self.trade_performance = TradePerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
         for p in [self.home, self.next_day, self.daily_trade, self.short_term, self.medium_term,
-                  self.under_50, self.funds, self.track, self.history, self.settings_page,
+                  self.under_50, self.funds, self.track, self.history, self.trade_performance, self.settings_page,
                   self.sale, self.single, self.terminal, self.log]:
             self.pages.addWidget(p)
 
@@ -2113,7 +2114,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(APP_STYLE)
         self._page_map = {"home":self.home,"next":self.next_day,"daily":self.daily_trade,"short":self.short_term,
                           "medium":self.medium_term,"under50":self.under_50,"funds":self.funds,"portfolio":self.track,
-                          "performance":self.history,"settings":self.settings_page}
+                          "performance":self.history,"trade_performance":self.trade_performance,"settings":self.settings_page}
         self.pages.currentChanged.connect(self._sync_active_page)
         self._market_thread = None; self._market_worker = None
         if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
@@ -2130,7 +2131,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.pages.setCurrentWidget(page)
             self.sidebar.set_active(key)
-            if key == "performance" and hasattr(page, "refresh"):
+            if key in {"performance", "trade_performance"} and hasattr(page, "refresh"):
                 page.refresh()
 
     def _sync_active_page(self, _index):

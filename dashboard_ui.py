@@ -116,7 +116,7 @@ class TopHeader(QFrame):
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
-    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("settings","⚙","Ayarlar")]
+    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("trade_performance","◈","Trade Performansı"),("settings","⚙","Ayarlar")]
     def __init__(self):
         super().__init__(); self.setObjectName("sidebar"); self.expanded=True; self.setFixedWidth(190)
         self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}
@@ -286,6 +286,33 @@ class T1T2PerformanceDashboard(QWidget):
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch); self.table.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeToContents)
         except Exception as exc:
             self.notice.setText("Performans verisi okunamadı: "+str(exc)); self.table.setRowCount(0)
+
+
+class TradePerformanceDashboard(QWidget):
+    """AyrÄ± trade karnesi; yalnÄ±z kaydedilmiÅŸ sonuÃ§larÄ± gÃ¶sterir."""
+    COLUMNS=["Strateji","Ã–neri","BaÅŸarÄ±lÄ±","BaÅŸarÄ±sÄ±z","Hit Rate","Precision","Recall","EV","MFE","MAE","Hedef SÃ¼resi","Stop OranÄ±","Model SÃ¼rÃ¼mÃ¼"]
+    def __init__(self,database_path: Path):
+        super().__init__(); self.database_path=Path(database_path); root=QVBoxLayout(self); root.setContentsMargins(12,10,12,10)
+        title=QLabel("TRADE PERFORMANSI"); title.setObjectName("pageTitle"); root.addWidget(title)
+        sub=QLabel("Bu ekran Ã¶neri Ã¼retmez; stratejilerin gerÃ§ek sonuÃ§larÄ±nÄ± Ã¶lÃ§er."); sub.setObjectName("muted"); root.addWidget(sub)
+        self.summary=QLabel(); self.summary.setObjectName("bottomCard"); self.summary.setWordWrap(True); root.addWidget(self.summary)
+        self.table=QTableWidget(); self.table.setEditTriggers(QAbstractItemView.NoEditTriggers); self.table.setAlternatingRowColors(True); self.table.verticalHeader().hide(); root.addWidget(self.table,1); self.refresh()
+    def refresh(self):
+        try:
+            from t1t2_tahmin_sistemi import EveningSnapshotStore
+            store=EveningSnapshotStore(self.database_path); summary=store.performance_summary(); insight=store.performance_insights(); rows=[]
+            for horizon,label in (("T+1","T+1 GeniÅŸ 30"),("T+1","SeÃ§kin Aday"),("T+2","T+2 GeniÅŸ 30")):
+                item=summary.get("horizons",{}).get(horizon,{}); total=int(item.get("total",0) or 0); success=int(item.get("hit_7",0) or 0)
+                rows.append([label,total,success,total-success,(success/total if total else None),item.get("precision_at_5"),item.get("recall_at_20"),None,item.get("avg_max_return_pct"),item.get("avg_mae_pct"),"T+1/T+2","—","T1T2 reference"])
+            for label in ("GÃ¼nlÃ¼k Trade","KÄ±sa Vade","Orta Vade","50 TL AltÄ±"): rows.append([label,0,0,0,None,None,None,None,None,None,"Yeterli kayÄ±t yok","Yeterli kayÄ±t yok","—"])
+            self.table.setColumnCount(len(self.COLUMNS)); self.table.setHorizontalHeaderLabels(self.COLUMNS); self.table.setRowCount(len(rows))
+            for i,row in enumerate(rows):
+                for j,value in enumerate(row):
+                    text="—" if value is None else (f"%{value*100:.1f}" if j in {4,5,6} and isinstance(value,(float,int)) else str(value)); self.table.setItem(i,j,QTableWidgetItem(text))
+            self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            top=insight.get("top",{}); top_text=" · ".join(f"İlk{k}: {v.get('rising',0)}/{v.get('count',0)}" for k,v in top.items()) or "Yeterli günlük kayıt yok"
+            self.summary.setText(f"Dün üst sıralar: {top_text}\nKaçırılan güçlü hareketler: {len(insight.get('missed',[]))}\nYanlış pozitifler: {len(insight.get('false_positive',[]))}\nSnapshot kayıtları değiştirilemez.")
+        except Exception as exc: self.summary.setText("Performans verisi okunamadı: "+str(exc)); self.table.setRowCount(0)
 
 
 class PlaceholderPage(QWidget):
