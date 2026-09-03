@@ -1905,7 +1905,7 @@ class NextDayWorker(QObject):
                             "resistance20_distance", "relative_strength_bist_5", "close_location",
                             "turnover20")})
                         row["Hacim Oranı"] = features.get("relative_volume")
-                        row["Veri Kaynağı"] = getattr(_meta, "source", "Yahoo (Fintables yetkilendirme bekliyor)")
+                        row["Veri Kaynağı"] = getattr(_meta, "source", "Yahoo")
                         # Menkul turu kaynaktan kesinlestirilmedigi surece normal pay varsayilmaz.
                         security_type = security_types.get(symbol, "BELIRSIZ")
                         t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type))

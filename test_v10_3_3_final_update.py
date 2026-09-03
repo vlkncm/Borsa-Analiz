@@ -18,8 +18,15 @@ def sample_frame(n=40):
           "turnover20":200_000_000-i*2_000_000,"Durum":"GÜÇLÜ ERTESİ GÜN ADAYI",
           "Menkul Türü":"NORMAL_PAY","T+1 Seviye Doğrulandı":i%3==1,
           "T+1 Giriş":100,"T+1 Hedef":107,"T+1 Stop":96,"T+1 Risk/Getiri":1.75,
-          "Veri Kaynağı":"Yahoo (Fintables yetkilendirme bekliyor)"})
+          "Veri Kaynağı":"Yahoo"})
     return pd.DataFrame(rows)
+
+
+def test_production_provider_is_yahoo_and_fintables_is_not_instantiated(monkeypatch):
+    import veri_saglayici
+    assert isinstance(veri_saglayici._VARSAYILAN_ADAPTER, veri_saglayici.YahooProvider)
+    assert veri_saglayici._VARSAYILAN_ADAPTER.__class__.__module__ == "veri_saglayici"
+    assert "fintables" not in veri_saglayici._VARSAYILAN_ADAPTER.__class__.__name__.lower()
 
 
 def test_wide_radar_and_elite_are_independent():

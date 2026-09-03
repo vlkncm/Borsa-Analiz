@@ -91,7 +91,7 @@ def t1_listeleri(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
     radar["Hacim Oranı"] = _num(radar, "Hacim Oranı", _num(radar, "relative_volume", 1)).round(2)
     radar["Breakout Durumu"] = np.where(_num(radar,"resistance20_distance",.08)<=.01,"KIRILIM/YAKIN",np.where(_num(radar,"resistance20_distance",.08)<=.04,"YAKLAŞIYOR","UZAK"))
     radar["Seçkin Aday"] = radar["Hisse"].astype(str).isin(elite_symbols).map({True:"EVET",False:"HAYIR"})
-    radar["Veri Kaynağı"] = _text(radar, "Veri Kaynağı", "Yahoo (Fintables yetkilendirme bekliyor)")
+    radar["Veri Kaynağı"] = _text(radar, "Veri Kaynağı", "Yahoo")
     return {"wide": wide.reset_index(drop=True), "radar": radar[RADAR_COLUMNS].reset_index(drop=True), "elite": elite.reset_index(drop=True)}
 
 
@@ -125,7 +125,7 @@ def tomorrow_trade_top10(daily: pd.DataFrame, wide: pd.DataFrame, radar: pd.Data
     base["R/R"] = rr.reindex(base.index).round(2)
     base["Potansiyel %"] = ((base["Hedef"]/base["Giriş"].replace(0,np.nan)-1)*100).round(2)
     base["Açılış Teyidi"] = "BEKLENİYOR"
-    base["Veri Kaynağı"] = _text(base,"Veri Kaynağı","Yahoo (Fintables yetkilendirme bekliyor)")
+    base["Veri Kaynağı"] = _text(base,"Veri Kaynağı","Yahoo")
     return base[TOMORROW_COLUMNS].reset_index(drop=True)
 
 

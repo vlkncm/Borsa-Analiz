@@ -325,34 +325,23 @@ class RealtimeDataProvider:
         raise RuntimeError("Gercek zamanli veri yok; canli teyit kapali")
 
 
-class PrimaryFallbackAdapter:
-    """Fintables primary, Yahoo fallback; başarısız provider uygulamayı durdurmaz."""
-    def __init__(self):
-        from fintables_provider import FintablesProvider
-        self.primary = FintablesProvider()
-        self.fallback = YahooPiyasaVeriAdapteri()
-        self._primary_disabled_until = 0.0
-        self._primary_reason = ""
+class ExperimentalPrimaryFallbackAdapter:
+    """Yalnız açıkça enjekte edilen deneysel sağlayıcılar için fallback adaptörü.
+
+    Production başlangıcında bu sınıf oluşturulmaz ve Fintables import edilmez.
+    """
+    def __init__(self, primary, fallback: PiyasaVeriAdapteri | None = None):
+        self.primary = primary
+        self.fallback = fallback or YahooPiyasaVeriAdapteri()
 
     def _call(self, method, *args, **kwargs):
-        if time.time() < self._primary_disabled_until:
-            frame, meta = getattr(self.fallback, method)(*args, **kwargs)
-            meta = VeriMetadatasi(**{**meta.dict(), "source": "Yahoo (Fintables yetkilendirme bekliyor)", "fallback_used": True})
-            return frame, meta
         try:
             frame, meta = getattr(self.primary, method)(*args, **kwargs)
             return frame, meta
         except Exception as primary_error:
-            message = str(primary_error)
-            if "401" in message or "Unauthorized" in message or "yetkil" in message.lower():
-                # Bir taramada yüzlerce aynı 401 isteğini engelleyen süreç-içi devre kesici.
-                self._primary_disabled_until = time.time() + 30*60
-                self._primary_reason = "Fintables yetkilendirme bekliyor"
             frame, meta = getattr(self.fallback, method)(*args, **kwargs)
-            source = ("Yahoo (Fintables yetkilendirme bekliyor)" if self._primary_reason else
-                      f"{meta.source} (Fallback: Fintables hata)")
-            meta = VeriMetadatasi(**{**meta.dict(), "source": source, "fallback_used": True})
-            frame.attrs["fintables_error"] = str(primary_error)
+            meta = VeriMetadatasi(**{**meta.dict(), "source": meta.source, "fallback_used": True})
+            frame.attrs["experimental_provider_error"] = str(primary_error)
             return frame, meta
 
     def get_daily_ohlcv(self, symbol, period="6mo"): return self._call("get_daily_ohlcv", symbol, period)
@@ -363,10 +352,13 @@ class PrimaryFallbackAdapter:
     def get_intraday_1m(self, symbol, period="1d"): return self._call("get_intraday_1m", symbol, period)
 
 
-_primary_name = os.getenv("DATA_PROVIDER_PRIMARY", "FINTABLES").upper()
-_fallback_name = os.getenv("DATA_PROVIDER_FALLBACK", "YAHOO").upper()
-_VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = (PrimaryFallbackAdapter() if _primary_name == "FINTABLES" and _fallback_name == "YAHOO"
-                                            else YahooPiyasaVeriAdapteri())
+# Production veri yolu bilinçli olarak yalnız Yahoo'dur. Deneysel sağlayıcılar
+# ortam değişkeniyle dahi otomatik etkinleşmez; uygulama dışından açıkça enjekte edilir.
+DataProvider = PiyasaVeriAdapteri
+YahooProvider = YahooPiyasaVeriAdapteri
+FutureProvider = RealtimeDataProvider
+PrimaryFallbackAdapter = ExperimentalPrimaryFallbackAdapter  # geriye uyumlu ad
+_VARSAYILAN_ADAPTER: PiyasaVeriAdapteri = YahooPiyasaVeriAdapteri()
 
 
 def get_daily_ohlcv(symbol: str, period: str = "6mo", adapter: PiyasaVeriAdapteri | None = None):
