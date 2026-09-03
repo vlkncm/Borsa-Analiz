@@ -20,7 +20,7 @@ class DashboardUiTests(unittest.TestCase):
     def test_menu_order_and_removed_links(self):
         window = MainWindow()
         labels = [text for _key, _icon, text in Sidebar.ITEMS]
-        self.assertEqual(labels, ["Yüksek Hareket Radarı", "Ana Sayfa", "Günlük Trade",
+        self.assertEqual(labels, ["Yüksek Hareket Radarı", "Yarın Günlük Trade", "Ana Sayfa", "Günlük Trade",
             "Kısa Vade · Tüm BIST", "Orta Vade · Tüm BIST", "50 TL Altı", "Fon Analizi",
             "Portföy", "Tahmin Performansı", "Trade Performansı", "Ayarlar"])
         self.assertNotIn("10X", " ".join(labels)); self.assertNotIn("Excel", " ".join(labels))
@@ -68,7 +68,7 @@ class DashboardUiTests(unittest.TestCase):
             "Halka Arz Fiyatı":85.4, "Güncel Fiyat":100.0, "Neden Kodu":"REJECTED_LOW_SCORE",
         }])
         page.load_results(frame, "1 hisse tarandi")
-        self.assertEqual(6, page.tabs.count())
+        self.assertEqual(7, page.tabs.count())
         self.assertEqual(1, page.tables["ipo"].rowCount())
         self.assertEqual("YENI", page.tables["ipo"].item(0,0).text())
         self.assertEqual(1, page.tables["t1wide"].rowCount())

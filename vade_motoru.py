@@ -106,10 +106,14 @@ def vade_listeleri_uret(df: pd.DataFrame):
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
         # Sıralama motoru sert kapı zinciriyle evreni tek hisseye indirmez.
         # Kalite koşulları puanı etkiler; veri yoksa yalnızca geçerli fiyat/target/stop tutulur.
-        kalite = (fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) & (veri_yasi <= 4)
+        kalite = ((fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) &
+                  (veri_yasi <= 4) & (rr >= min_rr))
         aday = work[kalite].copy()
-        if aday.empty:
-            aday = work[(fiyat > 0) & (hedef > fiyat) & (stop < fiyat)].copy()
+        # Eksik alış bandında hedef/fiyat fallback'i kullanılabilir; stale veri
+        # veya yetersiz R/R hiçbir koşulda yeniden aday havuzuna giremez.
+        if aday.empty and (alis_alt.le(0) | alis_ust.le(0)).any():
+            aday = work[(fiyat > 0) & (hedef > fiyat) & (stop < fiyat) &
+                        (veri_yasi <= 4) & (rr >= min_rr)].copy()
         if aday.empty:
             return pd.DataFrame(columns=["Hisse", "Vade", "Vade Skoru"] + GORUNEN_KOLONLAR[1:])
 

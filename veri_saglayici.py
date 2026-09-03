@@ -331,14 +331,27 @@ class PrimaryFallbackAdapter:
         from fintables_provider import FintablesProvider
         self.primary = FintablesProvider()
         self.fallback = YahooPiyasaVeriAdapteri()
+        self._primary_disabled_until = 0.0
+        self._primary_reason = ""
 
     def _call(self, method, *args, **kwargs):
+        if time.time() < self._primary_disabled_until:
+            frame, meta = getattr(self.fallback, method)(*args, **kwargs)
+            meta = VeriMetadatasi(**{**meta.dict(), "source": "Yahoo (Fintables yetkilendirme bekliyor)", "fallback_used": True})
+            return frame, meta
         try:
             frame, meta = getattr(self.primary, method)(*args, **kwargs)
             return frame, meta
         except Exception as primary_error:
+            message = str(primary_error)
+            if "401" in message or "Unauthorized" in message or "yetkil" in message.lower():
+                # Bir taramada yüzlerce aynı 401 isteğini engelleyen süreç-içi devre kesici.
+                self._primary_disabled_until = time.time() + 30*60
+                self._primary_reason = "Fintables yetkilendirme bekliyor"
             frame, meta = getattr(self.fallback, method)(*args, **kwargs)
-            meta = VeriMetadatasi(**{**meta.dict(), "source": f"{meta.source} (Fallback: Fintables hata)", "fallback_used": True})
+            source = ("Yahoo (Fintables yetkilendirme bekliyor)" if self._primary_reason else
+                      f"{meta.source} (Fallback: Fintables hata)")
+            meta = VeriMetadatasi(**{**meta.dict(), "source": source, "fallback_used": True})
             frame.attrs["fintables_error"] = str(primary_error)
             return frame, meta
 

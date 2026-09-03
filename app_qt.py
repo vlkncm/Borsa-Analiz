@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
-    Sidebar, T1T2PerformanceDashboard, TradePerformanceDashboard, TopHeader,
+    Sidebar, T1T2PerformanceDashboard, TomorrowTradeDashboard, TradePerformanceDashboard, TopHeader,
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
@@ -1874,7 +1874,7 @@ class NextDayWorker(QObject):
             from ertesi_gun_motoru import erken_aday
             from tarama_seffafligi import TaramaOzeti
             from tahmin_deposu import TahminDeposu
-            from t1t2_tahmin_sistemi import (EveningSnapshotStore, cross_sectional_rank,
+            from t1t2_tahmin_sistemi import (EveningSnapshotStore, cross_sectional_rank, point_in_time_features,
                                              load_artifacts, predict_symbol, settle_pending_snapshots)
             from veri_saglayici import get_daily_ohlcv
             symbols, rows = tum_bist_hisseleri(), []
@@ -1899,6 +1899,13 @@ class NextDayWorker(QObject):
                     row = erken_aday(symbol, history, regime, kap=None)
                     if not history.empty:
                         as_of = history.index[-1]
+                        features = point_in_time_features(history, as_of)
+                        row.update({key: features.get(key) for key in (
+                            "price_acceleration_2", "volume_acceleration_2", "relative_volume",
+                            "resistance20_distance", "relative_strength_bist_5", "close_location",
+                            "turnover20")})
+                        row["Hacim Oranı"] = features.get("relative_volume")
+                        row["Veri Kaynağı"] = getattr(_meta, "source", "Yahoo (Fintables yetkilendirme bekliyor)")
                         # Menkul turu kaynaktan kesinlestirilmedigi surece normal pay varsayilmaz.
                         security_type = security_types.get(symbol, "BELIRSIZ")
                         t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type))
@@ -1995,6 +2002,7 @@ class NextDayWorker(QObject):
 
 
 class NextDayPage(NextDayDashboard):
+    results_ready = Signal(object)
     def __init__(self):
         super().__init__(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.thread = None; self.worker = None; self.scan_requested.connect(self.start_scan)
@@ -2012,6 +2020,7 @@ class NextDayPage(NextDayDashboard):
     def done(self, ok, frame, message):
         if ok:
             self.load_results(frame, message)
+            self.results_ready.emit(frame)
         else: self.set_error(message.splitlines()[-1])
 
     def _clear(self):
@@ -2077,13 +2086,14 @@ class MainWindow(QMainWindow):
         self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
+        self.tomorrow_trade = TomorrowTradeDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.trade_performance = TradePerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
-        for p in [self.home, self.next_day, self.daily_trade, self.short_term, self.medium_term,
+        for p in [self.home, self.next_day, self.tomorrow_trade, self.daily_trade, self.short_term, self.medium_term,
                   self.under_50, self.funds, self.track, self.history, self.trade_performance, self.settings_page,
                   self.sale, self.single, self.terminal, self.log]:
             self.pages.addWidget(p)
@@ -2112,7 +2122,7 @@ class MainWindow(QMainWindow):
         self.reload_button = QPushButton("Son veriyi yükle"); self.reload_button.clicked.connect(self.load_report)
         self.report_path_label = QLabel("Tahminler sürümlü SQLite geçmişinde saklanır.")
         self.setStyleSheet(APP_STYLE)
-        self._page_map = {"home":self.home,"next":self.next_day,"daily":self.daily_trade,"short":self.short_term,
+        self._page_map = {"home":self.home,"next":self.next_day,"tomorrow_trade":self.tomorrow_trade,"daily":self.daily_trade,"short":self.short_term,
                           "medium":self.medium_term,"under50":self.under_50,"funds":self.funds,"portfolio":self.track,
                           "performance":self.history,"trade_performance":self.trade_performance,"settings":self.settings_page}
         self.pages.currentChanged.connect(self._sync_active_page)
@@ -2121,10 +2131,25 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(100, self._load_market_cards)
 
         self.home.trade_requested.connect(lambda: self.pages.setCurrentWidget(self.daily_trade))
+        self.next_day.results_ready.connect(self._load_tomorrow_trade)
         self.pages.setCurrentWidget(self.next_day)
         self.sidebar.set_active("next")
 
         self.load_report()
+
+    def _load_tomorrow_trade(self, frame):
+        """Radar tamamlandığında bağımsız Top 10'u üretir; hata diğer sayfalara yayılmaz."""
+        try:
+            from trade_adaylari import TomorrowTradeStore, t1_listeleri, tomorrow_trade_top10
+            groups=t1_listeleri(frame)
+            daily=getattr(getattr(self.daily_trade, "table", None), "_data", pd.DataFrame())
+            if daily is None or daily.empty:
+                daily=getattr(self.daily_trade, "report_fallback", pd.DataFrame())
+            result=tomorrow_trade_top10(daily,groups["wide"],groups["radar"],groups["elite"])
+            self.tomorrow_trade.load_results(result)
+            TomorrowTradeStore(veri_klasoru() / "tahmin_gecmisi.sqlite3").save(result)
+        except Exception:
+            hata_gunlugune_yaz("Yarın Günlük Trade render/snapshot hatası", traceback.format_exc())
 
     def _show_page(self, key):
         page = self._page_map.get(key)
@@ -2245,6 +2270,10 @@ class MainWindow(QMainWindow):
                 self.history.refresh()
             except Exception as exc:
                 hata_gunlugune_yaz("Tahmin Performansı render hatası", traceback.format_exc())
+            try:
+                self.trade_performance.refresh()
+            except Exception:
+                hata_gunlugune_yaz("Trade Performansı render hatası", traceback.format_exc())
             self.home.portfolio_summary.setText(
                 f"TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: {len(self.track.symbols)}\nFiyatları Takip Listem ekranından yenileyin"
             )
@@ -2259,6 +2288,16 @@ class MainWindow(QMainWindow):
             self.home.index_value.setText(f"BIST EVRENİ\n{len(all_results)} hisse analiz edildi")
             self.home.clock.setText(datetime.now().strftime("%d.%m.%Y\n%H:%M"))
             self.home.update_state(trade_frame, short_frame, medium_frame, market, len(under_frame))
+            radar_table = getattr(self.next_day, "tables", {}).get("radar")
+            wide_table = getattr(self.next_day, "tables", {}).get("t1wide")
+            self.log.append(
+                "SCAN ROWS | "
+                f"daily rows={len(trade_frame)} | short rows={len(short_frame)} | "
+                f"medium rows={len(medium_frame)} | under50 rows={len(under_frame)} | "
+                f"t1 rows={wide_table.rowCount() if wide_table else 0} | "
+                f"radar rows={radar_table.rowCount() if radar_table else 0} | "
+                f"tomorrow trade rows={self.tomorrow_trade.table.rowCount()}"
+            )
 
             def numeric(name, default=0):
                 if name not in all_results.columns:

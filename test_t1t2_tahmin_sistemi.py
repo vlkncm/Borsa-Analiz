@@ -206,7 +206,11 @@ def test_kalibrasyonsuz_kural_skoru_kalibre_sirayla_karistirilmaz():
     partial=predict_symbol("NORMAL",frame(2),"2026-08-27","T+1",{"T+1:max_7":artifact},"NORMAL_PAY")
     rows=cross_sectional_rank([uncalibrated,partial])
     assert all(not row["calibrated"] for row in rows)
-    assert radar_lists([uncalibrated,partial])["wide"]==[]
+    # Geniş 30 recall havuzu kalibrasyon yokken açıklanabilir Movement Score ile
+    # çalışır; kalibrasyonsuz satırlar yalnız Seçkin listeye giremez.
+    lists=radar_lists([uncalibrated,partial])
+    assert len(lists["wide"])==2
+    assert lists["elite"]==[]
 
 
 def test_guvenilir_artefakt_olmadan_yuzde_yok():
