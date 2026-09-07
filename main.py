@@ -33,7 +33,7 @@ from tarama_evreni import (
     report_metadata,
 )
 from profesyonel_karar_sistemi import birinci_asama_uygula, karar_kapilarini_toplu_uygula, risk_ayarlari_oku
-from tahmin_defteri import acik_tahminleri_sonuclandir, model_sagligi, performans_ozeti, sinyal_kaydet, varsayilan_yol
+from tahmin_defteri import acik_tahminleri_sonuclandir, model_sagligi, performans_ozeti, kalibrasyon_gecmisi, sinyal_kaydet, varsayilan_yol
 from saglam_backtest import veri_butunlugu_kontrolu
 from ertesi_gun_tavan import (
     acik_tavan_tahminlerini_sonuclandir, adaylari_tabloya_cevir,
@@ -334,7 +334,7 @@ def tabloya_cevir(results):
     for item in results:
         tablo.append({
             "Profesyonel Karar": item.get("profesyonel_karar", "İŞLEM YAPMA"),
-            "Kalibre Edilmiş Olasılık": item.get("kalibre_olasilik"),
+            "Strateji Geçmiş Hedef Oranı %": item.get("kalibre_olasilik"),
             "Kalibrasyon Örnek": item.get("kalibrasyon_ornek", 0),
             "Piyasa Rejimi v2": item.get("piyasa_rejimi_v2", "YATAY"),
             "Piyasa Rejim Puanı": item.get("piyasa_rejim_puani", 0),
@@ -386,7 +386,8 @@ def tabloya_cevir(results):
             "Önerilen Stop": item.get("onerilen_stop", 0),
             "Beklenen Getiri %": item.get("beklenen_getiri_yuzde", 0),
             "Beklenen Süre": item.get("beklenen_sure", "Veri yok"),
-            "Model Olasılığı %": item.get("model_olasiligi", 0),
+            "Model Olasılığı %": None,  # Teknik ağırlıklı puan bir olasılık değildir.
+            "Teknik Senaryo Skoru": item.get("model_olasiligi", 0),
             "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0),
             "Doğrulama Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0),
             "Doğrulama Notu": item.get("dogrulama_notu", ""),
@@ -1278,7 +1279,7 @@ def main():
     results, piyasa_rejimi_v2, sektor_profilleri = birinci_asama_uygula(results)
     health = model_sagligi()
     results, piyasa_rejimi_v2, kalibrasyon_v2 = karar_kapilarini_toplu_uygula(
-        results, sinyal_gecmisi_oku(), strategy_id="general_scan",
+        results, kalibrasyon_gecmisi(), strategy_id="general_scan",
         protection_mode=health["protection_mode"], limits=risk_ayarlari_oku(),
     )
     kayit_yolu = varsayilan_yol()

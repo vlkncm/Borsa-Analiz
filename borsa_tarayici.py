@@ -234,6 +234,8 @@ def guvenli_yf_download(symbol, period="9mo", interval="1d", retries=3):
                 timeout=20
             )
             if df is not None and not df.empty:
+                if df.attrs.get("stale_fallback"):
+                    raise ValueError("Güncel veri doğrulanamadı; yedek cache işlem sinyalinde kullanılamaz")
                 return df
         except Exception as exc:
             son_hata = exc
