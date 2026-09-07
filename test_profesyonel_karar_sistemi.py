@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from unittest.mock import patch
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -119,16 +121,16 @@ class LedgerTests(unittest.TestCase):
 
     def test_same_bar_target_and_stop_is_pessimistic(self):
         signal = {"entry_high": 100, "target_2": 110, "stop": 95, "duration_high": 5}
-        frame = pd.DataFrame({"High": [111], "Low": [94], "Close": [105]})
+        frame = pd.DataFrame({"Open": [100], "High": [111], "Low": [94], "Close": [105]})
         result = sonucu_hesapla(signal, frame)
         self.assertEqual(result["status"], "STOP ÖNCE")
         self.assertLess(result["net_return_pct"], -5)
 
     def test_signal_outcome_and_summary(self):
-        item = strong_item(); item.update(profesyonel_karar="İZLE", sektor_adi="BANKA")
+        item = strong_item(); item.update(profesyonel_karar="İZLE", sektor_adi="BANKA", beklenen_sure_ust=5)
         signal = sinyal_kaydet(item, "daily_trade", self.path)
         self.assertEqual(len(aktif_sinyaller(self.path)), 1)
-        frame = pd.DataFrame({"High": [105, 113], "Low": [98, 101], "Close": [103, 111]})
+        frame = pd.DataFrame({"Open": [100, 103], "High": [105, 113], "Low": [98, 101], "Close": [103, 111]})
         sonucu_kaydet(signal, frame, self.path)
         summary, detail = performans_ozeti(self.path)
         self.assertEqual(summary.iloc[0]["Başarılı"], 1)
@@ -139,11 +141,14 @@ class LedgerTests(unittest.TestCase):
 
     def test_open_signal_is_automatically_resolved_but_not_expired_early(self):
         item = strong_item(); item.update(profesyonel_karar="İZLE", sektor_adi="BANKA", beklenen_sure_ust=5)
-        sinyal_kaydet(item, "daily_trade", self.path)
-        quiet = pd.DataFrame({"High": [103, 104], "Low": [98, 97], "Close": [101, 102]},
+        item["veri_tarihi"] = "2026-01-01"
+        with patch("tahmin_defteri.datetime") as clock:
+            clock.now.return_value = datetime(2026, 1, 1, 20, tzinfo=timezone.utc)
+            sinyal_kaydet(item, "daily_trade", self.path)
+        quiet = pd.DataFrame({"Open": [100, 101], "High": [103, 104], "Low": [98, 97], "Close": [101, 102]},
                              index=pd.date_range("2026-01-02", periods=2, tz="UTC"))
         self.assertEqual(acik_tahminleri_sonuclandir(self.path, lambda _: quiet), [])
-        target = pd.DataFrame({"High": [103, 113], "Low": [98, 97], "Close": [101, 111]},
+        target = pd.DataFrame({"Open": [100, 101], "High": [103, 113], "Low": [98, 97], "Close": [101, 111]},
                               index=pd.date_range("2026-01-02", periods=2, tz="UTC"))
         self.assertEqual(len(acik_tahminleri_sonuclandir(self.path, lambda _: target)), 1)
         self.assertEqual(len(aktif_sinyaller(self.path)), 0)

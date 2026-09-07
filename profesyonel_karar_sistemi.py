@@ -230,7 +230,7 @@ def net_ev_hesapla(probability_pct: float, entry: float, target: float, stop: fl
         return {"net_ev_pct": -999.0, "net_win_pct": 0.0, "net_loss_pct": 0.0, "cost_pct": 0.0}
     cost_pct = 2*costs.commission_bps/100 + costs.spread_bps/100 + 2*costs.slippage_bps/100
     win = (target/entry-1)*100-cost_pct
-    loss = (entry/stop-1)*100+cost_pct
+    loss = (1-stop/entry)*100+cost_pct
     p = probability_pct/100
     return {"net_ev_pct": round(p*win-(1-p)*loss, 3), "net_win_pct": round(win, 3),
             "net_loss_pct": round(loss, 3), "cost_pct": round(cost_pct, 3)}
@@ -240,7 +240,7 @@ def pozisyon_hesapla(capital: float, entry: float, stop: float, limits: RiskLimi
                      volatility_multiplier: float = 1.0) -> dict[str, Any]:
     per_share = entry-stop
     allowed = max(0.0, capital)*limits.trade_risk_pct/100*max(0.0, min(1.0, volatility_multiplier))
-    qty = math.floor(allowed/per_share) if per_share > 0 else 0
+    qty = min(math.floor(allowed/per_share), math.floor(max(0.0, capital)/entry)) if 0 < stop < entry and per_share > 0 else 0
     return {"position_qty": qty, "cash_risk": round(qty*max(0, per_share), 2),
             "allowed_cash_risk": round(allowed, 2), "trade_risk_pct": limits.trade_risk_pct}
 
@@ -286,6 +286,7 @@ def karar_kapilari_uygula(item: dict, market: dict, sectors: dict[str, dict], st
     entry_high = _f(item.get("onerilen_alis_ust", item.get("alis_araligi_ust")))
     target = _f(item.get("onerilen_satis", item.get("hedef_1"))); stop = _f(item.get("onerilen_stop", item.get("stop_loss")))
     rr = _f(item.get("karar_risk_getiri", item.get("risk_getiri_1")))
+    rr = (target-max(entry_high, price))/(max(entry_high, price)-stop) if 0 < stop < max(entry_high, price) < target else 0
     confidence = _f(item.get("v4_guven_puani", item.get("guven"))) - _f(market.get("uncertainty_penalty"))
     sector_name = _text(item, "sektor", "sector", "sektor_adi") or "BİLİNMİYOR"
     sector = sectors.get(sector_name, sectors.get("BİLİNMİYOR", {"score": 35, "class": "Nötr", "verified": False, "relative_strength": 0}))
@@ -322,7 +323,7 @@ def karar_kapilari_uygula(item: dict, market: dict, sectors: dict[str, dict], st
         ("Kalibre edilmiş olasılık", calibrated_ok, "Yetersiz geçmiş örnek — olasılık güvenilir değil"),
     ]
     failed = [reason for _, ok, reason in gates if not ok]
-    critical_data = not data_ok or price <= 0 or not (0 < stop < max(price, entry_high) < target)
+    critical_data = not data_ok or price <= 0 or not (0 < stop < entry_low <= entry_high and max(price, entry_high) < target)
     if critical_data:
         decision = "VERİ YETERSİZ"
     elif not failed:
@@ -360,23 +361,24 @@ def kalibrasyon_ozeti(history: pd.DataFrame, strategy: str) -> dict[str, Any]:
     work = history.copy()
     if "Strateji" in work:
         work = work[work["Strateji"].astype(str).str.casefold().eq(strategy.casefold())]
-    status_col = next((c for c in ("Durum", "outcome", "Sonuç") if c in work), None)
+    status_col = next((c for c in ("Durum", "status", "outcome", "Sonuç") if c in work), None)
     prob_col = next((c for c in ("Kalibre Edilmiş Olasılık", "Model Olasılığı %", "probability") if c in work), None)
     if not status_col:
         return {"samples": 0, "probability": None, "brier": None, "status": "Yetersiz geçmiş örnek — olasılık güvenilir değil."}
-    closed = work[~work[status_col].astype(str).str.contains("AÇIK|ACIK", case=False, na=False)].copy()
+    closed = work[work[status_col].isin({"HEDEF ÖNCE", "STOP ÖNCE", "SÜRESİ DOLDU"})].copy()
     y = closed[status_col].astype(str).str.contains("HEDEF|BAŞARILI", case=False, na=False).astype(float)
     n = len(y)
     if n < 30:
         return {"samples": n, "probability": None, "brier": None, "status": "Yetersiz geçmiş örnek — olasılık güvenilir değil."}
     probability = float(y.mean()*100)
     if prob_col:
-        p = pd.to_numeric(closed[prob_col], errors="coerce").fillna(50).clip(0, 99)/100
-        brier = float(((p-y)**2).mean())
+        p = pd.to_numeric(closed[prob_col], errors="coerce")/100
+        valid = p.between(0, 1)
+        brier = float(((p[valid]-y[valid])**2).mean()) if valid.any() else None
     else:
-        brier = float(((probability/100-y)**2).mean())
-    return {"samples": n, "probability": min(99.0, round(probability, 1)), "brier": round(brier, 4),
-            "success_rate": round(probability, 1), "status": "Kalibre edildi"}
+        brier = None
+    return {"samples": n, "probability": min(99.0, round(probability, 1)), "brier": round(brier, 4) if brier is not None else None,
+            "success_rate": round(probability, 1), "status": "Strateji taban oranı; hisseye özgü kalibrasyon değil"}
 
 
 def karar_kapilarini_toplu_uygula(results: list[dict], history: pd.DataFrame | None = None,

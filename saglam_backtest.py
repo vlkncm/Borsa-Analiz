@@ -53,7 +53,7 @@ def performans_metrikleri(trades: pd.DataFrame, return_col: str = "Getiri %", ou
     if returns.empty:
         return {"samples": 0}
     wins, losses = returns[returns > 0], returns[returns <= 0]
-    equity = (1+returns).cumprod()
+    equity = pd.concat([pd.Series([1.0]), (1+returns).cumprod()], ignore_index=True)
     drawdown = equity/equity.cummax()-1
     outcomes = trades.get(outcome_col, pd.Series("", index=trades.index)).astype(str)
     target = outcomes.str.contains("HEDEF", case=False, na=False)
@@ -112,7 +112,14 @@ def veri_butunlugu_kontrolu(frame: pd.DataFrame) -> dict:
     required = {"symbol", "date", "was_listed", "adjusted_for_splits", "dividend_adjusted"}
     missing = sorted(required-set(frame.columns if frame is not None else []))
     kap_ok = frame is not None and {"kap_published_at", "decision_time"}.issubset(frame.columns)
+    kap_time_ok = False
+    if kap_ok and not frame.empty:
+        published = pd.to_datetime(frame["kap_published_at"], errors="coerce", utc=True)
+        decision = pd.to_datetime(frame["decision_time"], errors="coerce", utc=True)
+        kap_time_ok = bool((published.notna() & decision.notna() & published.le(decision)).all())
+    flags_ok = (not missing and not frame.empty and
+                bool(frame[["was_listed", "adjusted_for_splits", "dividend_adjusted"]].eq(True).all().all()))
     return {"point_in_time_universe": not missing and bool(frame["was_listed"].fillna(False).all()),
         "corporate_actions_adjusted": not missing and bool(frame["adjusted_for_splits"].fillna(False).all()) and bool(frame["dividend_adjusted"].fillna(False).all()),
         "kap_publication_time_available": bool(kap_ok), "missing_fields": missing,
-        "safe_for_model_selection": not missing and bool(kap_ok)}
+        "safe_for_model_selection": bool(flags_ok and kap_time_ok)}
