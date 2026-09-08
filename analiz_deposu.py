@@ -16,6 +16,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 TABLES = {
+    "Rapor Metadata": "rapor_metadata", "Tahmin Performansi": "tahmin_performansi",
+    "Tahmin Detay": "tahmin_detay", "Ertesi Gun Tavan Adaylari": "ertesi_gun_tavan",
+    "Ertesi Gun Tavan Performans": "ertesi_gun_tavan_performans",
     "Tum Sonuclar": "tum_sonuclar", "Kisa Vade": "kisa_vade", "Orta Vade": "orta_vade",
     "Backtest Ozet": "backtest_ozet", "Sinyal Gecmisi": "sinyal_gecmisi",
     "Sinyal Performansi": "sinyal_performansi",

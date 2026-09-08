@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import traceback
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -13,6 +14,13 @@ from sade_karar_modeli import (
 )
 from bist_evreni import likit_120_sec
 from bist30 import normalize_bist_sembolu
+from tarama_evreni import (
+    ALL_BIST, SCAN_UNIVERSE, filter_frame_for_strategy,
+    metadata_frame_to_dict, normalize_symbols, report_cache_key, report_scope_is_compatible,
+)
+from tahmin_defteri import performans_ozeti, zinciri_dogrula
+from ertesi_gun_tavan import tavan_performans_ozeti
+from profesyonel_karar_sistemi import RiskLimits, risk_ayarlari_kaydet, risk_ayarlari_oku
 from gunluk_islem_plani import gun_sonu_plani, sabah_fiyat_kontrolu
 from sosyal_medya_risk import sosyal_medya_risk_analizi
 from PySide6.QtCore import (
@@ -29,6 +37,10 @@ from PySide6.QtWidgets import (
 from dashboard_ui import (
     APP_STYLE, MarketCard, MarketDataWorker, NextDayDashboard, PlaceholderPage,
     Sidebar, T1T2PerformanceDashboard, TomorrowTradeDashboard, TradePerformanceDashboard, TopHeader,
+)
+from ui_components import (
+    AppSidebar, DARK_THEME, EmptyState, PageHeader, PrimaryActionButton,
+    ResponsiveResultTable, SelectedRowDetailPanel, SummaryCard,
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
@@ -83,6 +95,30 @@ def guvenli_sayi(value, default=0.0):
         return number if pd.notna(number) else default
     except (TypeError, ValueError):
         return default
+
+
+def ertesi_gun_tavan_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
+    """Yalnız ertesi seans hedefli, point-in-time aday tablosunu gösterir."""
+    columns = [
+        "Hisse", "Aday Grubu", "Önceki Kapanış", "Tavan Fiyatı", "Tavan İçin Gereken %",
+        "Ertesi Gün Tavan Olasılığı", "Ertesi Gün %8+ Olasılığı", "Tavan Aday Puanı",
+        "Para Akışı", "Göreceli Hacim", "Sıkışma/Kırılım", "KAP Katalizörü",
+        "Piyasa Rejimi", "Sektör Gücü", "Risk Seviyesi", "Veri Zamanı",
+        "Aday Olma Nedenleri", "Riskler", "Kalibrasyon Örneği",
+    ]
+    if frame is None or frame.empty:
+        return pd.DataFrame(columns=columns)
+    work = frame.copy()
+    for column in columns:
+        if column not in work:
+            work[column] = "Veri yok"
+    return work[columns].copy()
+
+
+# Eski dış çağrılar için yalnız isim uyumluluğu; eski 2-6 haftalık veri artık
+# ertesi gün adayı gibi dönüştürülmez.
+def tavan_potansiyeli_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
+    return ertesi_gun_tavan_gorunumu(frame)
 
 
 def hata_gunlugune_yaz(context: str, details: str) -> None:
@@ -458,33 +494,81 @@ class InfoWorker(QObject):
 class SimpleTable(QWidget):
     row_selected = Signal(object)
 
-    def __init__(self, title, subtitle=""):
+    def __init__(self, title, subtitle="", page_id=None, strategy_id=None):
         super().__init__()
+        self.page_id = page_id or title.casefold().replace(" ", "_")
+        self.strategy_id = strategy_id or self.page_id
+        self.result_cache = {}
+        self._active_request_id = None
+        self._loading = False
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title_label = QLabel(title)
-        title_label.setObjectName("pageTitle")
-        layout.addWidget(title_label)
-        if subtitle:
-            sub = QLabel(subtitle)
-            sub.setWordWrap(True)
-            sub.setObjectName("subText")
-            layout.addWidget(sub)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(title.title(), subtitle)
+        layout.addWidget(self.page_header)
         self.info = QLabel("Henüz analiz yapılmadı.")
         self.info.setObjectName("subText")
+        self.info.setWordWrap(True)
         layout.addWidget(self.info)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.setWordWrap(False)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.empty_state = EmptyState(
+            "Henüz uygun sonuç yok",
+            "Analiz ölçütlerini geçen sonuç bulunmadığında liste güvenli biçimde boş bırakılır.",
+        )
+        layout.addWidget(self.empty_state)
+        self.table = ResponsiveResultTable()
         self.table.cellDoubleClicked.connect(self._emit_selected_row)
+        self.table.currentCellChanged.connect(self._show_selected_row)
         layout.addWidget(self.table, 1)
+        self.detail_panel = SelectedRowDetailPanel()
+        layout.addWidget(self.detail_panel)
         self._data = pd.DataFrame()
+
+    def begin_request(self, request_id=None):
+        request_id = request_id or uuid.uuid4().hex
+        self._active_request_id = request_id
+        self._loading = True
+        if hasattr(self, "scan_button"):
+            self.scan_button.setEnabled(False)
+        return request_id
+
+    def cancel_request(self):
+        self._active_request_id = None
+        self._loading = False
+        if hasattr(self, "scan_button"):
+            self.scan_button.setEnabled(True)
+
+    def accepts_result(self, request_id, page_id):
+        return page_id == self.page_id and request_id == self._active_request_id
+
+    def apply_scan_result(self, request_id, page_id, ok, frame, message):
+        if not self.accepts_result(request_id, page_id):
+            return False
+        self._loading = False
+        self._active_request_id = None
+        if hasattr(self, "scan_button"):
+            self.scan_button.setEnabled(True)
+        if ok:
+            frame = frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+            identity = getattr(self, "_scan_identity", {})
+            strategy = identity.get("strategy_id", self.strategy_id)
+            universe = identity.get("universe_id", ALL_BIST)
+            self.result_cache[report_cache_key(strategy, universe)] = frame.copy()
+            self.load(frame)
+            if frame.empty:
+                self.empty_state.message.setText(message)
+            self.info.setText(message)
+        else:
+            self.info.setText(message)
+        return True
+
+    def _show_selected_row(self, row, _column, _previous_row, _previous_column):
+        if row < 0 or row >= len(self._data):
+            self.detail_panel.set_data({})
+            return
+        marker = self.table.item(row, 0)
+        source_row = marker.data(Qt.UserRole) if marker is not None else row
+        if source_row is not None and 0 <= int(source_row) < len(self._data):
+            self.detail_panel.set_data(self._data.iloc[int(source_row)].to_dict())
 
     def _emit_selected_row(self, row, _column):
         marker = self.table.item(row, 0)
@@ -492,16 +576,19 @@ class SimpleTable(QWidget):
         if source_row is not None and 0 <= int(source_row) < len(self._data):
             self.row_selected.emit(self._data.iloc[int(source_row)].to_dict())
 
-    def load(self, df):
+    def load(self, df, detail_df=None):
         if df is None:
             df = pd.DataFrame()
-        self._data = df.reset_index(drop=True).copy()
+        if detail_df is None:
+            detail_df = df
+        self._data = detail_df.reset_index(drop=True).copy()
         self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         self.table.clear()
         self.table.setRowCount(len(df))
         self.table.setColumnCount(len(df.columns))
         self.table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+        self.table.set_column_names(df.columns)
         for r, (_, row) in enumerate(df.iterrows()):
             for c, value in enumerate(row):
                 if pd.isna(value):
@@ -529,10 +616,15 @@ class SimpleTable(QWidget):
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        self.table.verticalHeader().setDefaultSectionSize(42)
         self.table.setUpdatesEnabled(True)
         self.table.viewport().update()
-        self.info.setText(f"Gösterilen hisse: {len(df)}")
+        self.empty_state.setVisible(df.empty)
+        self.table.setVisible(not df.empty)
+        self.detail_panel.setVisible(not df.empty)
+        self.info.setText(f"Gösterilen sonuç: {len(df)}")
+        if not df.empty:
+            self.table.selectRow(0)
 
 
 class StockDetailDialog(QDialog):
@@ -828,17 +920,14 @@ class SingleAnalysisPage(QWidget):
         self.research_worker = None
         self.last_result = {}
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Hisse Karar Merkezi")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
-        sub = QLabel(
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        sub_text = (
             "Bir hissenin ne zaman alınabileceğini, hangi durumda beklenmesi gerektiğini, hedef/stop seviyelerini "
             "ve şirketin temel araştırmasını tek ekranda birleştirir."
         )
-        sub.setWordWrap(True)
-        sub.setObjectName("subText")
-        layout.addWidget(sub)
+        self.page_header = PageHeader("Tek Hisse", sub_text)
+        layout.addWidget(self.page_header)
 
         top = QHBoxLayout()
         self.symbol = QLineEdit()
@@ -1088,10 +1177,13 @@ class SalePage(QWidget):
         self.thread = None
         self.worker = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Satış Kararı")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Satış Kararı",
+            "Maliyet ve güncel teknik koşullara göre açık eylem ve pozisyon riskini gösterir.",
+        )
+        layout.addWidget(self.page_header)
         top = QHBoxLayout()
         self.symbol = QLineEdit()
         self.symbol.setPlaceholderText("Hisse: ASELS")
@@ -1238,10 +1330,13 @@ class TrackPage(QWidget):
         self.get_prices = takip_fiyatlarini_getir
         self.symbols = self.read_list()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        title = QLabel("Takip Listem")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Takip Listem",
+            "Kaydettiğiniz hisseleri ve güncel fiyatlarını kullanıcı verisini koruyarak izleyin.",
+        )
+        layout.addWidget(self.page_header)
         top = QHBoxLayout()
         self.input = QLineEdit()
         self.input.setPlaceholderText("Hisse ekle: ASELS")
@@ -1254,12 +1349,19 @@ class TrackPage(QWidget):
         top.addWidget(add)
         top.addWidget(refresh)
         layout.addLayout(top)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table = ResponsiveResultTable()
+        self.empty_state = EmptyState("Takip listesi boş", "Hisse kodu eklediğinizde kayıtlar burada görünür.")
+        layout.addWidget(self.empty_state)
         layout.addWidget(self.table, 1)
+        self.detail_panel = SelectedRowDetailPanel()
+        layout.addWidget(self.detail_panel)
+        self.table.currentCellChanged.connect(self._show_detail)
+        self._display_frame = pd.DataFrame()
         self.show_symbols()
+
+    def _show_detail(self, row, _column, _previous_row, _previous_column):
+        if 0 <= row < len(self._display_frame):
+            self.detail_panel.set_data(self._display_frame.iloc[row].to_dict())
 
     def add(self):
         symbol = normalize_symbol(self.input.text())
@@ -1285,10 +1387,13 @@ class TrackPage(QWidget):
         self.show_symbols()
 
     def load(self, df):
+        self._display_frame = df.reset_index(drop=True).copy()
         self.table.clear()
         self.table.setRowCount(len(df))
         self.table.setColumnCount(len(df.columns) + 1)
-        self.table.setHorizontalHeaderLabels([str(c) for c in df.columns] + ["İşlem"])
+        names = [str(c) for c in df.columns] + ["İşlem"]
+        self.table.setHorizontalHeaderLabels(names)
+        self.table.set_column_names(names)
         for r, (_, row) in enumerate(df.iterrows()):
             for c, value in enumerate(row):
                 self.table.setItem(r, c, QTableWidgetItem(str(value)))
@@ -1300,6 +1405,11 @@ class TrackPage(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(
             len(df.columns), QHeaderView.ResizeToContents
         )
+        self.empty_state.setVisible(df.empty)
+        self.table.setVisible(not df.empty)
+        self.detail_panel.setVisible(not df.empty)
+        if not df.empty:
+            self.table.selectRow(0)
 
 
 class FundWorker(QObject):
@@ -1320,15 +1430,19 @@ class FundWorker(QObject):
 
 
 class FundAnalysisPage(QWidget):
+    scan_completed = Signal(bool, object, str)
     def __init__(self):
         super().__init__()
         self.thread = None
         self.worker = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        title = QLabel("Fon Karar Merkezi")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(12)
+        self.page_header = PageHeader(
+            "Fon Karar Merkezi",
+            "Fonları kendi kategorisi, dönem getirisi, dalgalanma ve risk ölçüleriyle karşılaştırır.",
+        )
+        layout.addWidget(self.page_header)
         warning = QLabel(
             "TEFAS'ta işlem gören fonları aynı kategori, çok dönemli momentum ve riskle karşılaştırır. "
             "%20–30 aylık getiri garanti edilmez; yalnızca yüksek getiri potansiyeli taşıyan riskli adaylar işaretlenir."
@@ -1343,7 +1457,7 @@ class FundAnalysisPage(QWidget):
         self.capital = QLineEdit("50000")
         self.capital.setPlaceholderText("Yatırılacak tutar (TL)")
         self.capital.setMaximumWidth(220)
-        self.button = QPushButton("TEFAS FONLARINI TARA")
+        self.button = QPushButton("Fon Analizini Başlat")
         self.button.setObjectName("primary")
         self.button.clicked.connect(self.run)
         controls.addWidget(self.max_risk)
@@ -1371,7 +1485,7 @@ class FundAnalysisPage(QWidget):
         layout.addWidget(self.table, 1)
 
     def run(self):
-        if not self.button.isEnabled():
+        if not self.button.isEnabled() or (self.thread and self.thread.isRunning()):
             return
         try:
             max_risk = int(self.max_risk.text().strip())
@@ -1389,14 +1503,26 @@ class FundAnalysisPage(QWidget):
             return
         self.button.setEnabled(False)
         self.status.setText("TEFAS fonları alınıyor ve aynı kategoride karşılaştırılıyor...")
+        self.thread = QThread(self)
         self.worker = FundWorker(max_risk, capital)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.done)
-        QTimer.singleShot(0, self.worker.run)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self._thread_finished)
+        self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.start()
+
+    def _thread_finished(self):
+        self.worker = None
+        self.thread = None
+        self.button.setEnabled(True)
 
     def done(self, ok, payload, message):
-        self.button.setEnabled(True)
         if not ok:
             self.status.setText("Fon taraması yapılamadı. Eski sonuç karar olarak kullanılmadı.")
+            self.scan_completed.emit(False, pd.DataFrame(), message)
             QMessageBox.warning(self, "Fon taraması", message)
             return
         frame = payload.get("frame", pd.DataFrame())
@@ -1405,49 +1531,57 @@ class FundAnalysisPage(QWidget):
         self.selection.setPlainText(selection.get("rapor", "Tek fon sonucu üretilemedi."))
         strong = 0 if frame.empty else int(frame["20%+ Uç Senaryo"].astype(str).eq("VAR").sum())
         self.status.setText(f"Kaynak: {message} | Uygun fon: {len(frame)} | 20%+ uç senaryo adayı: {strong}")
+        self.scan_completed.emit(True, frame, message)
 
     def show_detail(self, data):
         StockDetailDialog(data, self, show_chart=False).exec()
 
 
 class DailyTradeWorker(QObject):
-    finished = Signal(bool, object, str)
-    progress = Signal(str)
+    finished = Signal(str, str, str, bool, object, str)
+    progress = Signal(str, str, str, str)
 
-    def __init__(self, interval, account, risk, min_rr, confirmed_only):
+    def __init__(self, interval, account, risk, min_rr, confirmed_only,
+                 request_id="", strategy_id="daily_trade", universe_id=ALL_BIST):
         super().__init__()
         self.interval, self.account, self.risk = interval, account, risk
         self.min_rr, self.confirmed_only = min_rr, confirmed_only
+        self.request_id, self.strategy_id, self.universe_id = request_id, strategy_id, universe_id
 
     def run(self):
         try:
             from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
             from gunluk_trade_motoru import gunluk_trade_analiz
-            rows, attempted, received, unavailable = [], 0, 0, 0
-            symbols = tum_bist_hisseleri()
+            rows = []
+            errors = 0
+            raw_symbols = tum_bist_hisseleri()
+            symbols = normalize_symbols(raw_symbols)
+            if len(symbols) != len(raw_symbols):
+                hata_gunlugune_yaz("Günlük Trade evren temizliği", f"{len(raw_symbols) - len(symbols)} geçersiz veya yinelenen sembol atlandı.")
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
-                self.progress.emit(f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
-                row = gunluk_trade_analiz(
-                    symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
-                    risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
-                    sadece_teyitli=self.confirmed_only,
-                )
-                attempted += 1
-                if row.get("Neden Kodu") in {"MISSING_PRICE_DATA", "SYMBOL_MAPPING_FAILED"}: unavailable += 1
-                else: received += 1
-                if not self.confirmed_only or row.get("Sonuç") == "AL ADAYI":
-                    rows.append(row)
-            warning = son_evren_durumu().get("warning", "")
-            message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Veri alınamayan: {unavailable} | Gösterilen: {len(rows)}"
-            if warning: message += " | UYARI: " + warning
-            self.finished.emit(True, pd.DataFrame(rows), message)
+                self.progress.emit(self.request_id, self.strategy_id, self.universe_id, f"{index}/{len(symbols)} {symbol.replace('.IS','')} inceleniyor...")
+                try:
+                    row = gunluk_trade_analiz(
+                        symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
+                        risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
+                        sadece_teyitli=self.confirmed_only,
+                    )
+                    if not self.confirmed_only or row.get("Sonuç") == "AL ADAYI":
+                        rows.append(row)
+                except Exception:
+                    errors += 1
+                    hata_gunlugune_yaz(f"Günlük Trade veri/analiz hatası ({symbol})", traceback.format_exc())
+            frame = pd.DataFrame(rows)
+            frame.attrs.update(scanned_count=len(symbols), error_count=errors)
+            self.finished.emit(self.request_id, self.strategy_id, self.universe_id, True, frame, f"Tarama Evreni: Tüm Aktif BIST · {len(symbols)} hisse tarandı · {len(rows)} sonuç · {errors} veri hatası.")
         except Exception:
-            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+            self.finished.emit(self.request_id, self.strategy_id, self.universe_id, False, pd.DataFrame(), traceback.format_exc())
 
 
 class DailyTradePage(QWidget):
+    scan_completed = Signal(object)
     """Gecikme ve kanıt durumunu gizlemeden sunan günlük trade karar-destek sayfası."""
     def __init__(self):
         super().__init__()
@@ -1511,7 +1645,7 @@ class DailyTradePage(QWidget):
         for widget in (self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             widget.setVisible(False)
         layout.addLayout(controls)
-        self.status = QLabel("Henüz tarama yapılmadı.")
+        self.status = QLabel("Tarama Evreni: Tüm Aktif BIST · Henüz tarama yapılmadı.")
         self.status.setObjectName("subText")
         layout.addWidget(self.status)
         self.table = SimpleTable("Adaylar", "Uygun aday yoksa liste boş bırakılır.")
@@ -1534,17 +1668,25 @@ class DailyTradePage(QWidget):
         for widget in (self.cancel_button, self.interval, self.account, self.risk, self.min_rr, self.confirmed):
             widget.setVisible(visible)
 
-    def start_scan(self):
+    def start_scan(self, request_id=None, strategy_id="daily_trade", universe_id=ALL_BIST):
         if self.thread and self.thread.isRunning():
             return
         self.scan_button.setEnabled(False)
-        self.status.setText("Aktif BIST evreni tamamlanmış intraday mumlarla taranıyor...")
+        self._scan_identity = {
+            "request_id": request_id or uuid.uuid4().hex,
+            "strategy_id": strategy_id,
+            "universe_id": universe_id,
+        }
+        self.status.setText("Tarama Evreni: Tüm Aktif BIST · Tamamlanmış intraday mumlar taranıyor...")
         self.thread = QThread(self)
-        self.worker = DailyTradeWorker(self.interval.currentText(), self.account.value(), self.risk.value(),
-                                       self.min_rr.value(), self.confirmed.isChecked())
+        identity = self._scan_identity
+        self.worker = DailyTradeWorker(
+            self.interval.currentText(), self.account.value(), self.risk.value(),
+            self.min_rr.value(), self.confirmed.isChecked(), **identity,
+        )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self.status.setText)
+        self.worker.progress.connect(self._progress)
         self.worker.finished.connect(self.scan_done)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self.worker.deleteLater)
@@ -1559,9 +1701,52 @@ class DailyTradePage(QWidget):
     def cancel_scan(self):
         if self.thread and self.thread.isRunning():
             self.thread.requestInterruption()
+            self._scan_identity = {}
             self.status.setText("Tarama güvenli biçimde durduruluyor…")
 
-    def scan_done(self, ok, frame, message):
+    def format_display(self, frame):
+        """Motor sonucunu değiştirmeden kritik alanları öne alır; ayrıntıları tabloda saklar."""
+        if frame is None or frame.empty:
+            return pd.DataFrame() if frame is None else frame.copy()
+        display = frame.copy()
+        if "Alış Bandı" not in display:
+            if "Alış Alt" in display and "Alış Üst" in display:
+                display["Alış Bandı"] = display.apply(
+                    lambda row: f"{guvenli_sayi(row.get('Alış Alt')):.2f}–{guvenli_sayi(row.get('Alış Üst')):.2f}", axis=1
+                )
+            elif "Alım Bölgesi" in display:
+                display["Alış Bandı"] = display["Alım Bölgesi"]
+        probability_column = next(
+            (name for name in ("Hedef Önce Olasılığı %", "Hedef Olasılığı %", "Model Olasılığı %") if name in display),
+            None,
+        )
+        probability = display[probability_column].astype(str) if probability_column else pd.Series("Yetersiz örnek", index=display.index)
+        horizon_column = next((name for name in ("Tahmini Süre", "Süre", "Ufuk") if name in display), None)
+        horizon = display[horizon_column].astype(str) if horizon_column else pd.Series("Gün içi", index=display.index)
+        display["Olasılık / Süre"] = probability + "\n" + horizon
+        preferred = [
+            "Hisse", "Sonuç", "Karar", "Alış Bandı", "Hedef", "Stop",
+            "Hedef Potansiyeli %", "Potansiyel %", "Olasılık / Süre",
+        ]
+        ordered = [name for name in preferred if name in display]
+        ordered.extend(name for name in display.columns if name not in ordered)
+        return display[ordered]
+
+    def load_display(self, frame):
+        complete = self.format_display(frame)
+        visible = complete.iloc[:, :10].copy()
+        self.table.load(visible, detail_df=complete)
+
+    def _progress(self, request_id, strategy_id, universe_id, message):
+        if getattr(self, "_scan_identity", {}) == {
+            "request_id": request_id, "strategy_id": strategy_id, "universe_id": universe_id,
+        }:
+            self.status.setText(message)
+
+    def scan_done(self, request_id, strategy_id, universe_id, ok, frame, message):
+        identity = {"request_id": request_id, "strategy_id": strategy_id, "universe_id": universe_id}
+        if getattr(self, "_scan_identity", {}) != identity:
+            return
         self.scan_button.setEnabled(True)
         self.results = frame if ok else pd.DataFrame()
         display = self.results[self.results.get("Sonuç", pd.Series(dtype=str)).ne("VERİ YETERSİZ")].copy() if not self.results.empty else self.results
@@ -1573,10 +1758,7 @@ class DailyTradePage(QWidget):
             selected = display.sort_values(["_öncelik", "_pot", "_rr"], ascending=False).head(5)
             self._detail_records = selected.drop(columns=["_öncelik", "_pot", "_rr"], errors="ignore").to_dict("records")
             display = self._compact_display(self._detail_records)
-        if display.empty and not self.report_fallback.empty:
-            self._detail_records = self.report_fallback.head(5).to_dict("records")
-            display = self._compact_display(self._detail_records)
-        elif display.empty:
+        if display.empty:
             self._detail_records = []
         self.table.load(display)
         self._update_summary(display)
@@ -1692,61 +1874,128 @@ class HomePage(QWidget):
 
     def __init__(self):
         super().__init__()
-        layout = QVBoxLayout(self); layout.setContentsMargins(16, 12, 16, 12); layout.setSpacing(10)
-        top = QFrame(); top.setObjectName("topStrip"); top_box = QHBoxLayout(top)
-        self.index_value = QLabel("BIST 100\nVeri bekleniyor"); self.index_value.setObjectName("topMetric")
-        self.market = QLabel("PİYASA DURUMU\nVERİ BEKLENİYOR"); self.market.setObjectName("topMetric")
-        self.source = QLabel("VERİ KAYNAĞI\nGecikmeli (15 dk)"); self.source.setObjectName("topMetric")
-        self.clock = QLabel(datetime.now().strftime("%d.%m.%Y\n%H:%M")); self.clock.setObjectName("topMetric")
-        for widget in (self.index_value, self.market, self.source): top_box.addWidget(widget, 1)
-        top_box.addStretch(); top_box.addWidget(self.clock); layout.addWidget(top)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(16)
+        self.trade_button = PrimaryActionButton("Tüm Hisse Analizlerini Başlat")
+        self.trade_button.clicked.connect(self.trade_requested.emit)
+        self.page_header = PageHeader(
+            "Ana ekran", "Piyasa özeti ve karar için en önemli adaylar", self.trade_button,
+        )
+        layout.addWidget(self.page_header)
+        self.clock = self.page_header.freshness
+        self.scan_progress = QLabel("Hazır · Hisse analizleri henüz başlatılmadı.")
+        self.scan_progress.setObjectName("riskBanner")
+        self.scan_progress.setWordWrap(True)
+        layout.addWidget(self.scan_progress)
 
-        summary = QFrame(); summary.setObjectName("dashboardPanel"); summary_box = QHBoxLayout(summary)
-        left = QVBoxLayout(); title = QLabel("BUGÜNÜN DURUMU"); title.setObjectName("sectionTitle"); left.addWidget(title)
-        cards = QHBoxLayout(); self.counts = {}
-        for key, caption in (("trade", "Günlük Trade"), ("short", "Kısa Vade"), ("medium", "Orta Vade"), ("growth", "Büyüme Adayları")):
-            value = QLabel(f"{caption}\n0\nuygun aday"); value.setObjectName("summaryMetric"); cards.addWidget(value); self.counts[key] = value
-        left.addLayout(cards); summary_box.addLayout(left, 2)
-        self.trade_button = QPushButton("BUGÜNÜN TRADE\nADAYLARINI BUL\nEn iyi 5 hisseyi analiz et"); self.trade_button.setObjectName("heroButton")
-        self.trade_button.clicked.connect(self.trade_requested.emit); summary_box.addWidget(self.trade_button, 1); layout.addWidget(summary)
+        cards = QHBoxLayout()
+        cards.setSpacing(16)
+        self.market_card = SummaryCard("Piyasa rejimi", "Veri bekleniyor", "Yeni işlem kararı için veri yükleniyor")
+        self.candidate_card = SummaryCard("Uygun aday", "0", "Henüz rapor yüklenmedi")
+        self.warning_card = SummaryCard("Portföy / veri uyarısı", "—", "Kritik uyarı bulunmuyor")
+        for card in (self.market_card, self.candidate_card, self.warning_card):
+            cards.addWidget(card, 1)
+        layout.addLayout(cards)
+        self.market = self.market_card.value
+        self.index_value = self.candidate_card.note
+        self.source = self.warning_card.note
+        self.counts = {
+            "trade": self.candidate_card.value,
+            "short": QLabel("0"),
+            "medium": QLabel("0"),
+            "growth": QLabel("0"),
+        }
 
-        content = QHBoxLayout(); tables = QGridLayout(); tables.setSpacing(8); self.preview_tables = {}
-        for column, (key, caption) in enumerate((("trade", "GÜNLÜK TRADE – EN İYİ 5"), ("short", "KISA VADE – EN İYİ 5"), ("medium", "ORTA VADE – EN İYİ 5"))):
-            panel = QFrame(); panel.setObjectName("dashboardPanel"); box = QVBoxLayout(panel)
-            label = QLabel(caption); label.setObjectName("tableTitle"); box.addWidget(label)
-            table = QTableWidget(0, 6); table.setHorizontalHeaderLabels(["Hisse", "Alım", "Hedef", "Stop", "Potansiyel", "Skor"])
-            table.verticalHeader().setVisible(False); table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff); table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-            box.addWidget(table); self.preview_tables[key] = table; tables.addWidget(panel, 0, column)
-        content.addLayout(tables, 4)
-        rail = QVBoxLayout()
-        self.portfolio_summary = QLabel("TAKİP LİSTEM ÖZETİ\n\nKayıtlı hisse: 0\nGüncel değer: —"); self.portfolio_summary.setObjectName("sidePanel")
-        self.performance = QLabel("SON PERFORMANS (30 İŞLEM)\n\nHenüz sonuçlanmış işlem yok"); self.performance.setObjectName("sidePanel")
-        rail.addWidget(self.portfolio_summary); rail.addWidget(self.performance); rail.addStretch(); content.addLayout(rail, 1)
-        layout.addLayout(content, 1)
-        footer = QLabel("Veriler yaklaşık 15 dakika gecikmeli olabilir. Bu uygulama yatırım tavsiyesi değildir."); footer.setObjectName("footerText"); layout.addWidget(footer)
+        section = QHBoxLayout()
+        copy = QVBoxLayout()
+        title = QLabel("Bugünün işlem adayları")
+        title.setObjectName("sectionTitle")
+        note = QLabel("Karar için gerekli alanlar görünür; diğer bilgiler seçilen satır ayrıntısında kalır.")
+        note.setObjectName("subText")
+        copy.addWidget(title)
+        copy.addWidget(note)
+        section.addLayout(copy)
+        section.addStretch()
+        layout.addLayout(section)
+
+        self.candidate_table = ResponsiveResultTable()
+        columns = ["Hisse / Karar", "Alış", "Hedef", "Stop", "Yükseliş", "Olasılık / Süre"]
+        self.candidate_table.setColumnCount(len(columns))
+        self.candidate_table.setHorizontalHeaderLabels(columns)
+        self.candidate_table.set_column_names(columns)
+        self.candidate_table.currentCellChanged.connect(self._candidate_selected)
+        layout.addWidget(self.candidate_table, 1)
+        self.candidate_detail = SelectedRowDetailPanel()
+        layout.addWidget(self.candidate_detail)
+        self._candidate_rows = []
+        self.preview_tables = {"trade": self.candidate_table, "short": self.candidate_table, "medium": self.candidate_table}
+
+        lower = QHBoxLayout()
+        self.portfolio_summary = QLabel("Takip listesi: 0 hisse")
+        self.portfolio_summary.setObjectName("sidePanel")
+        self.portfolio_summary.setWordWrap(True)
+        self.performance = QLabel("Son performans: Henüz sonuçlanmış işlem yok")
+        self.performance.setObjectName("sidePanel")
+        self.performance.setWordWrap(True)
+        lower.addWidget(self.portfolio_summary, 1)
+        lower.addWidget(self.performance, 1)
+        layout.addLayout(lower)
+        footer = QLabel("Veriler gecikmeli olabilir. Bu uygulama yatırım tavsiyesi değildir.")
+        footer.setObjectName("footerText")
+        layout.addWidget(footer)
 
     def _load_preview(self, key, frame):
-        table = self.preview_tables[key]; table.setRowCount(0)
-        if frame is None: return
+        if key != "trade":
+            return
+        table = self.candidate_table
+        table.setRowCount(0)
+        self._candidate_rows = []
+        if frame is None or frame.empty:
+            self.candidate_detail.set_data({})
+            return
         for _, row in frame.head(5).iterrows():
-            r = table.rowCount(); table.insertRow(r)
-            values = [row.get("Hisse", "-"), row.get("Alım Bölgesi", "-"), row.get("Hedef", "-"), row.get("Stop", "-"), f"+%{float(row.get('Potansiyel %', 0)):.1f}", row.get("Güven Skoru", "-")]
-            for c, value in enumerate(values): table.setItem(r, c, QTableWidgetItem(str(value)))
+            data = row.to_dict()
+            self._candidate_rows.append(data)
+            decision = data.get("Karar", data.get("Yatırım Kararı", data.get("Sonuç", "Bekle")))
+            symbol = data.get("Hisse", "-")
+            probability = data.get("Hedef Olasılığı %", data.get("Model Olasılığı %", "—"))
+            duration = data.get("Tahmini Süre", data.get("Süre", "Süre bilinmiyor"))
+            potential = data.get("Potansiyel %", data.get("Hedef Potansiyeli %", 0))
+            values = [
+                f"{symbol} · {decision}", data.get("Alım Bölgesi", data.get("Alış", "-")),
+                data.get("Hedef", "-"), data.get("Stop", "-"),
+                f"%{guvenli_sayi(potential):.1f}", f"%{guvenli_sayi(probability):.0f}\n{duration}",
+            ]
+            row_index = table.rowCount()
+            table.insertRow(row_index)
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setData(Qt.UserRole, row_index)
+                table.setItem(row_index, column, item)
+        table.selectRow(0)
+
+    def _candidate_selected(self, row, _column, _previous_row, _previous_column):
+        if 0 <= row < len(self._candidate_rows):
+            self.candidate_detail.set_data(self._candidate_rows[row])
 
     def update_state(self, trade, short, medium, market: str, growth_count=0):
-        self.market.setText(f"PİYASA DURUMU\n{market}")
-        for key, caption, frame in (("trade", "Günlük Trade", trade), ("short", "Kısa Vade", short), ("medium", "Orta Vade", medium)):
-            self.counts[key].setText(f"{caption}\n{len(frame)}\nuygun aday"); self._load_preview(key, frame)
-        self.counts["growth"].setText(f"Büyüme Adayları\n{growth_count}\nuygun aday")
+        self.market_card.set_value(market, "Yeni işlem için piyasa koşulunu ayrıca doğrulayın")
+        total = len(trade) + len(short) + len(medium)
+        self.candidate_card.set_value(total, f"Günlük {len(trade)} · Kısa {len(short)} · Orta {len(medium)}")
+        self.warning_card.set_value("1" if market == "RİSKLİ" else "0", "Riskli piyasa rejimi" if market == "RİSKLİ" else "Kritik piyasa uyarısı yok")
+        self.counts["short"].setText(str(len(short)))
+        self.counts["medium"].setText(str(len(medium)))
+        self.counts["growth"].setText(str(growth_count))
+        self._load_preview("trade", trade)
 
 
 class DecisionPage(SimpleTable):
     scan_requested = Signal()
     cancel_requested = Signal()
 
-    def __init__(self, title, subtitle=""):
-        super().__init__(title, subtitle)
+    def __init__(self, title, subtitle="", page_id=None):
+        super().__init__(title, subtitle, page_id=page_id)
         self.row_selected.connect(self.show_reason)
         if title == "GÜNLÜK TRADE":
             scan = QPushButton("BUGÜNÜN TRADE TARAMASINI BAŞLAT")
@@ -1793,17 +2042,25 @@ class DecisionPage(SimpleTable):
 class FullMarketPage(SimpleTable):
     scan_requested = Signal()
 
-    def __init__(self, title, subtitle):
-        super().__init__(title, subtitle)
+    def __init__(self, title, subtitle, page_id=None, strategy_id=None):
+        super().__init__(title, subtitle, page_id=page_id, strategy_id=strategy_id)
         button = QPushButton("TÜM BIST TARAMASINI BAŞLAT")
+        self.scan_button = button
         button.setObjectName("primary")
         button.clicked.connect(self.scan_requested.emit)
         self.layout().insertWidget(3, button)
 
 
 class Under50Worker(QObject):
-    finished = Signal(bool, object, str)
-    progress = Signal(str)
+    finished = Signal(str, str, str, str, bool, object, str)
+    progress = Signal(str, str, str, str, str)
+
+    def __init__(self, request_id, page_id, strategy_id="under_50_tl", universe_id=ALL_BIST):
+        super().__init__()
+        self.request_id = request_id
+        self.page_id = page_id
+        self.strategy_id = strategy_id
+        self.universe_id = universe_id
 
     def run(self):
         try:
@@ -1813,7 +2070,7 @@ class Under50Worker(QObject):
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
-                self.progress.emit(f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
+                self.progress.emit(self.request_id, self.page_id, self.strategy_id, self.universe_id, f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
                 attempted += 1; got_data = False
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "1y")
@@ -1832,33 +2089,64 @@ class Under50Worker(QObject):
             warning = son_evren_durumu().get("warning", "")
             message = f"Aktif BIST: {len(symbols)} | Denenen: {attempted} | Veri alınan: {received} | Yeni halka arz: {ipo_count} | Veri alınamayan: {unavailable} | Gösterilen: {len(frame)}"
             if warning: message += " | UYARI: " + warning
-            self.finished.emit(True, frame, message)
+            self.finished.emit(self.request_id, self.page_id, self.strategy_id, self.universe_id, True, frame, message)
         except Exception:
-            self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
+            details = traceback.format_exc()
+            hata_gunlugune_yaz("50 TL Altı worker hatası", details)
+            self.finished.emit(self.request_id, self.page_id, self.strategy_id, self.universe_id, False, pd.DataFrame(), details)
 
 
 class Under50Page(FullMarketPage):
+    scan_completed = Signal(object)
     def __init__(self):
-        super().__init__("50 TL ALTI HİSSE FIRSATLARI", "613 aktif BIST hissesi doğrudan taranır; iPhone ile aynı formülle en iyi 20 sonuç gösterilir.")
+        super().__init__("50 TL ALTI HİSSE FIRSATLARI", "Tarama Evreni: Tüm Aktif BIST · Fiyat Filtresi: 50 TL Altı", page_id="under_50", strategy_id="under_50_tl")
         self.thread = None; self.worker = None
-        button = self.layout().itemAt(3).widget()
+        button = self.scan_button
         button.clicked.disconnect()
         button.setText("613 BIST HİSSESİNİ TARA")
         button.clicked.connect(self.start_scan)
+        warning = QLabel("Ucuz fiyat, düşük risk anlamına gelmez. Likidite ve veri kalitesi koşullarını geçmeyen hisseler uygun sayılmaz.")
+        warning.setObjectName("riskBanner")
+        warning.setWordWrap(True)
+        self.layout().insertWidget(1, warning)
 
-    def start_scan(self):
+    def start_scan(self, request_id=None, strategy_id="under_50_tl", universe_id=ALL_BIST):
         if self.thread and self.thread.isRunning(): return
+        request_id = self.begin_request(request_id)
+        self._scan_identity = {"request_id": request_id, "strategy_id": strategy_id, "universe_id": universe_id}
         self.info.setText("Tüm BIST 50 TL altı taraması başlatılıyor…")
-        self.thread = QThread(self); self.worker = Under50Worker(); self.worker.moveToThread(self.thread)
-        self.thread.started.connect(self.worker.run); self.worker.progress.connect(self.info.setText)
+        self.thread = QThread(self); self.worker = Under50Worker(request_id, self.page_id, strategy_id, universe_id); self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run); self.worker.progress.connect(self._progress)
         self.worker.finished.connect(self.done); self.worker.finished.connect(self.worker.deleteLater)
         self.worker.finished.connect(self.thread.quit)
         self.thread.finished.connect(self._clear); self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
 
-    def done(self, ok, frame, message):
-        if ok: self.load(frame); self.info.setText(message)
-        else: self.info.setText("Tarama hatası: " + message.splitlines()[-1])
+    def _progress(self, request_id, page_id, strategy_id, universe_id, message):
+        identity = {"request_id": request_id, "strategy_id": strategy_id, "universe_id": universe_id}
+        if self.accepts_result(request_id, page_id) and getattr(self, "_scan_identity", {}) == identity:
+            self.info.setText(message)
+
+    def done(self, request_id, page_id, strategy_id, universe_id, ok, frame, message):
+        identity = {"request_id": request_id, "strategy_id": strategy_id, "universe_id": universe_id}
+        if getattr(self, "_scan_identity", {}) != identity:
+            return
+        if ok and isinstance(frame, pd.DataFrame) and not frame.empty:
+            prices = pd.to_numeric(frame.get("Mevcut Fiyat", pd.Series(dtype=float)), errors="coerce")
+            if prices.isna().any() or not prices.between(1, 50, inclusive="both").all():
+                ok = False
+                message = "50 TL Altı sonucunda geçersiz fiyat alanı bulundu."
+                hata_gunlugune_yaz("50 TL Altı sonuç doğrulama", message)
+        error_message = message if ok else "Tarama hatası: " + message.splitlines()[-1]
+        accepted = self.apply_scan_result(request_id, page_id, ok, frame, error_message)
+        if accepted:
+            self.scan_completed.emit({
+                **identity, "ok": bool(ok),
+                "scanned": int(frame.attrs.get("scanned_count", 0)) if isinstance(frame, pd.DataFrame) else 0,
+                "candidates": len(frame) if isinstance(frame, pd.DataFrame) else 0,
+                "errors": int(frame.attrs.get("error_count", 0 if ok else 1)) if isinstance(frame, pd.DataFrame) else 1,
+                "message": error_message,
+            })
 
     def _clear(self):
         self.worker = None; self.thread = None
@@ -2049,6 +2337,96 @@ class ScanProgressPanel(QFrame):
         for widget in (self.phase, self.counts, self.bar, self.status, self.started, self.elapsed):
             root.addWidget(widget)
         root.setStretchFactor(self.bar, 1)
+class PredictionPerformancePage(SimpleTable):
+    """Append-only tahmin defterinin sade performans görünümü."""
+    def __init__(self):
+        super().__init__(
+            "TAHMİN PERFORMANSI",
+            "Açık ve tamamlanan tahminler · hedef/stop sırası · maliyet sonrası gerçekleşen sonuç",
+            page_id="prediction_performance", strategy_id="prediction_performance",
+        )
+        self.summary = QLabel("Henüz ölçülmüş tahmin yok.")
+        self.summary.setObjectName("riskBanner")
+        self.summary.setWordWrap(True)
+        self.refresh_button = QPushButton("Performansı Yenile")
+        self.refresh_button.setObjectName("primary")
+        self.refresh_button.clicked.connect(self.refresh)
+        self.page_header.set_action(self.refresh_button)
+        self.layout().insertWidget(1, self.summary)
+        limits = risk_ayarlari_oku()
+        risk_controls = QGridLayout()
+        self.risk_inputs = {}
+        fields = [
+            ("İşlem riski %", "trade_risk_pct"), ("Portföy riski %", "portfolio_risk_pct"),
+            ("Sektör riski %", "sector_risk_pct"), ("Günlük kayıp %", "daily_loss_pct"),
+            ("Haftalık kayıp %", "weekly_loss_pct"), ("Maks. düşüş %", "max_drawdown_pct"),
+        ]
+        for index, (label, key) in enumerate(fields):
+            spin = QDoubleSpinBox(); spin.setRange(.1, 20); spin.setDecimals(2); spin.setValue(getattr(limits, key))
+            self.risk_inputs[key] = spin
+            risk_controls.addWidget(QLabel(label), index//3*2, index%3)
+            risk_controls.addWidget(spin, index//3*2+1, index%3)
+        save = QPushButton("Risk Limitlerini Kaydet"); save.clicked.connect(self.save_risk_limits)
+        risk_controls.addWidget(save, 4, 0, 1, 3)
+        self.layout().insertLayout(2, risk_controls)
+        self.refresh()
+
+    def save_risk_limits(self):
+        try:
+            limits = RiskLimits(**{key: widget.value() for key, widget in self.risk_inputs.items()})
+            risk_ayarlari_kaydet(limits)
+            self.summary.setText("Risk limitleri kaydedildi. Yeni taramalarda uygulanacak.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Risk limitleri", str(exc))
+
+    def refresh(self):
+        summary, detail = performans_ozeti()
+        ceiling_summary, ceiling_detail = tavan_performans_ozeti()
+        chain_ok, chain_message = zinciri_dogrula()
+        row = summary.iloc[0].to_dict() if not summary.empty else {}
+        brier = row.get("Brier")
+        brier_text = "Yetersiz örnek" if pd.isna(brier) or brier is None else f"{float(brier):.4f}"
+        self.summary.setText(
+            f"Açık {int(row.get('Açık', 0))} · Tamamlanan {int(row.get('Tamamlanan', 0))} · "
+            f"Başarılı {int(row.get('Başarılı', 0))} · Başarısız {int(row.get('Başarısız', 0))} · "
+            f"Süresi dolan {int(row.get('Süresi Dolan', 0))} · Hedef önce %{float(row.get('Hedef Önce %', 0)):.1f} · "
+            f"Stop önce %{float(row.get('Stop Önce %', 0)):.1f} · Net %{float(row.get('Ortalama Net %', 0)):.2f} · "
+            f"Brier {brier_text} · Kayıt zinciri: {'GEÇERLİ' if chain_ok else 'HATALI'}"
+        )
+        if not ceiling_summary.empty:
+            ceiling = ceiling_summary.iloc[0].to_dict()
+            precision = ceiling.get("Precision")
+            precision_text = "Yetersiz örnek" if pd.isna(precision) or precision is None else f"%{float(precision)*100:.1f}"
+            self.summary.setText(
+                self.summary.text()+
+                f"\nErtesi Gün Tavan: toplam {int(ceiling.get('Toplam Tahmin', 0))} · "
+                f"tamamlanan {int(ceiling.get('Tamamlanan', 0))} · tavan {int(ceiling.get('Tavan', 0))} · "
+                f"%8+ {int(ceiling.get('%8+', 0))} · yanlış pozitif {int(ceiling.get('Yanlış Pozitif', 0))} · "
+                f"precision {precision_text}"
+            )
+        if not ceiling_detail.empty:
+            ceiling_view = pd.DataFrame({
+                "Hisse": ceiling_detail.get("symbol"), "Strateji": "Ertesi Gün Tavan",
+                "Durum": ceiling_detail.get("status"), "Net Sonuç %": ceiling_detail.get("close_return_pct"),
+                "En Yüksek Yükseliş %": ceiling_detail.get("max_rise_pct"),
+                "En Yüksek Düşüş %": ceiling_detail.get("max_decline_pct"),
+                "Tavan Saati": ceiling_detail.get("ceiling_hit_time"),
+                "Piyasa Rejimi": ceiling_detail.get("market_regime"),
+                "Sektör": ceiling_detail.get("sector_strength"),
+            })
+        else:
+            ceiling_view = pd.DataFrame()
+        if detail.empty:
+            self.load(ceiling_view if not ceiling_view.empty else pd.DataFrame(columns=["Hisse", "Strateji", "Durum", "Net Sonuç %", "Hedef Önce", "Süre Doğru"])); return
+        view = pd.DataFrame({
+            "Hisse": detail.get("symbol"), "Strateji": detail.get("strategy_id"),
+            "Durum": detail.get("status"), "Net Sonuç %": detail.get("net_return_pct"),
+            "En Yüksek Yükseliş %": detail.get("max_up_pct"), "En Yüksek Düşüş %": detail.get("max_down_pct"),
+            "Hedefe/Stopa Gün": detail.get("hit_day"), "Süre Doğru": detail.get("duration_accurate"),
+            "Piyasa Rejimi": detail.get("market_regime"), "Sektör": detail.get("sector"),
+        })
+        combined = pd.concat([view, ceiling_view], ignore_index=True, sort=False)
+        self.load(combined.tail(200), detail_df=combined.tail(200))
 
 
 class MainWindow(QMainWindow):
@@ -2056,11 +2434,17 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME + " v" + APP_VERSION)
         self.resize(1366, 768)
+        self.setMinimumSize(960, 700)
         icon = uygulama_klasoru() / "logo.ico"
         if icon.exists():
             self.setWindowIcon(QIcon(str(icon)))
 
         self.scan_process = None
+        self._active_scan_request = None
+        self._central_scan_active = False
+        self._central_request_id = None
+        self._central_pending = set()
+        self._central_results = {}
         self._scan_stdout_buffer = ""
         self._scan_stderr_buffer = ""
         self._scan_started_at = None
@@ -2082,20 +2466,22 @@ class MainWindow(QMainWindow):
         self.track = TrackPage()
         self.funds = FundAnalysisPage()
         self.daily_trade = DailyTradePage()
-        self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Model, geçmiş performansa göre en anlamlı süreyi seçer; en fazla 5 aday gösterilir.")
-        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Model hedefi ve süre tahmindir; kesin fiyat garantisi değildir.")
+        self.short_term = DecisionPage("KISA VADE FIRSATLARI", "Tarama Evreni: Tüm Aktif BIST · Model en fazla 5 aday gösterir.", page_id="short_term")
+        self.medium_term = DecisionPage("ORTA VADE FIRSATLARI", "Tarama Evreni: Tüm Aktif BIST · Model hedefi ve süre tahmindir.", page_id="medium_term")
         self.under_50 = Under50Page()
         self.next_day = NextDayPage()
         self.tomorrow_trade = TomorrowTradeDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.history = T1T2PerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
         self.trade_performance = TradePerformanceDashboard(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+        self.prediction_performance = PredictionPerformancePage()
+        self.ceiling_potential = SimpleTable("Ertesi Gün Tavan Adayları", page_id="ceiling_potential")
         self.settings_page = PlaceholderPage("Ayarlar", "Uygulama ayarları mevcut yapılandırma dosyasından okunur. Yeni ayar alanları veri kaynağı doğrulandıkça eklenecektir.")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
 
         for p in [self.home, self.next_day, self.tomorrow_trade, self.daily_trade, self.short_term, self.medium_term,
                   self.under_50, self.funds, self.track, self.history, self.trade_performance, self.settings_page,
-                  self.sale, self.single, self.terminal, self.log]:
+                  self.sale, self.single, self.terminal, self.prediction_performance, self.ceiling_potential, self.log]:
             self.pages.addWidget(p)
 
         central = QWidget()
@@ -2156,7 +2542,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.pages.setCurrentWidget(page)
             self.sidebar.set_active(key)
-            if key in {"performance", "trade_performance"} and hasattr(page, "refresh"):
+            if key in {"performance", "trade_performance", "ledger"} and hasattr(page, "refresh"):
                 page.refresh()
 
     def _sync_active_page(self, _index):
@@ -2200,13 +2586,16 @@ class MainWindow(QMainWindow):
             self._market_thread.deleteLater()
         self._market_worker = None; self._market_thread = None
 
-    def load_report(self):
+    def load_report(self, page_id=None):
         path = rapor_yolu()
         if not path.exists():
-            return
+            message = "Analiz raporu oluşturulamadı veya bulunamadı."
+            return False
         try:
             from analiz_deposu import anlik_goruntu_oku
-            sheets = anlik_goruntu_oku(path)
+            sheets = anlik_goruntu_oku(path) if path.suffix.lower() in {".sqlite3", ".sqlite", ".db"} else pd.read_excel(path, sheet_name=None)
+            metadata = metadata_frame_to_dict(sheets.get("Rapor Metadata", sheets.get("Rapor Bilgisi", pd.DataFrame())))
+            all_bist_report = report_scope_is_compatible(metadata, "daily_trade")
             all_results = sheets.get("Tum Sonuclar", pd.DataFrame()).copy()
             if "Fiyat" in all_results.columns:
                 valid_price = pd.to_numeric(all_results["Fiyat"], errors="coerce")
@@ -2222,23 +2611,34 @@ class MainWindow(QMainWindow):
                 "Karar Nedenleri",
             ]
             compact = all_results[[c for c in visible_columns if c in all_results.columns]].copy()
-            self.tum.load(compact)
+            if all_bist_report:
+                self.tum.load(compact)
 
             trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
             if trade_frame.empty:
                 trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
-            self.daily_trade.report_fallback = trade_frame.copy()
-            self.daily_trade.table.load(trade_frame)
+            if all_bist_report:
+                self.daily_trade.report_fallback = trade_frame.copy()
+                self.daily_trade.load_display(trade_frame)
+                self.daily_trade.table.result_cache[report_cache_key("daily_trade", ALL_BIST)] = trade_frame.copy()
+                scanned = metadata.get("Taranan Hisse Sayısı", len(all_results))
+                self.daily_trade.status.setText(f"Tarama Evreni: Tüm Aktif BIST · {scanned} hisse tarandı · {len(trade_frame)} uygun sonuç bulundu.")
+            else:
+                self.daily_trade.report_fallback = pd.DataFrame()
+                self.daily_trade.load_display(pd.DataFrame())
+                self.daily_trade.status.setText("Kayıtlı raporun evren bilgisi eksik veya BIST 30. Tüm Aktif BIST için yeniden tarama gerekli.")
 
             backtest_frame = sheets.get("Backtest Ozet", pd.DataFrame())
             short_days, short_evidence = en_iyi_vade(backtest_frame, "kisa")
             medium_days, medium_evidence = en_iyi_vade(backtest_frame, "orta")
             short_source = sheets.get("Kisa Vade", pd.DataFrame())
-            medium_source = sheets.get("Orta Vade", pd.DataFrame()).copy()
+            medium_source = filter_frame_for_strategy(sheets.get("Orta Vade", pd.DataFrame()).copy(), "medium_term")
             if short_source.empty:
-                short_source = all_results.copy()
+                short_source = filter_frame_for_strategy(all_results, "short_term")
+            else:
+                short_source = filter_frame_for_strategy(short_source, "short_term")
             if medium_source.empty:
-                medium_source = all_results.copy()
+                medium_source = filter_frame_for_strategy(all_results, "medium_term")
             if "Hisse" in all_results:
                 base = all_results.set_index(all_results["Hisse"].astype(str).str.replace(".IS", "", regex=False).str.upper())
                 for source in (short_source, medium_source):
@@ -2250,7 +2650,9 @@ class MainWindow(QMainWindow):
                             source[column] = keys.map(base[column])
             short_frame = sade_firsatlar(short_source, "kisa", limit=5, sure=sure_metni(short_days))
             if short_frame.empty:
-                short_frame = vade_rapor_adaylari(all_results, sure_metni(short_days), limit=5)
+                short_frame = vade_rapor_adaylari(
+                    filter_frame_for_strategy(all_results, "short_term"), sure_metni(short_days), limit=5,
+                )
             medium_source = orta_vadeden_kisa_adaylari_cikar(short_frame, medium_source)
             medium_frame = sade_firsatlar(medium_source, "orta", limit=5, sure=sure_metni(medium_days))
             if medium_frame.empty:
@@ -2259,10 +2661,13 @@ class MainWindow(QMainWindow):
                     haric=short_frame.get("Hisse", pd.Series(dtype=str)).tolist(),
                 )
             self.short_term.load(short_frame)
+            self.short_term.result_cache[report_cache_key("short_term", SCAN_UNIVERSE["short_term"])] = short_frame.copy()
             self.short_term.info.setText(f"{len(short_frame)} aday · Süre dayanağı: {short_evidence}")
             self.medium_term.load(medium_frame)
-            self.medium_term.info.setText(f"{len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
+            self.medium_term.result_cache[report_cache_key("medium_term", SCAN_UNIVERSE["medium_term"])] = medium_frame.copy()
+            self.medium_term.info.setText(f"Tarama Evreni: BIST 30 · {len(medium_frame)} aday · Süre dayanağı: {medium_evidence}")
             under_frame = elli_tl_adaylari(likit_120_sec(all_results), limit=20)
+            self.ceiling_potential.load(sheets.get("Ertesi Gun Tavan Adaylari", pd.DataFrame()))
             self.under_50.load(under_frame)
             # Performans raporu ayrı bir ekranın sorumluluğudur; kategorik/DB
             # hatası ana sayfa kartlarının render zincirini kesmemelidir.
@@ -2344,8 +2749,13 @@ class MainWindow(QMainWindow):
                 conviction=len(high_conviction),
             )
             self.report_path_label.setText("Tahminler sürümlü SQLite geçmişinde saklanır.")
+            return True
         except Exception as exc:
-            QMessageBox.warning(self, "Rapor", str(exc))
+            details = traceback.format_exc()
+            hata_gunlugune_yaz(f"Rapor yükleme ({page_id or 'all'})", details)
+            self.log.append("Rapor yüklenemedi: " + str(exc))
+            self.report_path_label.setText("Rapor yüklenemedi: " + str(exc))
+            return False
 
     def open_report(self):
         path = rapor_yolu()
@@ -2358,6 +2768,74 @@ class MainWindow(QMainWindow):
         folder = veri_klasoru() / "output"
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def start_all_stock_analyses(self):
+        if self._central_scan_active or (self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning):
+            self.home.scan_progress.setText("Bir genel hisse taraması zaten çalışıyor.")
+            return
+        if (self.daily_trade.thread and self.daily_trade.thread.isRunning()) or (self.under_50.thread and self.under_50.thread.isRunning()):
+            self.home.scan_progress.setText("Bağımsız bir sayfa taraması sürüyor; tamamlanmasını bekleyin.")
+            return
+        self._central_scan_active = True
+        self._central_request_id = uuid.uuid4().hex
+        self._central_pending = set(SCAN_UNIVERSE)
+        self._central_results = {}
+        self._central_requests = {
+            strategy: {"request_id": uuid.uuid4().hex, "strategy_id": strategy, "universe_id": universe}
+            for strategy, universe in SCAN_UNIVERSE.items()
+        }
+        self.home.trade_button.setEnabled(False)
+        self.home.scan_progress.setText("Hazırlanıyor · BIST 30 ve Tüm Aktif BIST listeleri alınıyor…")
+        self._scan_target = self.home
+        self._scan_universe = ALL_BIST
+        self.scan()
+
+    def _central_after_general(self, ok):
+        if not self._central_scan_active:
+            return
+        for strategy, page in (
+            ("short_term", self.short_term), ("medium_term", self.medium_term),
+            ("ceiling_potential", self.ceiling_potential),
+        ):
+            self._central_pending.discard(strategy)
+            self._central_results[strategy] = {
+                **self._central_requests[strategy], "ok": bool(ok),
+                "scanned": len(page._data) if ok else 0, "candidates": len(page._data) if ok else 0,
+                "errors": 0 if ok else 1,
+            }
+        self.home.scan_progress.setText(
+            "Kısa Vade tamamlandı · Orta Vade tamamlandı · Ertesi Gün Tavan Adayları tamamlandı · "
+            "Günlük Trade taranıyor · 50 TL Altı taranıyor…"
+        )
+        daily = self._central_requests["daily_trade"]
+        under = self._central_requests["under_50_tl"]
+        self.daily_trade.start_scan(**daily)
+        self.under_50.start_scan(**under)
+        self._finish_central_if_ready()
+
+    def _central_worker_completed(self, result):
+        if not self._central_scan_active or not isinstance(result, dict):
+            return
+        strategy = result.get("strategy_id")
+        expected = self._central_requests.get(strategy, {})
+        if not strategy or result.get("request_id") != expected.get("request_id") or result.get("universe_id") != expected.get("universe_id"):
+            return
+        self._central_results[strategy] = dict(result)
+        self._central_pending.discard(strategy)
+        self._finish_central_if_ready()
+
+    def _finish_central_if_ready(self):
+        if not self._central_scan_active or self._central_pending:
+            return
+        failures = [key for key, value in self._central_results.items() if not value.get("ok")]
+        summary = " · ".join(
+            f"{key}: {value.get('candidates', 0)} aday" for key, value in self._central_results.items()
+        )
+        state = "Hata oluştu; diğer analizler tamamlandı" if failures else "Tamamlandı"
+        self.home.scan_progress.setText(f"{state} · {summary}")
+        self.home.trade_button.setEnabled(True)
+        self._central_scan_active = False
+        self._central_request_id = None
 
     def scan(self):
         if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
@@ -2375,6 +2853,11 @@ class MainWindow(QMainWindow):
         self.scan_progress.elapsed.setText("Geçen süre: 0 sn")
         self._scan_elapsed_timer.start(1000)
         target = getattr(self, "_scan_target", self.home)
+        page_id = getattr(target, "page_id", "main_scan")
+        request_id = uuid.uuid4().hex
+        self._active_scan_request = {"request_id": request_id, "page_id": page_id, "target": target}
+        if isinstance(target, SimpleTable):
+            target.begin_request(request_id)
         if target is self.daily_trade:
             self.pages.setCurrentWidget(self.daily_trade)
             self.daily_trade.info.setText("Aktif BIST evreni hazırlanıyor…")
@@ -2396,7 +2879,11 @@ class MainWindow(QMainWindow):
         self.scan_process.readyReadStandardOutput.connect(self._read_scan_stdout)
         self.scan_process.readyReadStandardError.connect(self._read_scan_stderr)
         self.scan_process.errorOccurred.connect(self._scan_process_error)
-        self.scan_process.finished.connect(self._scan_process_finished)
+        self.scan_process.finished.connect(
+            lambda exit_code, exit_status, rid=request_id, pid=page_id: self._scan_process_finished(
+                exit_code, exit_status, rid, pid
+            )
+        )
         self.scan_process.start()
         # Tam tarama isteği özel evrenli sayfaları da birbirinden bağımsız worker'larla başlatır.
         if getattr(self, "_scan_target", self.home) is self.home:
@@ -2406,15 +2893,21 @@ class MainWindow(QMainWindow):
 
     def scan_daily_trade(self):
         self._scan_target = self.daily_trade
+        self._scan_universe = ALL_BIST
         self.scan()
 
     def scan_all_market(self, target):
         self._scan_target = target
-        self._scan_universe = "ALL"
+        self._scan_universe = ALL_BIST
         self.scan()
 
     def cancel_scan(self):
         if self.scan_process is not None and self.scan_process.state() != QProcess.NotRunning:
+            request = self._active_scan_request
+            if request and isinstance(request.get("target"), SimpleTable):
+                request["target"].cancel_request()
+                request["target"].info.setText("Tarama iptal edildi.")
+            self._active_scan_request = None
             self.scan_process.terminate()
             self.log.append("Tarama kullanıcı tarafından durduruldu.")
 
@@ -2444,9 +2937,10 @@ class MainWindow(QMainWindow):
 
     def _scan_process_error(self, error):
         if self.scan_process is not None:
-            self.log.append(f"Tarama işlemi başlatma/çalışma hatası: {self.scan_process.errorString()} ({error})")
+            detail = f"Tarama işlemi başlatma/çalışma hatası: {self.scan_process.errorString()} ({error})"
+            self.log.append(detail)
 
-    def _scan_process_finished(self, exit_code, exit_status):
+    def _scan_process_finished(self, exit_code, exit_status, request_id=None, page_id=None):
         self._read_scan_stdout()
         self._read_scan_stderr()
         for attr in ("_scan_stdout_buffer", "_scan_stderr_buffer"):
@@ -2455,18 +2949,32 @@ class MainWindow(QMainWindow):
                 self.log.append(tail)
             setattr(self, attr, "")
         ok = exit_status == QProcess.NormalExit and exit_code == 0
+        active = self._active_scan_request
+        if not active or active.get("request_id") != request_id or active.get("page_id") != page_id:
+            self.log.append("Geç veya iptal edilmiş tarama sonucu yok sayıldı.")
+            if self.scan_process is not None:
+                self.scan_process.deleteLater()
+                self.scan_process = None
+            self.scan_button.setEnabled(True)
+            return
         if not ok and rapor_yolu().exists():
             self.log.append(
                 "Tarama alt süreci normal kapanmadı; ana program korundu ve oluşan son rapor yükleniyor."
             )
-        self.scan_done(ok, f"Alt süreç çıkış kodu: {exit_code}")
+        self.scan_done(ok, f"Alt süreç çıkış kodu: {exit_code}", request_id, page_id)
         if self.scan_process is not None:
             self.scan_process.deleteLater()
             self.scan_process = None
 
-    def scan_done(self, ok, message):
+    def scan_done(self, ok, message, request_id=None, page_id=None):
         self.scan_button.setEnabled(True)
         self._scan_elapsed_timer.stop()
+        active = self._active_scan_request
+        if request_id is not None and (
+            not active or active.get("request_id") != request_id or active.get("page_id") != page_id
+        ):
+            return
+        target = active.get("target", self.home) if active else getattr(self, "_scan_target", self.home)
         if ok:
             if self._scan_total:
                 self._scan_completed = self._scan_total
@@ -2484,8 +2992,9 @@ class MainWindow(QMainWindow):
             self.scan_progress.phase.setText("Tarama tamamlanamadı")
             self.scan_progress.status.setText(message)
             self.log.append(message)
-            if rapor_yolu().exists():
-                self.load_report()
+        if self._central_scan_active:
+            self._central_after_general(ok and bool(locals().get("loaded", False)))
+        self._active_scan_request = None
 
     def _update_scan_elapsed(self):
         if self._scan_started_at is None:

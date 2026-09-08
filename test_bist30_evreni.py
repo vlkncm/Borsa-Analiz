@@ -18,7 +18,7 @@ class Bist30EvreniTests(unittest.TestCase):
         with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "ALL"}), patch("main.karantinadaki_semboller", return_value=set()), patch("main.tum_bist_hisseleri", return_value=["ASELS.IS", "MEGMT.IS"]):
             self.assertEqual(main.hisseleri_txt_oku(), ["ASELS.IS", "MEGMT.IS"])
 
-    def test_genel_tarama_bist30_kullanir(self):
+    def test_acik_bist30_kapsami_bist30_kullanir(self):
         with patch.dict("os.environ", {"BORSA_TARAMA_EVRENI": "BIST30"}), patch("main.karantinadaki_semboller", return_value=set()):
             self.assertEqual(main.hisseleri_txt_oku(), list(BIST30_SEMBOLLERI))
 
@@ -27,8 +27,14 @@ class Bist30EvreniTests(unittest.TestCase):
         self.assertEqual(normalize_symbol("ASELS"), "ASELS.IS")
         self.assertEqual(normalize_bist_sembolu("../bad"), "")
 
-    def test_tarama_listesi_ve_benchmark_bist30dur(self):
-        self.assertEqual(tuple(borsa_tarayici.WATCHLIST), BIST30_SEMBOLLERI)
+    def test_ortak_hisse_tara_varsayilan_olarak_bist30_disini_elemez(self):
+        with patch("main.teknik_analiz", return_value={"symbol": "MEGMT.IS"}) as analiz:
+            self.assertEqual(main.hisse_tara("MEGMT.IS")["symbol"], "MEGMT.IS")
+        analiz.assert_called_once_with("MEGMT.IS", "TÜM BIST")
+
+    def test_teknik_tarama_tum_bist_benchmark_bist30dur(self):
+        self.assertGreater(len(borsa_tarayici.WATCHLIST), len(BIST30_SEMBOLLERI))
+        self.assertTrue(BIST30_KUMESI.issubset(set(borsa_tarayici.WATCHLIST)))
         self.assertEqual(borsa_tarayici.SURPRISE_LIST, [])
         with patch("borsa_tarayici.guvenli_yf_download", return_value=None) as download:
             borsa_tarayici._BENCHMARK_CACHE = None

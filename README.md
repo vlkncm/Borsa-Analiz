@@ -47,7 +47,7 @@ Zorunlu karar kapıları veri kalitesi, en az 30 zaman sıralı OOS örnek, uygu
 
 - Genel, kısa ve orta vade taraması BIST 30 evrenine döndürüldü.
 - Günlük Trade bağımsız olarak tüm aktif BIST evrenini tarar.
-- 50 TL Altı ve 10X ekranlarına tüm BIST tarama düğmesi eklendi.
+- Tüm BIST kullanan analiz ekranlarına açık tarama kapsamı bilgisi eklendi.
 - Ayarlar, Yardım, Erken Büyüme ve Uzun Büyüme ekranları kaldırıldı.
 - Paketlere çevrimdışı 613 hisselik evren dosyası eklendi.
 
@@ -71,7 +71,7 @@ Zorunlu karar kapıları veri kalitesi, en az 30 zaman sıralı OOS örnek, uygu
 - Ana sayfa yalnızca piyasa durumunu ve günlük/kısa/orta vade aday sayılarını gösterir.
 - Günlük Trade, Kısa Vade ve Orta Vade listeleri en fazla 5 aday ve sade fiyat/risk bilgileriyle sınırlandırılmıştır.
 - Teknik göstergeler analiz motorunda korunmuş, ana ekrandan ve ana Excel raporundan çıkarılmıştır.
-- Erken Büyüme, 50 TL Altı Büyüme ve belirsizliği açıkça belirtilen 10X Senaryosu eklenmiştir.
+- Erken Büyüme ve 50 TL Altı Büyüme analizleri bu sürümde eklenmiştir.
 - Ana tablolar 1366×768 ekran için yatay kaydırmasız, PWA ise mobilde tek sütun olacak şekilde düzenlenmiştir.
 
 ## v9.2.0 mum formasyonları ve en iyi 5 Günlük Trade
@@ -243,8 +243,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.8.0 kurulum dosyasını indir](downloads/v8.8.0/Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe)
-- SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
+- [Borsa Analiz Pro MAX v10.2.1 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.2.1/Setup_Borsa_Analiz_Pro_MAX_v10.2.1.exe)
+- SHA-256: `6F40DDACC742744489C10165976A1DB0820A70525D340E11B5D2C64FD2B940AD`
 
 ## v7.2 merkezi veri katmanı
 

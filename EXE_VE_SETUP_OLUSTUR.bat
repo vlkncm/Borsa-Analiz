@@ -25,7 +25,6 @@ if not exist "%PYTHON%" (
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist SetupOutput rmdir /s /q SetupOutput
-if exist BorsaAnalizProMAX.spec del /q BorsaAnalizProMAX.spec
 
 "%PYTHON%" -m PyInstaller ^
 --noconfirm ^
@@ -73,14 +72,7 @@ app_qt.py
 
 if errorlevel 1 goto :pyinstaller_hatasi
 
-"%PYTHON%" -m PyInstaller ^
---noconfirm ^
---clean ^
---onedir ^
---console ^
---name BorsaTaramaMotoru ^
---hidden-import main ^
-scan_runner.py
+"%PYTHON%" -m PyInstaller --noconfirm --clean BorsaTaramaMotoru.spec
 
 if errorlevel 1 goto :pyinstaller_hatasi
 

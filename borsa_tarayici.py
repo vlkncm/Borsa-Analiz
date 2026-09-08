@@ -8,10 +8,11 @@ import threading
 from datetime import datetime
 from profesyonel_analiz import profesyonel_analiz
 from uluslararasi_faktorler import faktorleri_hesapla
-from bist30 import BIST30_SEMBOLLERI
+from tarama_evreni import get_scan_universe
 from rsi_supertrend_stratejisi import hesapla as rsi_supertrend_hesapla
 from teknik_gostergeler import adx, atr, macd, rsi
 from sinyal_pipeline import daily_features
+from ertesi_gun_tavan import gunluk_ozellikleri_hesapla
 
 _BENCHMARK_LOCK = threading.Lock()
 _BENCHMARK_CACHE = None
@@ -29,7 +30,8 @@ def bist100_verisi():
             _BENCHMARK_CACHE = temiz_fiyat_verisi(data) if data is not None else pd.DataFrame()
     return _BENCHMARK_CACHE.copy()
 
-WATCHLIST = list(BIST30_SEMBOLLERI)
+# Teknik/formasyon taraması da merkezi kurala göre tüm aktif BIST'i kullanır.
+WATCHLIST = get_scan_universe("technical_scan")
 SURPRISE_LIST = []
 
 
@@ -206,6 +208,8 @@ def guvenli_yf_download(symbol, period="9mo", interval="1d", retries=3):
                 timeout=20
             )
             if df is not None and not df.empty:
+                if df.attrs.get("stale_fallback"):
+                    raise ValueError("Güncel veri doğrulanamadı; yedek cache işlem sinyalinde kullanılamaz")
                 return df
         except Exception as exc:
             son_hata = exc
@@ -392,6 +396,9 @@ def teknik_analiz(symbol, kategori):
         uluslararasi_faktorler = faktorleri_hesapla(df)
         rsi_supertrend = rsi_supertrend_hesapla(df, zaman_dilimi="1G")
         gunluk_trade = gunluk_trade_teyitleri(df)
+        # Ertesi gün adayı özellikleri yalnız son tamamlanmış günlük bar ve
+        # öncesinden hesaplanır. Sonraki gün bilgisi bu aşamada mevcut değildir.
+        ertesi_gun_ozellikleri = gunluk_ozellikleri_hesapla(df, as_of=df.index[-1])
 
         # ==========================
         # Mevcut karar sistemi
@@ -483,6 +490,7 @@ def teknik_analiz(symbol, kategori):
             ,**uluslararasi_faktorler
             ,**rsi_supertrend
             ,**gunluk_trade
+            ,"ertesi_gun_ozellikleri": ertesi_gun_ozellikleri
         }
 
     except Exception as e:

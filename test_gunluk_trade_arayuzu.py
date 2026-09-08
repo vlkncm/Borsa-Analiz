@@ -1,11 +1,13 @@
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 from app_qt import MainWindow
 import pandas as pd
+from tarama_evreni import ALL_BIST
 
 
 class DailyTradeUiSmokeTests(unittest.TestCase):
@@ -42,7 +44,8 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
             "Başarılılarda Medyan Süre": 2, "Piyasa Rejimi": "RANGE", "Tazelik": "GÜNCEL",
             "Veri Zamanı": "2026-08-25T17:00", "Gerekçe": "Uzun bir gerekçe metni ayrıntı panelinde kelime kaydırmalıdır.",
         }])
-        page.scan_done(True, sample, "Tamamlandı")
+        page._scan_identity = {"request_id": "test", "strategy_id": "daily_trade", "universe_id": ALL_BIST}
+        page.scan_done("test", "daily_trade", ALL_BIST, True, sample, "Tamamlandı")
         expected = ["Hisse / Karar", "Alış Bandı", "Hedef", "Stop", "Yükseliş %", "Olasılık / Süre"]
         self.assertEqual([page.table.table.horizontalHeaderItem(i).text() for i in range(6)], expected)
         for width, height in ((1920, 1080), (1366, 768), (1280, 720), (1024, 768)):
@@ -56,6 +59,13 @@ class DailyTradeUiSmokeTests(unittest.TestCase):
         self.assertIn("1 günde hedef olasılığı", page.detail.text())
         self.assertIn("Yetersiz örnek", page.detail.text())
         self.assertTrue(page.detail.wordWrap())
+    def test_daily_trade_scans_the_active_bist_universe(self):
+        window = MainWindow()
+        with patch.object(window, "scan") as scan:
+            window.scan_daily_trade()
+        self.assertIs(window._scan_target, window.daily_trade)
+        self.assertEqual(window._scan_universe, ALL_BIST)
+        scan.assert_called_once_with()
         window.close()
 
 

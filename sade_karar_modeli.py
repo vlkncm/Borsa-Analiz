@@ -60,6 +60,8 @@ def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None
     potential = ((target / price.replace(0, pd.NA)) - 1).mul(100).fillna(0)
     rr = (target - price) / (price - stop).replace(0, pd.NA)
     valid = (price > 0) & (target > price) & (stop > 0) & (stop < price) & (score >= 60) & (rr >= 1.3)
+    if "Profesyonel Karar" in work:
+        valid &= work["Profesyonel Karar"].astype(str).eq("UYGUN ADAY")
     if "Veri Durumu" in work:
         valid &= work["Veri Durumu"].astype(str).str.upper().eq("GÜVENİLİR")
     work = work.loc[valid].copy()

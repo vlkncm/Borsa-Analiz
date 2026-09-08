@@ -116,13 +116,13 @@ class TopHeader(QFrame):
 
 class Sidebar(QFrame):
     page_requested = Signal(str)
-    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("tomorrow_trade","↗","Yarın Günlük Trade"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("trade_performance","◈","Trade Performansı"),("settings","⚙","Ayarlar")]
+    ITEMS = [("next","◎","Yüksek Hareket Radarı"),("tomorrow_trade","↗","Yarın Günlük Trade"),("home","⌂","Ana Sayfa"),("daily","◉","Günlük Trade"),("short","▥","Kısa Vade · Tüm BIST"),("medium","▥","Orta Vade · Tüm BIST"),("under50","◫","50 TL Altı"),("funds","◈","Fon Analizi"),("portfolio","▣","Portföy"),("performance","⌁","Tahmin Performansı"),("trade_performance","◈","Trade Performansı"),("ceiling","↗","Ertesi Gün Tavan Adayları"),("settings","⚙","Ayarlar")]
     def __init__(self):
         super().__init__(); self.setObjectName("sidebar"); self.expanded=True; self.setFixedWidth(190)
-        self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}
+        self.box=QVBoxLayout(self); self.box.setContentsMargins(6,7,6,7); self.box.setSpacing(3); self.buttons={}; self._buttons={}
         collapse=QPushButton("☰  Menüyü Daralt"); collapse.clicked.connect(self.toggle); self.box.addWidget(collapse); self.collapse=collapse
         for key, icon, text in self.ITEMS:
-            button=QPushButton(f"{icon}  {text}"); button.setCheckable(True); button.setToolTip(text); button.clicked.connect(lambda checked=False,k=key:self.page_requested.emit(k)); self.box.addWidget(button); self.buttons[key]=button
+            button=QPushButton(f"{icon}  {text}"); button.setCheckable(True); button.setToolTip(text); button.clicked.connect(lambda checked=False,k=key:self.page_requested.emit(k)); self.box.addWidget(button); self.buttons[key]=button; self._buttons[key]=button
         self.box.addStretch(); self.set_active("home")
     def toggle(self):
         self.expanded=not self.expanded; self.setFixedWidth(190 if self.expanded else 54); self.collapse.setText("☰  Menüyü Daralt" if self.expanded else "☰")

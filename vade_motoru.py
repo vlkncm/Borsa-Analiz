@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from tarama_evreni import strategy_symbol_mask
 
 GORUNEN_KOLONLAR = [
     "Hisse",
@@ -106,7 +107,9 @@ def vade_listeleri_uret(df: pd.DataFrame):
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
         # Sıralama motoru sert kapı zinciriyle evreni tek hisseye indirmez.
         # Kalite koşulları puanı etkiler; veri yoksa yalnızca geçerli fiyat/target/stop tutulur.
-        kalite = ((fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) &
+        strategy = "short_term" if score_col == "_kisa" else "medium_term" if score_col == "_orta" else "long_term"
+        universe = strategy_symbol_mask(work.get("Hisse", pd.Series("", index=work.index)), strategy)
+        kalite = (universe & (fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) &
                   (veri_yasi <= 4) & (rr >= min_rr))
         aday = work[kalite].copy()
         # Eksik alış bandında hedef/fiyat fallback'i kullanılabilir; stale veri

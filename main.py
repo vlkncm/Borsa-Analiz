@@ -31,6 +31,17 @@ from faktor_model_portfoy import faktor_model_portfoyu
 from usta_yatirimci_modeli import usta_model_portfoyu
 from bist30 import BIST30_DONEMI, BIST30_KUMESI, bist30_hisseleri
 from bist_evreni import tum_bist_hisseleri
+from tarama_evreni import (
+    ALL_BIST, BIST30_ONLY, SCAN_UNIVERSE, get_scan_universe, normalize_scan_scope,
+    report_metadata,
+)
+from profesyonel_karar_sistemi import birinci_asama_uygula, karar_kapilarini_toplu_uygula, risk_ayarlari_oku
+from tahmin_defteri import acik_tahminleri_sonuclandir, model_sagligi, performans_ozeti, kalibrasyon_gecmisi, sinyal_kaydet, varsayilan_yol
+from saglam_backtest import veri_butunlugu_kontrolu
+from ertesi_gun_tavan import (
+    acik_tavan_tahminlerini_sonuclandir, adaylari_tabloya_cevir,
+    tavan_performans_ozeti, tavan_tahminlerini_kaydet,
+)
 
 YASAL_UYARI_KISA = "Bu yazılım ve rapor yatırım tavsiyesi değildir; genel nitelikte algoritmik karar destek çıktısıdır. Kesin getiri garantisi vermez. Tüm yatırım kararları ve risk kullanıcıya aittir."
 
@@ -89,15 +100,22 @@ def dogrulanmis_hisse_dosyasi():
     return path
 
 
-def hisseleri_txt_oku(dosya_adi=None):
-    """Genel taramada BIST 30; özel büyüme görevinde aktif BIST evreni."""
-    tum_evren = os.getenv("BORSA_TARAMA_EVRENI", "BIST30").strip().upper() == "ALL"
-    symbols = tum_bist_hisseleri() if tum_evren else bist30_hisseleri()
+def hisseleri_txt_oku(dosya_adi=None, strategy_type="general_scan", universe=None):
+    """Strateji için merkezi kurala uygun, normalize ve benzersiz sembol listesi."""
+    env_scope = os.getenv("BORSA_TARAMA_EVRENI")
+    scope = normalize_scan_scope(universe if universe is not None else env_scope) if (universe is not None or env_scope) else None
+    symbols = get_scan_universe(
+        strategy_type,
+        scope=scope,
+        all_provider=tum_bist_hisseleri,
+        bist30_provider=bist30_hisseleri,
+    )
     quarantined = set(karantinadaki_semboller())
     if quarantined:
         symbols = [symbol for symbol in symbols if symbol not in quarantined]
         print(f"Veri hatasi nedeniyle karantinada: {len(set(symbols) & quarantined)} hisse")
-    print(f"{'Aktif BIST' if tum_evren else 'BIST 30'} analiz evreni: {len(symbols)} sembol")
+    selected_scope = scope or (BIST30_ONLY if strategy_type in {"short_term", "medium_term"} else ALL_BIST)
+    print(f"{'BIST 30' if selected_scope == BIST30_ONLY else 'Aktif BIST'} analiz evreni: {len(symbols)} sembol")
     return symbols
 
 
@@ -117,10 +135,11 @@ def dogrulanmis_listeyi_kaydet(results):
     print(f"Doğrulanmış hisse listesi kaydedildi: {len(symbols)} sembol")
 
 
-def hisse_tara(symbol):
-    # Toplu taramada seçilen aktif evreni daraltma. v10.3.0/v10.3.2'deki
-    # BIST30 kapısı, ALL seçilmiş olsa bile diğer bütün hisseleri eliyordu.
-    return teknik_analiz(symbol, "Tüm Aktif BIST")
+def hisse_tara(symbol, universe=ALL_BIST):
+    scope = normalize_scan_scope(universe)
+    if scope == BIST30_ONLY and symbol not in BIST30_KUMESI:
+        return None
+    return teknik_analiz(symbol, "BIST 30" if scope == BIST30_ONLY else "TÜM BIST")
 
 
 def sonuclari_sirala(results):
@@ -317,6 +336,28 @@ def tabloya_cevir(results):
     tablo = []
     for item in results:
         tablo.append({
+            "Profesyonel Karar": item.get("profesyonel_karar", "İŞLEM YAPMA"),
+            "Strateji Geçmiş Hedef Oranı %": item.get("kalibre_olasilik"),
+            "Kalibrasyon Örnek": item.get("kalibrasyon_ornek", 0),
+            "Piyasa Rejimi v2": item.get("piyasa_rejimi_v2", "YATAY"),
+            "Piyasa Rejim Puanı": item.get("piyasa_rejim_puani", 0),
+            "Sektör": item.get("sektor_adi", "BİLİNMİYOR"),
+            "Sektör Puanı": item.get("sektor_puani", 0),
+            "Sektör Gücü": item.get("sektor_gucu", "Nötr"),
+            "Sektör Göreceli Güç": item.get("sektor_goreceli_guc", 0),
+            "Para Akışı": item.get("para_akisi_teyidi", "TEYİTSİZ"),
+            "Para Akışı Puanı": item.get("para_akisi_puani", 0),
+            "Net EV %": item.get("net_ev_yuzde", -999),
+            "Tahmini Maliyet %": item.get("tahmini_maliyet_yuzde", 0),
+            "Giriş Bölgesine Uzaklık %": item.get("giris_bolgesine_uzaklik_yuzde", 0),
+            "Teyit Seviyesi": item.get("teyit_seviyesi", 0),
+            "Geçersiz Kılan Seviye": item.get("gecersiz_kilan_seviye", 0),
+            "KAP/Haber Doğrulama": item.get("kap_haber_dogrulama", "KAP/haber doğrulaması yapılamadı"),
+            "Karar Kapıları": item.get("karar_kapilari", ""),
+            "Önerilmeme Nedeni": item.get("onerilmeme_nedeni", ""),
+            "Pozisyon Adedi": item.get("position_qty", 0),
+            "İzin Verilen Nakit Risk": item.get("allowed_cash_risk", 0),
+            "Koruma Modu": item.get("koruma_modu", False),
             "Hisse": item["symbol"],
             "Veri Tarihi": item.get("veri_tarihi", ""),
             "Veri Yaşı (Gün)": item.get("veri_yasi_gun", 999),
@@ -348,7 +389,8 @@ def tabloya_cevir(results):
             "Önerilen Stop": item.get("onerilen_stop", 0),
             "Beklenen Getiri %": item.get("beklenen_getiri_yuzde", 0),
             "Beklenen Süre": item.get("beklenen_sure", "Veri yok"),
-            "Model Olasılığı %": item.get("model_olasiligi", 0),
+            "Model Olasılığı %": None,  # Teknik ağırlıklı puan bir olasılık değildir.
+            "Teknik Senaryo Skoru": item.get("model_olasiligi", 0),
             "Doğrulanmış Olasılık %": item.get("dogrulanmis_olasilik", 0),
             "Doğrulama Örnek Sayısı": item.get("dogrulama_ornek_sayisi", 0),
             "Doğrulama Notu": item.get("dogrulama_notu", ""),
@@ -1011,7 +1053,8 @@ def analiz_ciktilarini_kaydet(df, frames, output_dir):
     return {"sqlite": sqlite_result, "text": txt_path, "csv_backup": csv_backup}
 
 
-def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None):
+def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_islemler=None, temettu_df=None,
+                     strategy_type="general_scan", universe=ALL_BIST, scanned_count=None):
     results = [
         item for item in results
         if pd.notna(item.get("price")) and float(item.get("price", 0)) > 0
@@ -1023,8 +1066,15 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     results = sonuclari_sirala(results)
     df = tabloya_cevir(results)
     kisa_df, orta_df, uzun_df = vade_listeleri_uret(df)
-    potansiyel_df, yakin_adaylar_df, potansiyel_test_df = potansiyel_adaylari_hazirla(df)
+    # Eski 2-6 haftalık potansiyel tablosu bu stratejinin hedefi değildir.
+    # Ertesi seans adayları, hisse taranırken yalnız t kapanışına kadar hesaplanan
+    # günlük özelliklerden üretilir.
+    ertesi_gun_tavan_df = adaylari_tabloya_cevir(results)
+    tavan_tahminlerini_kaydet(ertesi_gun_tavan_df, varsayilan_yol())
     firsatlar_df = bugunun_firsatlari_hazirla(df)
+    from bist_evreni import likit_120_sec
+    from sade_karar_modeli import elli_tl_adaylari
+    under_50_df = elli_tl_adaylari(likit_120_sec(df), limit=20)
     formasyon_kolonlari = [
         "Hisse", "Formasyon", "Formasyon Puanı", "Formasyon Yönü",
         "Formasyon Teyit", "Formasyon Kırılım", "Formasyon Hedef",
@@ -1047,12 +1097,20 @@ def sonuclari_kaydet(results, baslangic_zamani, backtest_ozet=None, backtest_isl
     sinyal_gecmisi_df, sinyal_performans_df = sinyal_gecmisini_guncelle(results)
     denetim_df = denetim_tablosu(results)
     kalibrasyon_df = olasilik_kalibrasyonu(sinyal_gecmisi_df)
+    tahmin_performans_df, tahmin_detay_df = performans_ozeti()
+    tavan_performans_df, tavan_performans_detay_df = tavan_performans_ozeti()
+    backtest_veri_denetimi_df = pd.DataFrame([veri_butunlugu_kontrolu(backtest_islemler)])
     gun_sonu_df = gun_sonu_plani(results)
     faktor_portfoy_df = faktor_model_portfoyu(results, adet=10)
     usta_portfoy_df = usta_model_portfoyu(results, adet=10)
     gunluk_ozet_yaz(output_dir, results, sinyal_gecmisi_df)
 
+    meta = report_metadata(strategy_type, universe, scanned_count if scanned_count is not None else len(results), len(results))
     frames = {
+        "Rapor Metadata": pd.DataFrame(list(meta.items()), columns=["Alan", "Değer"]),
+        "Tahmin Performansi": tahmin_performans_df, "Tahmin Detay": tahmin_detay_df,
+        "Ertesi Gun Tavan Adaylari": ertesi_gun_tavan_df,
+        "Ertesi Gun Tavan Performans": tavan_performans_df,
         "Tum Sonuclar": df, "Kisa Vade": kisa_df, "Orta Vade": orta_df,
         "Backtest Ozet": backtest_ozet if backtest_ozet is not None else pd.DataFrame(),
         "Sinyal Gecmisi": sinyal_gecmisi_df, "Sinyal Performansi": sinyal_performans_df,
@@ -1081,9 +1139,12 @@ def ozet_yazdir(results, baslangic_zamani):
 
 def main():
     baslangic_zamani = time.time()
+    acik_tahminleri_sonuclandir()
+    acik_tavan_tahminlerini_sonuclandir()
     print("Borsa Analiz Pro MAX v10.3.3 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
-    hisseler = hisseleri_txt_oku()
+    scan_scope = normalize_scan_scope(os.getenv("BORSA_TARAMA_EVRENI", ALL_BIST))
+    hisseler = hisseleri_txt_oku(universe=scan_scope)
     print(f"Toplam taranacak hisse: {len(hisseler)}")
 
     results = []
@@ -1091,7 +1152,7 @@ def main():
     max_worker = 6
 
     with ThreadPoolExecutor(max_workers=max_worker) as executor:
-        islemler = {executor.submit(hisse_tara, symbol): symbol for symbol in hisseler}
+        islemler = {executor.submit(hisse_tara, symbol, scan_scope): symbol for symbol in hisseler}
         tamamlanan = 0
 
         for future in as_completed(islemler):
@@ -1135,6 +1196,20 @@ def main():
         item.update(karar_uret(item))
     # Geçmiş canlı sonuçlar yeterli değilse, alım sinyali yerine izleme üretilir.
     results, canli_kanit_df = strateji_kilidi_uygula(results, sinyal_gecmisi_oku())
+    # Aşama 1: mevcut skorları değiştirmeden veri, piyasa ve sektör bağlamını ekle.
+    results, piyasa_rejimi_v2, sektor_profilleri = birinci_asama_uygula(results)
+    health = model_sagligi()
+    results, piyasa_rejimi_v2, kalibrasyon_v2 = karar_kapilarini_toplu_uygula(
+        results, kalibrasyon_gecmisi(), strategy_id="general_scan",
+        protection_mode=health["protection_mode"], limits=risk_ayarlari_oku(),
+    )
+    kayit_yolu = varsayilan_yol()
+    for item in results:
+        if item.get("profesyonel_karar") in {"UYGUN ADAY", "TEYİT BEKLİYOR", "İZLE"}:
+            sinyal_kaydet(item, "general_scan", kayit_yolu)
+    if not any(item.get("profesyonel_karar") == "UYGUN ADAY" for item in results):
+        print("Bugün güvenilir işlem fırsatı bulunamadı.")
+        print("Bu taramada bütün güvenlik koşullarını geçen hisse bulunamadı.")
     results = sorted(
         results,
         key=lambda x: (
@@ -1158,7 +1233,8 @@ def main():
             baslangic_zamani,
             backtest_ozet,
             backtest_islemler,
-            temettu_df
+            temettu_df,
+            strategy_type="general_scan", universe=scan_scope, scanned_count=len(hisseler),
         )
     except Exception as exc:
         logger.error("Analiz kayıt akışı başarısız:\n%s", traceback.format_exc())
