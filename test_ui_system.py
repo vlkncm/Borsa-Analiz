@@ -35,7 +35,7 @@ class CommonUiSystemTests(unittest.TestCase):
             self.window.track, self.window.under_50, self.window.ceiling_potential,
             self.window.funds, self.window.history, self.window.prediction_performance,
         ]
-        self.assertEqual(len(self.window.sidebar._buttons), 12)
+        self.assertEqual(len(self.window.sidebar._buttons), 17)
         for page in required:
             self.assertIsInstance(page.page_header, PageHeader)
             self.window.pages.setCurrentWidget(page)

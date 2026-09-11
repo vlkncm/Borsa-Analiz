@@ -1,4 +1,12 @@
-# Borsa Analiz Pro MAX v10.4.0
+# Borsa Analiz Pro MAX v10.4.1
+
+## v10.4.1 Dashboard uyumluluk düzeltmesi
+
+- v10.3.3 dalındaki üst çubuk, daraltılabilir menü ve üçlü ana ekran geri bağlandı.
+- Yüksek Hareket Radarı, T+1/T+2, Yarın Günlük Trade ve eski performans ekranları geri eklendi.
+- Güncel main analiz motoru ve veri güvenliği korundu; kısa/orta vade BIST30 olarak kalır.
+- Radar merkezi fiyat sağlayıcısını kullanır; eski fiyatla yeni aday üretmez.
+- Bu sürüm iki dalın tamamını birleştirmez; eski dashboard ve gerekli bağımlılıklarını uyumlu biçimde geri getirir.
 
 ## v10.4.0 Analiz ve veri güvenilirliği
 
@@ -17,7 +25,7 @@
   iddiası yoktur. Ayrıntılar: [inceleme ve veri akışı](ANALIZ_GUVENILIRLIGI.md).
 
 Sürüm, main tabanındaki 10.2.1 kaynaklarından geliştirilmiştir. Diğer dallardaki
-v10.3.x etiketleriyle çakışmamak için sonraki minor 10.4.0 seçilmiştir.
+v10.3.x etiketleriyle çakışmamak için sonraki minor 10.4.1 seçilmiştir.
 Yeni kurulum paketi bu kaynak değişikliğiyle otomatik yayımlanmaz.
 
 ## v10.2.1 Günlük Trade evren düzeltmesi

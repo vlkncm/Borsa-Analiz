@@ -29,7 +29,7 @@ class MerkeziTaramaMimarisiTests(unittest.TestCase):
         self.assertFalse(any("10X" in text.upper() for text in menu_texts))
 
     def test_main_button_registers_exactly_five_stock_analyses(self):
-        self.assertEqual(self.window.home.trade_button.text(), "Tüm Hisse Analizlerini Başlat")
+        self.assertIn("Tüm Hisse Analizlerini Başlat", self.window.top_header.scan.text())
         with patch.object(self.window, "scan") as scan:
             self.window.start_all_stock_analyses()
         self.assertEqual(set(self.window._central_requests), set(SCAN_UNIVERSE))
@@ -77,7 +77,7 @@ class MerkeziTaramaMimarisiTests(unittest.TestCase):
 
     def test_page_is_renamed_to_next_day_ceiling_candidates(self):
         menu_texts = [button.text() for button in self.window.sidebar._buttons.values()]
-        self.assertIn("Ertesi Gün Tavan Adayları", menu_texts)
+        self.assertTrue(any("Tavan Potansiyeli" in text for text in menu_texts))
         self.assertEqual(self.window.ceiling_potential.page_header.title.text(), "Ertesi Gün Tavan Adayları")
 
     def test_late_or_wrong_universe_worker_is_ignored_by_coordinator(self):
