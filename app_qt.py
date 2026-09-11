@@ -39,7 +39,7 @@ from ui_components import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.2.1"
+APP_VERSION = "10.4.0"
 _CRASH_STREAM = None
 
 
@@ -91,7 +91,7 @@ def ertesi_gun_tavan_gorunumu(frame: pd.DataFrame) -> pd.DataFrame:
         "Ertesi Gün Tavan Olasılığı", "Ertesi Gün %8+ Olasılığı", "Tavan Aday Puanı",
         "Para Akışı", "Göreceli Hacim", "Sıkışma/Kırılım", "KAP Katalizörü",
         "Piyasa Rejimi", "Sektör Gücü", "Risk Seviyesi", "Veri Zamanı",
-        "Aday Olma Nedenleri", "Riskler", "Kalibrasyon Örneği",
+        "Aday Olma Nedenleri", "Riskler", "Kalibrasyon Örneği", "DATA_CONFIDENCE", "Veri Güven Notu",
     ]
     if frame is None or frame.empty:
         return pd.DataFrame(columns=columns)
@@ -1882,7 +1882,7 @@ class Under50Worker(QObject):
                 self.progress.emit(self.request_id, self.page_id, self.strategy_id, self.universe_id, f"{index}/{len(symbols)} hisse inceleniyor · {len(rows)} aday bulundu")
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "1y")
-                    candidate = elli_tl_ohlcv_adayi(symbol, history)
+                    candidate = elli_tl_ohlcv_adayi(symbol, history, metadata=_meta)
                     if candidate:
                         rows.append(candidate)
                 except Exception:
@@ -2241,7 +2241,7 @@ class MainWindow(QMainWindow):
             medium_frame = sade_firsatlar(medium_source, "orta", limit=5, sure=sure_metni(medium_days))
             if medium_frame.empty:
                 medium_frame = vade_rapor_adaylari(
-                    all_results, sure_metni(medium_days), limit=5,
+                    filter_frame_for_strategy(all_results, "medium_term"), sure_metni(medium_days), limit=5,
                     haric=short_frame.get("Hisse", pd.Series(dtype=str)).tolist(),
                 )
             self.short_term.load(short_frame)

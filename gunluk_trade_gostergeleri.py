@@ -103,6 +103,8 @@ def en_iyi_gunluk_trade_adaylari(frame: pd.DataFrame, limit: int = 5) -> pd.Data
     growth = pd.to_numeric(frame["Gün İçi Yükseliş %"], errors="coerce").fillna(0)
     score = pd.to_numeric(frame["Günlük Trade Skoru"], errors="coerce").fillna(0)
     valid = frame["Veri Durumu"].astype(str).eq("GÜVENİLİR") & growth.gt(0)
+    if "DATA_CONFIDENCE" in frame:
+        valid &= frame["DATA_CONFIDENCE"].isin(["HIGH", "MEDIUM"])
     return (frame[valid].assign(_skor=score[valid], _yukselis=growth[valid])
             .sort_values(["_skor", "_yukselis"], ascending=False).head(max(0, int(limit)))
             .drop(columns=["_skor", "_yukselis"]).reset_index(drop=True))

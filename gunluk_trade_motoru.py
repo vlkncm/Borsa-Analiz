@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from intraday_backtest import ampirik_kanit
+from gunluk_trade_gostergeleri import gunluk_trade_teyitleri
 from intraday_gostergeler import klasik_pivot, pozisyon_boyutu, seans_vwap, wilder_atr
 from mum_formasyonlari import doji_baglam_ve_teyit, doji_siniflandir
 from veri_saglayici import PiyasaVeriAdapteri, get_daily_ohlcv, get_intraday_ohlcv
@@ -46,7 +47,7 @@ def _bos_sonuc(symbol: str, reason: str, metadata=None) -> dict[str, Any]:
     return {"Hisse": symbol.replace(".IS", ""), "Sonuç": "VERİ YETERSİZ", "Uyarılar": reason,
             "Veri Kaynağı": getattr(metadata, "source", "bilinmiyor"),
             "Veri Zamanı": _fmt_time(getattr(metadata, "last_bar_at", None)),
-            "Veri Gecikmesi": "bilinmiyor", "Kısa Özet": f"{symbol}: {reason}"}
+            "Veri Gecikmesi": "bilinmiyor", "DATA_CONFIDENCE": "LOW", "Kısa Özet": f"{symbol}: {reason}"}
 
 
 def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: float | None = None,
@@ -60,18 +61,19 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         return _bos_sonuc(symbol, f"Veri alınamadı: {exc}")
     if len(daily) < 16 or len(intra) < 3:
         return _bos_sonuc(symbol, "Gösterge hesabı için yetersiz veri", meta)
-    if meta.is_stale or intra["Volume"].fillna(0).le(0).all():
+    if meta.is_stale or daily_meta.is_stale or intra["Volume"].fillna(0).le(0).all():
         return _bos_sonuc(symbol, "Eski/gecikmeli veya hacimsiz intraday veri; canlı teyit yok", meta)
     session_date = intra.index[-1].date()
     session = intra[intra.index.date == session_date].copy()
     if len(session) < 3:
         return _bos_sonuc(symbol, "Tamamlanmış seans mumu yetersiz", meta)
     completed_daily = daily[daily.index.date < session_date]
-    if completed_daily.empty:
+    if len(completed_daily) < 16:
         return _bos_sonuc(symbol, "Önceki tamamlanmış işlem günü bulunamadı", meta)
     previous_day = completed_daily.iloc[-1]
+    daily_confirmation = gunluk_trade_teyitleri(completed_daily)
     piv = klasik_pivot(previous_day["High"], previous_day["Low"], previous_day["Close"])
-    atr = float(wilder_atr(daily).iloc[-1])
+    atr = float(wilder_atr(completed_daily).iloc[-1])
     if not math.isfinite(atr) or atr <= 0:
         return _bos_sonuc(symbol, "ATR hesaplanamadı", meta)
     vwap_series = seans_vwap(session)
@@ -85,7 +87,10 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         {**confirmation_bar.to_dict(), "is_complete_bar": True},
     )
     price = float(confirmation_bar.Close)
-    volume_ratio = float(confirmation_bar.Volume / session["Volume"].iloc[:-1].tail(10).median())
+    volume_base = float(session["Volume"].iloc[:-1].tail(10).median())
+    if not math.isfinite(volume_base) or volume_base <= 0 or confirmation_bar.Volume <= 0:
+        return _bos_sonuc(symbol, "Hacim teyidi için geçerli örnek yok", meta)
+    volume_ratio = float(confirmation_bar.Volume / volume_base)
     above_vwap = price > vwap
     positive_doji = context["teyit"] and context["yon"] == "YUKARI"
     negative_doji = context["teyit"] and context["yon"] == "AŞAĞI"
@@ -113,7 +118,18 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
     target = max(target_floor, min(resistance, price+atr*2.5, price*1.05))
     rr = (target-price)/risk if risk > 0 else 0.0
     target_potential = (target/price-1)*100
-    evidence = ampirik_kanit([] if historical_outcomes is None else historical_outcomes)
+    history = pd.DataFrame([] if historical_outcomes is None else historical_outcomes)
+    # Tarihi, sonuç zamanı ve stratejisi belirsiz kayıt OOS kanıtı değildir.
+    if {"sinyal_zamani", "sonuc_zamani", "strategy_id", "out_of_sample"}.issubset(history.columns):
+        cutoff = pd.to_datetime(now or meta.fetched_at, utc=True)
+        signal_times = pd.to_datetime(history.sinyal_zamani, errors="coerce", utc=True)
+        outcome_times = pd.to_datetime(history.sonuc_zamani, errors="coerce", utc=True)
+        history = history.loc[signal_times.lt(cutoff) & outcome_times.lt(cutoff)
+                              & outcome_times.gt(signal_times) & history.strategy_id.eq("intraday_vwap")
+                              & history.out_of_sample.eq(True)]
+    else:
+        history = pd.DataFrame()
+    evidence = ampirik_kanit(history)
     move_capacity = 3.0 <= target_potential <= 5.0
     confirmed = combo_count >= 4 and above_vwap and momentum and adx14 >= 20 and move_capacity and not negative_doji
     warnings = []
@@ -144,6 +160,9 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
                f"{stop:.2f} TL stop; hedef potansiyeli %{target_potential:.2f}; geçmiş medyan hareket {expected}; "
                f"hedefe stop'tan önce ulaşma olasılığı {probability} (n={evidence['n']})")
     return {
+        "DATA_CONFIDENCE": "MEDIUM",  # Bu yolda benchmark teyidi yok; HIGH üretilmez.
+        "Günlük Trade Teyit": daily_confirmation["gunluk_trade_teyit"],
+        "Günlük Trade Skoru": daily_confirmation["gunluk_trade_skoru"],
         "Hisse": symbol.replace(".IS", ""), "Sonuç": result, "Sinyal": "VWAP+momentum" + ("+doji" if positive_doji else ""),
         "Veri Zamanı": _fmt_time(meta.last_bar_at), "Veri Kaynağı": meta.source, "Veri Gecikmesi": delay,
         "Tazelik": "GÜNCEL" if not meta.is_stale else "ESKİ", "Referans Fiyat": price,

@@ -1,4 +1,24 @@
-# Borsa Analiz Pro MAX v10.2.1
+# Borsa Analiz Pro MAX v10.4.0
+
+## v10.4.0 Analiz ve veri güvenilirliği
+
+- Tavan motorunun mevcut ağırlıkları korunur; RVOL önceki 20 bardan hesaplanır,
+  kötü kapanış/üst fitil ve aşırı uzama cezalandırılır. BIST100 göreceli gücü,
+  20/50 günlük direnç ve ATR normalize kırılım özellikleri eklendi.
+- Veri güveni puandan bağımsız sıralanır; eski/cache fallback verisi güçlü aday
+  seviyesine yükselmez. 50 TL filtresi resmî güncel kapanış gerektirir.
+- Intraday ATR ve OOS sonuç zamanları gelecek veri sızıntısına karşı korunur.
+  Doğrulanmamış kalibrasyon olasılık olarak gösterilmez.
+- Orta vade rapor fallback'i BIST30 ile sınırlıdır. Günlük Trade, tavan ve
+  50 TL evreni tüm BIST olarak korunur; 4/4 teyit ve responsive UI korunur.
+- Backtest ilk işlem kaybını drawdown'a dahil eder; skor grubu, medyan,
+  win rate, payoff ve işlem başına risk ayarlı getiri ölçümleri eklenmiştir.
+- Gerçek OOS veri seti olmadan ağırlık optimizasyonu veya performans artışı
+  iddiası yoktur. Ayrıntılar: [inceleme ve veri akışı](ANALIZ_GUVENILIRLIGI.md).
+
+Sürüm, main tabanındaki 10.2.1 kaynaklarından geliştirilmiştir. Diğer dallardaki
+v10.3.x etiketleriyle çakışmamak için sonraki minor 10.4.0 seçilmiştir.
+Yeni kurulum paketi bu kaynak değişikliğiyle otomatik yayımlanmaz.
 
 ## v10.2.1 Günlük Trade evren düzeltmesi
 

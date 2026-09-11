@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from veri_kalite_kapisi import data_confidence
 
 
 MIN_CALIBRATION_SAMPLES = 30
@@ -53,7 +54,7 @@ def tavan_fiyati_hesapla(previous_close: float, limit_pct: float | None,
     return fiyat_adimina_yuvarla(previous_close * (1 + float(limit_pct) / 100), float(tick_size), "down")
 
 
-def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any]:
+def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None, benchmark=None) -> dict[str, Any]:
     """Yalnız ``as_of`` ve öncesindeki tamamlanmış barlardan özellik üretir."""
     required = {"Open", "High", "Low", "Close", "Volume"}
     if frame is None or frame.empty or not required.issubset(frame.columns):
@@ -64,8 +65,14 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
         if isinstance(work.index, pd.DatetimeIndex) and work.index.tz is not None and cutoff.tzinfo is None:
             cutoff = cutoff.tz_localize(work.index.tz)
         work = work.loc[work.index <= cutoff]
-    work = work[["Open", "High", "Low", "Close", "Volume"]].apply(pd.to_numeric, errors="coerce").dropna()
-    work = work[(work[["Open", "High", "Low", "Close"]] > 0).all(axis=1)]
+    work = work[["Open", "High", "Low", "Close", "Volume"]].apply(pd.to_numeric, errors="coerce")
+    valid = (np.isfinite(work).all(axis=1) & (work > 0).all(axis=1)
+             & work.High.ge(work[["Open", "Close", "Low"]].max(axis=1))
+             & work.Low.le(work[["Open", "Close", "High"]].min(axis=1)))
+    if work.empty or not valid.iloc[-1] or work.index.has_duplicates:
+        return {"veri_yeterli": False, "veri_notu": "Son OHLCV geçersiz veya yinelenen tarih"}
+    invalid_count = int((~valid).sum())
+    work = work.loc[valid]
     if len(work) < 60:
         return {"veri_yeterli": False, "veri_notu": f"En az 60 bar gerekli; mevcut {len(work)}"}
 
@@ -83,8 +90,9 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
     bb_width = (4 * std / middle.replace(0, np.nan))
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean().replace(0, np.nan)
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
     rsi = 100 - 100/(1 + gain/loss)
+    rsi = rsi.mask((loss == 0) & (gain > 0), 100).mask((loss == 0) & (gain == 0), 50)
     plus_dm = high.diff().where((high.diff() > -low.diff()) & (high.diff() > 0), 0.0)
     minus_dm = (-low.diff()).where((-low.diff() > high.diff()) & (-low.diff() > 0), 0.0)
     plus_di = 100 * plus_dm.rolling(14).mean()/atr14.replace(0, np.nan)
@@ -94,8 +102,9 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
     typical = (high+low+close)/3
     raw_mf = typical*volume
     pos_mf = raw_mf.where(typical.diff() > 0, 0).rolling(14).sum()
-    neg_mf = raw_mf.where(typical.diff() < 0, 0).rolling(14).sum().replace(0, np.nan)
+    neg_mf = raw_mf.where(typical.diff() < 0, 0).rolling(14).sum()
     mfi = 100-100/(1+pos_mf/neg_mf)
+    mfi = mfi.mask((neg_mf == 0) & (pos_mf > 0), 100).mask((neg_mf == 0) & (pos_mf == 0), 50)
     mf_multiplier = ((close-low)-(high-close))/(high-low).replace(0, np.nan)
     ad_line = (mf_multiplier.fillna(0)*volume).cumsum()
     cmf = (mf_multiplier.fillna(0)*volume).rolling(20).sum()/volume.rolling(20).sum().replace(0, np.nan)
@@ -109,7 +118,7 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
     resistance = min(x for x in (resistance20, resistance60) if math.isfinite(x) and x > 0)
     distance_to_resistance = (resistance/price-1)*100
     ema_distance = (price/float(ema20.iloc[-1])-1)*100
-    volume_ma20 = float(volume.rolling(20).mean().iloc[-1])
+    volume_ma20 = float(volume.shift(1).rolling(20).mean().iloc[-1])
     rvol = float(volume.iloc[-1]/volume_ma20) if volume_ma20 > 0 else 0
     up = close.diff() > 0
     up_volume = float(volume.where(up).tail(10).mean())
@@ -118,8 +127,28 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
     recent_lows = low.tail(5).to_numpy()
     higher_lows = bool(sum(np.diff(recent_lows) > 0) >= 3)
     close_near_high = float((price-low.iloc[-1])/(high.iloc[-1]-low.iloc[-1])) if high.iloc[-1] > low.iloc[-1] else .5
+    upper_wick = float((high.iloc[-1]-max(price, work.Open.iloc[-1]))/(high.iloc[-1]-low.iloc[-1])) if high.iloc[-1] > low.iloc[-1] else 0
+    rs = {}
+    if benchmark is not None and not benchmark.empty and "Close" in benchmark:
+        bench = pd.to_numeric(benchmark.Close, errors="coerce").rename("benchmark")
+        aligned = pd.concat([close.rename("stock"), bench], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+        aligned = aligned.loc[(aligned.index <= work.index[-1]) & (aligned > 0).all(axis=1)]
+        if not aligned.empty and aligned.index[-1] == work.index[-1]:
+            for days in (1, 3, 5, 20, 60):
+                if len(aligned) > days:
+                    returns = aligned.iloc[-1]/aligned.iloc[-days-1]-1
+                    rs[f"relative_strength_{days}d"] = round(float((returns.stock-returns.benchmark)*100), 4)
+    resistance50 = float(high.shift(1).rolling(50).max().iloc[-1])
 
     return {
+        **rs, "bar_sayisi": len(work), "eksik_bar_sayisi": invalid_count,
+        "benchmark_mevcut": "relative_strength_20d" in rs,
+        "ust_fitil_orani": round(upper_wick, 4), "gap_yuzde": round((float(work.Open.iloc[-1])/previous-1)*100, 3),
+        "direnc20": resistance20, "direnc50": resistance50,
+        "breakout_atr": round((price-resistance20)/float(atr14.iloc[-1]), 4) if atr14.iloc[-1] > 0 else 0,
+        "hacim_teyitli_breakout": bool(price > resistance20 and rvol > 1 and close_near_high >= .5),
+        "roc1": round(day_return, 3), "roc3": round(float(close.pct_change(3).iloc[-1]*100), 3),
+        "roc5": round(float(close.pct_change(5).iloc[-1]*100), 3),
         "veri_yeterli": True, "veri_zamani": str(pd.Timestamp(work.index[-1])),
         "onceki_kapanis": round(price, 4), "onceki_gun_getiri_yuzde": round(day_return, 3),
         "mevcut_gunde_tavan_benzeri": bool(day_return >= 7.95),
@@ -148,8 +177,9 @@ def gunluk_ozellikleri_hesapla(frame: pd.DataFrame, as_of=None) -> dict[str, Any
 
 def _family_scores(features: dict, context: dict) -> tuple[dict[str, float], list[str], list[str]]:
     reasons, risks = [], []
+    positive_volume = features["rvol"] if features["kapanis_zirve_konumu"] >= .5 and features.get("ust_fitil_orani", 0) <= .5 else min(1, features["rvol"])
     accumulation = np.mean([
-        np.clip(50+(features["rvol"]-1)*35, 0, 100),
+        np.clip(50+(positive_volume-1)*35, 0, 100),
         75 if features["obv_egimi"] > 0 else 25,
         np.clip(50+features["cmf20"]*180, 0, 100),
         np.clip(features["mfi14"], 0, 100),
@@ -175,24 +205,43 @@ def _family_scores(features: dict, context: dict) -> tuple[dict[str, float], lis
     sector_score = _number(context.get("sektor_puani"), 35)
     relative = np.clip(0.55*market_score+0.45*sector_score, 0, 100)
     liquidity = np.clip((math.log10(max(features["ortalama_islem_tutari"], 1))-6)*30, 0, 100)
-    kap_verified = bool(context.get("kap_yayin_zamani")) and bool(context.get("kap_url") or context.get("kap_basliklari"))
+    published = pd.to_datetime(context.get("kap_yayin_zamani"), errors="coerce", utc=True)
+    decision = pd.to_datetime(context.get("karar_zamani", features.get("veri_zamani")), errors="coerce", utc=True)
+    kap_verified = bool(pd.notna(published) and pd.notna(decision) and published <= decision
+                        and (context.get("kap_url") or context.get("kap_basliklari")))
     kap_score_raw = _number(context.get("kap_skor"))
     catalyst = np.clip(50+kap_score_raw*2, 0, 100) if kap_verified else 0
     if not kap_verified:
         risks.append("KAP/katalizör zaman damgasıyla doğrulanamadı")
     elif kap_score_raw < 0:
         risks.append("Negatif KAP/katalizör")
-    if accumulation >= 60: reasons.append("Çok günlük para ve hacim birikimi")
-    if compression >= 60: reasons.append("Sıkışma ve kırılım seviyesine yakınlık")
-    if trend >= 60: reasons.append("Trend ve momentum hazırlığı")
     if features["ema20_uzaklik_yuzde"] > 8: risks.append("Fiyat EMA20'den aşırı uzak")
     if context.get("piyasa_rejimi_v2") == "RISK_OFF": risks.append("Piyasa rejimi RISK_OFF")
     if features["mevcut_gunde_tavan_benzeri"]: risks.append("Hisse karar gününde zaten %8+ yükselmiş")
+    # Mevcut ağırlıkları değiştirmeden dağıtımı birikim olarak ödüllendirmeyi önle.
+    close_strength = features["kapanis_zirve_konumu"]
+    if close_strength < .5 or features.get("ust_fitil_orani", 0) > .5:
+        accumulation *= close_strength
+        compression *= close_strength
+        risks.append("Kötü kapanış / üst fitil: dağıtım riski")
+    if features["rvol"] < 1:
+        compression *= features["rvol"]
+        risks.append("Kırılım için hacim teyidi yok")
+    actual_rs = features.get("relative_strength_20d")
+    if actual_rs is None:
+        risks.append("Benchmark göreceli güç verisi yok")
+    elif actual_rs < 0:
+        relative = min(relative, 50)
+        risks.append("Negatif benchmark göreceli güç")
+    if accumulation >= 60: reasons.append("Çok günlük para ve hacim birikimi")
+    if compression >= 60: reasons.append("Sıkışma ve kırılım seviyesine yakınlık")
+    if trend >= 60: reasons.append("Trend ve momentum hazırlığı")
     return {
         "para_akisi": round(float(accumulation), 1), "sikisma_kirilim": round(float(compression), 1),
         "katalizor": round(float(catalyst), 1), "goreceli_guc": round(float(relative), 1),
         "trend_momentum": round(float(trend), 1), "likidite": round(float(liquidity), 1),
         "tarihsel_benzerlik": 0.0,
+        "katalizor_dogrulandi": kap_verified,
     }, reasons, risks
 
 
@@ -201,7 +250,8 @@ def aday_degerlendir(features: dict, context: dict | None = None,
     context, calibration = context or {}, calibration or {}
     if not features.get("veri_yeterli"):
         return {"aday_grubu": "VERİ YETERSİZ", "tavan_aday_puani": 0,
-                "riskler": features.get("veri_notu", "Veri yetersiz")}
+                "DATA_CONFIDENCE": "LOW", "riskler": features.get("veri_notu", "Veri yetersiz")}
+    confidence = data_confidence(context, features)
     scores, reasons, risks = _family_scores(features, context)
     weights = {"para_akisi": .25, "sikisma_kirilim": .20, "katalizor": .20,
                "goreceli_guc": .15, "trend_momentum": .10, "likidite": .05,
@@ -209,8 +259,22 @@ def aday_degerlendir(features: dict, context: dict | None = None,
     score = sum(scores[key]*weight for key, weight in weights.items())
     if context.get("piyasa_rejimi_v2") == "RISK_OFF":
         score -= 10
-    if _number(context.get("kap_skor")) < 0:
+    if scores["katalizor_dogrulandi"] and _number(context.get("kap_skor")) < 0:
         score -= 20
+    raw_score = score
+    # Risk kontrolleri yeni bir ağırlık optimizasyonu değildir; yalnız puan azaltır.
+    if abs(features.get("gap_yuzde", 0)) > 8:
+        score *= min(1, 8/abs(features["gap_yuzde"]))
+        risks.append("Aşırı açılış gap riski")
+    if features.get("atr_yuzde", 0) > 8:
+        score *= 8/features["atr_yuzde"]
+        risks.append("Aşırı ATR riski")
+    if features["ema20_uzaklik_yuzde"] > 8:
+        score *= 8/features["ema20_uzaklik_yuzde"]
+    rr = _number(context.get("risk_getiri_1"), float("nan"))
+    if math.isfinite(rr) and rr < 1.8:
+        score *= max(0, rr)/1.8
+        risks.append("Risk/getiri 1.8 altında")
     ineligible = features["mevcut_gunde_tavan_benzeri"] or features["ema20_uzaklik_yuzde"] > 12
     if ineligible:
         group = "Yüksek Riskli/Spekülatif Aday"
@@ -220,13 +284,25 @@ def aday_degerlendir(features: dict, context: dict | None = None,
         group = "Teyit Bekleyen Aday"
     else:
         group = "Yüksek Riskli/Spekülatif Aday"
-    samples = int(calibration.get("samples", 0) or 0)
+    if confidence["DATA_CONFIDENCE"] == "LOW":
+        group = "VERİ DOĞRULAMA BEKLE"
+        risks.append(confidence["data_confidence_notu"])
+    calibration_end = pd.to_datetime(calibration.get("calibration_end"), errors="coerce", utc=True)
+    decision = pd.to_datetime(context.get("karar_zamani", features.get("veri_zamani")), errors="coerce", utc=True)
+    oos_valid = (calibration.get("out_of_sample") is True and pd.notna(calibration_end)
+                 and pd.notna(decision) and calibration_end < decision)
+    samples = max(0, int(_number(calibration.get("samples")))) if oos_valid else 0
     ceiling_p = calibration.get("ceiling_probability") if samples >= MIN_CALIBRATION_SAMPLES else None
     eight_p = calibration.get("eight_plus_probability") if samples >= MIN_CALIBRATION_SAMPLES else None
+    ceiling_p = _number(ceiling_p, float("nan"))
+    eight_p = _number(eight_p, float("nan"))
     return {
-        **scores, "tavan_aday_puani": round(max(0, min(95, score)), 1), "aday_grubu": group,
-        "ertesi_gun_tavan_olasiligi": min(99.0, _number(ceiling_p)) if ceiling_p is not None else None,
-        "ertesi_gun_8plus_olasiligi": min(99.0, _number(eight_p)) if eight_p is not None else None,
+        **scores, **confidence, "tavan_aday_puani": round(max(0, min(95, score)), 1), "aday_grubu": group,
+        "risk_cezasi": round(max(0, raw_score-score), 2),
+        "kapanis_gucu": round(features["kapanis_zirve_konumu"]*100, 1),
+        "relative_strength_20d": features.get("relative_strength_20d"),
+        "ertesi_gun_tavan_olasiligi": float(np.clip(ceiling_p, 0, 99)) if math.isfinite(ceiling_p) else None,
+        "ertesi_gun_8plus_olasiligi": float(np.clip(eight_p, 0, 99)) if math.isfinite(eight_p) else None,
         "olasilik_notu": "Walk-forward kalibrasyon" if samples >= MIN_CALIBRATION_SAMPLES else PROBABILITY_UNAVAILABLE,
         "kalibrasyon_ornek_sayisi": samples,
         "aday_nedenleri": " | ".join(reasons) if reasons else "Güçlü ve bağımsız teyit bulunamadı",
@@ -246,6 +322,7 @@ def adaylari_tabloya_cevir(results: Iterable[dict]) -> pd.DataFrame:
         required = ((ceiling/features["onceki_kapanis"]-1)*100) if ceiling else None
         rows.append({
             "Hisse": str(item.get("symbol", item.get("Hisse", ""))).replace(".IS", ""),
+            "DATA_CONFIDENCE": result["DATA_CONFIDENCE"], "Veri Güven Notu": result["data_confidence_notu"],
             "Aday Grubu": result["aday_grubu"], "Önceki Kapanış": features["onceki_kapanis"],
             "Tavan Fiyatı": ceiling if ceiling is not None else "Tarihsel limit/adım verisi yok",
             "Tavan İçin Gereken %": round(required, 3) if required is not None else "Doğrulanamadı",
@@ -260,13 +337,17 @@ def adaylari_tabloya_cevir(results: Iterable[dict]) -> pd.DataFrame:
             "Veri Zamanı": features["veri_zamani"], "Aday Olma Nedenleri": result["aday_nedenleri"],
             "Riskler": result["riskler"], "Kalibrasyon Örneği": result["kalibrasyon_ornek_sayisi"],
         })
-    columns = ["Hisse", "Aday Grubu", "Önceki Kapanış", "Tavan Fiyatı", "Tavan İçin Gereken %",
+    columns = ["Hisse", "DATA_CONFIDENCE", "Veri Güven Notu", "Aday Grubu", "Önceki Kapanış", "Tavan Fiyatı", "Tavan İçin Gereken %",
                "Ertesi Gün Tavan Olasılığı", "Ertesi Gün %8+ Olasılığı", "Tavan Aday Puanı",
                "Para Akışı", "Göreceli Hacim", "Sıkışma/Kırılım", "KAP Katalizörü",
                "Piyasa Rejimi", "Sektör Gücü", "Risk Seviyesi", "Veri Zamanı",
                "Aday Olma Nedenleri", "Riskler", "Kalibrasyon Örneği"]
     frame = pd.DataFrame(rows, columns=columns)
-    return frame.sort_values(["Tavan Aday Puanı", "Para Akışı"], ascending=False).reset_index(drop=True) if not frame.empty else frame
+    if frame.empty:
+        return frame
+    return (frame.assign(_confidence=frame.DATA_CONFIDENCE.map({"HIGH": 2, "MEDIUM": 1, "LOW": 0}))
+            .sort_values(["_confidence", "Tavan Aday Puanı", "Para Akışı"], ascending=False, kind="stable")
+            .drop(columns="_confidence").reset_index(drop=True))
 
 
 def ertesi_gun_etiketi(decision: pd.Series, next_bar: pd.Series,

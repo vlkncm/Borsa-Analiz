@@ -38,6 +38,7 @@ class PageScanIsolationTests(unittest.TestCase):
             "Hacim Oranı": [1.3, 1.3], "Son 20 Gün %": [5.0, 5.0], "Son 60 Gün %": [10.0, 10.0],
             "Önerilen Stop": [23.0, 70.0], "Önerilen Satış": [30.0, 85.0],
         })
+        frame["DATA_CONFIDENCE"] = "HIGH"  # Fiyat sınırı testi doğrulanmış girdiyi kullanır.
         result = elli_tl_adaylari(frame)
         self.assertFalse(result.empty)
         self.assertTrue(pd.to_numeric(result["Mevcut Fiyat"]).between(1, 50).all())

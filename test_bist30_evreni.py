@@ -32,14 +32,14 @@ class Bist30EvreniTests(unittest.TestCase):
             self.assertEqual(main.hisse_tara("MEGMT.IS")["symbol"], "MEGMT.IS")
         analiz.assert_called_once_with("MEGMT.IS", "TÜM BIST")
 
-    def test_teknik_tarama_tum_bist_benchmark_bist30dur(self):
+    def test_teknik_tarama_tum_bist_benchmark_bist100dur(self):
         self.assertGreater(len(borsa_tarayici.WATCHLIST), len(BIST30_SEMBOLLERI))
         self.assertTrue(BIST30_KUMESI.issubset(set(borsa_tarayici.WATCHLIST)))
         self.assertEqual(borsa_tarayici.SURPRISE_LIST, [])
         with patch("borsa_tarayici.guvenli_yf_download", return_value=None) as download:
             borsa_tarayici._BENCHMARK_CACHE = None
             borsa_tarayici.bist100_verisi()
-        download.assert_called_once_with("XU030.IS", period="2y", interval="1d", retries=1)
+        download.assert_called_once_with("XU100.IS", period="2y", interval="1d", retries=1)
 
 
 if __name__ == "__main__":

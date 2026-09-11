@@ -35,6 +35,7 @@ from tarama_evreni import (
 from profesyonel_karar_sistemi import birinci_asama_uygula, karar_kapilarini_toplu_uygula, risk_ayarlari_oku
 from tahmin_defteri import acik_tahminleri_sonuclandir, model_sagligi, performans_ozeti, sinyal_kaydet, varsayilan_yol
 from saglam_backtest import veri_butunlugu_kontrolu
+from veri_kalite_kapisi import data_confidence
 from ertesi_gun_tavan import (
     acik_tavan_tahminlerini_sonuclandir, adaylari_tabloya_cevir,
     tavan_performans_ozeti, tavan_tahminlerini_kaydet,
@@ -143,6 +144,7 @@ def sonuclari_sirala(results):
     return sorted(
         results,
         key=lambda x: (
+            {"HIGH": 2, "MEDIUM": 1, "LOW": 0}[data_confidence(x)["DATA_CONFIDENCE"]],
             x.get("v4_guven_puani", x.get("broker_skor", x.get("genel_skor", x.get("guven", 0)))),
             x.get("guven", 0),
             x.get("risk_getiri_1", 0)
@@ -333,6 +335,7 @@ def tabloya_cevir(results):
     tablo = []
     for item in results:
         tablo.append({
+            **data_confidence(item),
             "Profesyonel Karar": item.get("profesyonel_karar", "İŞLEM YAPMA"),
             "Kalibre Edilmiş Olasılık": item.get("kalibre_olasilik"),
             "Kalibrasyon Örnek": item.get("kalibrasyon_ornek", 0),

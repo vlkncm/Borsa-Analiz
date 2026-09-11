@@ -22,7 +22,7 @@ def bist100_verisi():
         return _BENCHMARK_CACHE.copy()
     with _BENCHMARK_LOCK:
         if _BENCHMARK_CACHE is None:
-            data = guvenli_yf_download("XU030.IS", period="2y", interval="1d", retries=1)
+            data = guvenli_yf_download("XU100.IS", period="2y", interval="1d", retries=1)
             if data is not None and isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.get_level_values(0)
             _BENCHMARK_CACHE = temiz_fiyat_verisi(data) if data is not None else pd.DataFrame()
@@ -262,6 +262,7 @@ def teknik_analiz(symbol, kategori):
             df.columns = df.columns.get_level_values(0)
 
         ham_satir = len(df)
+        ham_ohlcv = df.copy()
         veri_kaynagi = df.attrs.get("veri_kaynagi", "Yahoo Finance")
         veri_uyusmazligi = df.attrs.get("veri_uyusmazligi", "")
         df = temiz_fiyat_verisi(df)
@@ -427,13 +428,15 @@ def teknik_analiz(symbol, kategori):
         )
         formasyon = formasyonlari_tespit_et(df)
         fibonacci = fibonacci_analizi(df)
-        profesyonel = profesyonel_analiz(df, bist100_verisi())
+        benchmark = bist100_verisi()
+        profesyonel = profesyonel_analiz(df, benchmark)
         uluslararasi_faktorler = faktorleri_hesapla(df)
         rsi_supertrend = rsi_supertrend_hesapla(df, zaman_dilimi="1G")
         gunluk_trade = gunluk_trade_teyitleri(df)
         # Ertesi gün adayı özellikleri yalnız son tamamlanmış günlük bar ve
         # öncesinden hesaplanır. Sonraki gün bilgisi bu aşamada mevcut değildir.
-        ertesi_gun_ozellikleri = gunluk_ozellikleri_hesapla(df, as_of=df.index[-1])
+        ertesi_gun_ozellikleri = gunluk_ozellikleri_hesapla(ham_ohlcv, as_of=ham_ohlcv.index[-1], benchmark=benchmark)
+        ertesi_gun_ozellikleri["eksik_bar_sayisi"] = temizlenen_satir
 
         # ==========================
         # Mevcut karar sistemi
@@ -461,6 +464,7 @@ def teknik_analiz(symbol, kategori):
             "veri_kaynagi": veri_kaynagi,
             "veri_uyusmazligi": veri_uyusmazligi,
             "veri_guven_puani": veri_guven,
+            "cache_fallback": bool(df.attrs.get("cache_fallback", False)),
             "veri_durumu": veri_durumu,
             "veri_satir_sayisi": len(df),
             "elenen_eksik_bar": temizlenen_satir,

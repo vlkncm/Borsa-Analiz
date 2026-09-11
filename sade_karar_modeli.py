@@ -35,6 +35,22 @@ def _risk(risk_pct: pd.Series) -> pd.Series:
     return pd.cut(risk_pct, [-math.inf, 3, 7, math.inf], labels=["DÜŞÜK RİSK", "ORTA RİSK", "YÜKSEK RİSK"]).astype(str)
 
 
+def _guvenli_aday_sirasi(result: pd.DataFrame, source: pd.DataFrame, limit: int) -> pd.DataFrame:
+    """Rapor fallback dahil veri güvenini puandan önce uygular."""
+    result["DATA_CONFIDENCE"] = _text(source, ("DATA_CONFIDENCE",), "LOW").reindex(result.index)
+    result["Veri Güven Notu"] = _text(source, ("data_confidence_notu",), "Veri güveni doğrulanmadı").reindex(result.index)
+    for column in ("Günlük Trade Teyit", "Günlük Trade Skoru"):
+        if column in source:
+            result[column] = source[column].reindex(result.index)
+    if "DATA_CONFIDENCE" in source:
+        result = result[result.DATA_CONFIDENCE.isin(["HIGH", "MEDIUM"])].copy()
+    else:
+        result["Karar"] = "VERİ DOĞRULAMA BEKLE"
+    return (result.assign(_confidence=result.DATA_CONFIDENCE.map({"HIGH": 2, "MEDIUM": 1, "LOW": 0}))
+            .sort_values(["_confidence", "Güven Skoru", "Potansiyel %"], ascending=False)
+            .head(limit).drop(columns="_confidence").reset_index(drop=True))
+
+
 def sade_gerekce(row: dict) -> str:
     reasons = []
     if float(row.get("Güven Skoru", 0) or 0) >= 75:
@@ -79,7 +95,7 @@ def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None
         "Güven Skoru": sc.clip(0, 100).round(0).astype(int),
         "Risk": _risk(((p - st) / p * 100).fillna(99)),
     }, index=idx)
-    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+    return _guvenli_aday_sirasi(result, work, limit)
 
 
 def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
@@ -118,7 +134,7 @@ def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
         "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
         "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
     }, index=idx)
-    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+    return _guvenli_aday_sirasi(result, work, limit)
 
 
 def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iterable[str] = ()) -> pd.DataFrame:
@@ -146,12 +162,12 @@ def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iter
         "Tahmini Süre": sure, "Güven Skoru": score.loc[idx].clip(0, 100).round().astype(int),
         "Risk": _risk(((price.loc[idx] - stop.loc[idx]) / price.loc[idx] * 100).fillna(99)),
     }, index=idx)
-    return result.sort_values(["Güven Skoru", "Potansiyel %"], ascending=False).head(limit).reset_index(drop=True)
+    return _guvenli_aday_sirasi(result, work, limit)
 
 
 def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     """iPhone/PWA 50 TL altı taramasındaki teknik ve likidite puanını masaüstünde uygular."""
-    columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Skor", "Risk/Getiri"]
+    columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Skor", "Risk/Getiri", "DATA_CONFIDENCE", "Finansal Kalite"]
     if df is None or df.empty:
         return pd.DataFrame(columns=columns)
     work = df.copy()
@@ -172,7 +188,9 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
         ((ret20 > 0) & (ret20 < 20)).astype(int) * 5 + (ret60 > 0).astype(int) * 5 +
         (rr >= 1.5).astype(int) * 5
     ).clip(0, 100)
-    valid = price.between(1, 50, inclusive="both") & (turnover >= 5_000_000) & (score >= 48) & (target > price) & (stop < price)
+    confidence = _text(work, ("DATA_CONFIDENCE",), "LOW")
+    valid = (price.gt(0) & price.le(50) & (turnover >= 5_000_000) & (score >= 48)
+             & (target > price) & (stop > 0) & (stop < price) & confidence.isin(["HIGH", "MEDIUM"]))
     idx = work.index[valid]
     if idx.empty:
         return pd.DataFrame(columns=columns)
@@ -187,13 +205,23 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
         "Hedef": target.loc[idx].round(2), "Stop": stop.loc[idx].round(2),
         "Potansiyel %": potential.round(2), "Skor": score.loc[idx].astype(int),
         "Risk/Getiri": rr.loc[idx].round(2),
+        "DATA_CONFIDENCE": confidence.loc[idx], "Finansal Kalite": "VERİ YOK",
     }, index=idx)
     return result.sort_values(["Skor", "Risk/Getiri"], ascending=False).head(limit).reset_index(drop=True)
 
 
-def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
+def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame, metadata=None, now=None) -> dict | None:
     """iPhone/PWA ile aynı 1 yıllık OHLCV formülünü tek hisseye uygular."""
     if frame is None or len(frame) < 200:
+        return None
+    from borsa_tarayici import veri_islem_gunu_gecikmesi
+    from ertesi_gun_tavan import gunluk_ozellikleri_hesapla
+    source = getattr(metadata, "source", frame.attrs.get("veri_kaynagi", ""))
+    if ("Borsa İstanbul" not in source or getattr(metadata, "is_stale", False)
+            or frame.attrs.get("cache_fallback") or veri_islem_gunu_gecikmesi(frame.index[-1], simdi=now) > 0):
+        return None
+    features = gunluk_ozellikleri_hesapla(frame)
+    if not features.get("veri_yeterli"):
         return None
     data = frame.copy().dropna(subset=["Close", "High", "Low"])
     if len(data) < 200:
@@ -202,7 +230,7 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     high, low = pd.to_numeric(data["High"], errors="coerce"), pd.to_numeric(data["Low"], errors="coerce")
     volume = pd.to_numeric(data.get("Volume", 0), errors="coerce").fillna(0)
     price = float(close.iloc[-1])
-    if not 1 <= price <= 50:
+    if not 0 < price <= 50:
         return None
     turnover = float((close * volume).tail(20).mean())
     if not math.isfinite(turnover) or turnover < 5_000_000:
@@ -212,7 +240,7 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     delta = close.diff(); gain = delta.clip(lower=0).tail(14).mean(); loss = (-delta.clip(upper=0)).tail(14).mean()
     rsi = 100.0 if loss == 0 else float(100 - 100 / (1 + gain / loss))
     macd_line = ema(12) - ema(26); macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-    volume_ratio = float(volume.iloc[-1] / max(volume.tail(20).mean(), 1))
+    volume_ratio = features["rvol"]
     ret20 = float((price / close.iloc[-21] - 1) * 100); ret60 = float((price / close.iloc[-61] - 1) * 100)
     previous = close.shift(1)
     tr = pd.concat([(high-low), (high-previous).abs(), (low-previous).abs()], axis=1).max(axis=1)
@@ -229,7 +257,8 @@ def elli_tl_ohlcv_adayi(symbol: str, frame: pd.DataFrame) -> dict | None:
     return {"Hisse": symbol.replace(".IS", ""), "Durum": status, "Mevcut Fiyat": round(price, 2),
             "Alım Bölgesi": f"{min(price*.98, e20):.2f} – {price*1.01:.2f} TL", "Hedef": round(target, 2),
             "Stop": round(stop, 2), "Potansiyel %": round((target/price-1)*100, 2), "Skor": int(score),
-            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover)}
+            "Risk/Getiri": round(rr, 2), "Ortalama İşlem Tutarı": round(turnover),
+            "DATA_CONFIDENCE": "MEDIUM", "Finansal Kalite": "VERİ YOK"}
 
 
 def en_iyi_vade(backtest: pd.DataFrame | None, tur: str) -> tuple[int, str]:

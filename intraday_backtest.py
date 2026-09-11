@@ -54,7 +54,7 @@ def performans_ozeti(trades: pd.DataFrame) -> dict:
         return {"toplam_islem": 0, "uyari": "Geçmiş performans, gelecek sonucu garanti etmez."}
     net = pd.to_numeric(trades["net_getiri"], errors="coerce").dropna()
     equity = (1 + net).cumprod()
-    drawdown = equity/equity.cummax()-1
+    drawdown = equity/equity.cummax().clip(lower=1)-1
     gains, losses = net[net > 0].sum(), abs(net[net < 0].sum())
     probs = pd.to_numeric(trades.get("tahmin_olasiligi"), errors="coerce")
     actual = pd.to_numeric(trades.get("hedef_once"), errors="coerce")
@@ -76,8 +76,13 @@ def walk_forward_tahminleri(outcomes: pd.DataFrame, min_train: int = 30) -> pd.D
     """Her satırı yalnız kendisinden önceki sonuçlarla tahmin ederek sızıntıyı önler."""
     ordered = outcomes.sort_values("sinyal_zamani").reset_index(drop=True).copy()
     estimates = []
+    signal_times = pd.to_datetime(ordered["sinyal_zamani"], errors="coerce", utc=True)
+    # Eski günlük kayıtlarda sonuç ancak seans sonunda bilinebilir.
+    outcome_times = (pd.to_datetime(ordered["sonuc_zamani"], errors="coerce", utc=True)
+                     if "sonuc_zamani" in ordered else signal_times.dt.normalize()+pd.Timedelta(days=1)-pd.Timedelta(nanoseconds=1))
     for i in range(len(ordered)):
-        evidence = ampirik_kanit(ordered.iloc[:i], min_samples=min_train)
+        known = signal_times.lt(signal_times.iloc[i]) & outcome_times.lt(signal_times.iloc[i])
+        evidence = ampirik_kanit(ordered.loc[known], min_samples=min_train)
         estimates.append(evidence["olasilik"])
     ordered["tahmin_olasiligi"] = estimates
     return ordered

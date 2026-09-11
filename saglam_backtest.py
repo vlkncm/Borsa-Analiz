@@ -49,19 +49,23 @@ def performans_metrikleri(trades: pd.DataFrame, return_col: str = "Getiri %", ou
     if trades is None or trades.empty or return_col not in trades:
         return {"samples": 0, "precision": None, "false_positive_rate": None, "net_ev": None,
                 "profit_factor": None, "max_drawdown": None, "target_before_stop": None}
-    returns = pd.to_numeric(trades[return_col], errors="coerce").dropna()/100
+    returns = pd.to_numeric(trades[return_col], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()/100
     if returns.empty:
         return {"samples": 0}
     wins, losses = returns[returns > 0], returns[returns <= 0]
     equity = (1+returns).cumprod()
-    drawdown = equity/equity.cummax()-1
-    outcomes = trades.get(outcome_col, pd.Series("", index=trades.index)).astype(str)
+    drawdown = equity/equity.cummax().clip(lower=1)-1
+    outcomes = trades.loc[returns.index].get(outcome_col, pd.Series("", index=returns.index)).astype(str)
     target = outcomes.str.contains("HEDEF", case=False, na=False)
     stop = outcomes.str.contains("STOP", case=False, na=False)
     resolved = target | stop
     precision = float(target[resolved].mean()) if resolved.any() else float((returns > 0).mean())
     pf = wins.sum()/abs(losses.sum()) if abs(losses.sum()) > 0 else math.inf
     return {"samples": len(returns), "precision": round(precision, 4),
+        "win_rate": round(float((returns > 0).mean()), 4),
+        "median_return": round(float(returns.median()*100), 4),
+        "payoff_ratio": round(float(wins.mean()/abs(losses.mean())), 4) if len(wins) and len(losses) and losses.mean() < 0 else None,
+        "sharpe_per_trade": round(float(returns.mean()/returns.std(ddof=1)), 4) if len(returns) > 1 and returns.std(ddof=1) > 0 else None,
         "false_positive_rate": round(1-precision, 4), "net_ev": round(float(returns.mean()*100), 4),
         "profit_factor": round(float(pf), 4) if math.isfinite(pf) else math.inf,
         "max_drawdown": round(float(drawdown.min()*100), 4),
@@ -112,7 +116,26 @@ def veri_butunlugu_kontrolu(frame: pd.DataFrame) -> dict:
     required = {"symbol", "date", "was_listed", "adjusted_for_splits", "dividend_adjusted"}
     missing = sorted(required-set(frame.columns if frame is not None else []))
     kap_ok = frame is not None and {"kap_published_at", "decision_time"}.issubset(frame.columns)
-    return {"point_in_time_universe": not missing and bool(frame["was_listed"].fillna(False).all()),
-        "corporate_actions_adjusted": not missing and bool(frame["adjusted_for_splits"].fillna(False).all()) and bool(frame["dividend_adjusted"].fillna(False).all()),
+    populated = frame is not None and not frame.empty
+    universe_ok = populated and not missing and bool(frame["was_listed"].eq(True).all())
+    actions_ok = populated and not missing and bool(frame["adjusted_for_splits"].eq(True).all()) and bool(frame["dividend_adjusted"].eq(True).all())
+    publication_ok = False
+    if kap_ok and populated:
+        published = pd.to_datetime(frame.kap_published_at, errors="coerce", utc=True)
+        decision = pd.to_datetime(frame.decision_time, errors="coerce", utc=True)
+        publication_ok = bool((published.notna() & decision.notna() & published.le(decision)).all())
+    return {"point_in_time_universe": universe_ok,
+        "corporate_actions_adjusted": actions_ok,
         "kap_publication_time_available": bool(kap_ok), "missing_fields": missing,
-        "safe_for_model_selection": not missing and bool(kap_ok)}
+        "publication_time_valid": publication_ok,
+        "safe_for_model_selection": bool(universe_ok and actions_ok and publication_ok)}
+
+
+def skor_grubu_performansi(trades: pd.DataFrame, score_col="score", return_col="Getiri %") -> pd.DataFrame:
+    """Sağlanan OOS işlemleri özetler; ağırlık seçmez veya performans uydurmaz."""
+    rows = []
+    scores = pd.to_numeric(trades[score_col], errors="coerce") if score_col in trades else pd.Series(dtype=float)
+    for low, high, label in ((60, 70, "60-69"), (70, 80, "70-79"), (80, 90, "80-89"), (90, 101, "90+")):
+        selected = trades.loc[scores.ge(low) & scores.lt(high)] if len(scores) else pd.DataFrame()
+        rows.append({"score_bucket": label, **performans_metrikleri(selected, return_col)})
+    return pd.DataFrame(rows)

@@ -22,6 +22,7 @@ GORUNEN_KOLONLAR = [
     "Model Olasılığı %",
     "Karar Risk/Getiri",
     "Karar Nedenleri",
+    "DATA_CONFIDENCE",
 ]
 
 
@@ -77,6 +78,8 @@ def vade_listeleri_uret(df: pd.DataFrame):
         (hedef > alis_ust) & (stop < alis_alt) & (rr >= 1.2) &
         (olasilik >= 55) & (veri_yasi <= 4) & risk_pct.between(0.5, 15)
     )
+    if "DATA_CONFIDENCE" in work:
+        temel_kalite &= work["DATA_CONFIDENCE"].isin(["HIGH", "MEDIUM"])
 
     work["_kisa"] = (
         guven * 0.22 + olasilik * 0.18 + fib * 0.13 + form * 0.13 +

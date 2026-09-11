@@ -135,6 +135,8 @@ def _bist_ile_birlestir(symbol: str, interval: str, df: pd.DataFrame) -> pd.Data
         for sutun in resmi.columns:
             sonuc.loc[tarih, sutun] = resmi.iloc[-1][sutun]
         sonuc = _normalize(sonuc)
+        # Resmî kaynak etiketi, bültenden sonraki doğrulanmamış günlük bara taşınamaz.
+        sonuc = sonuc.loc[sonuc.index <= tarih].copy()
         sonuc.attrs["veri_kaynagi"] = "Yahoo tarihsel + Borsa İstanbul resmî kapanış"
         sonuc.attrs["bist_bulten_tarihi"] = tarih.strftime("%Y-%m-%d")
         uyusmazlik = onceki is not None and abs(onceki - float(resmi.iloc[-1]["Close"])) > 0.001
@@ -176,6 +178,7 @@ def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -
         stale = _oku(key, None)
         _olay(symbol, "YEDEK_CACHE" if not stale.empty else "HATA", str(exc))
         if not stale.empty:
+            stale.attrs["cache_fallback"] = True
             return stale.copy()
         raise
 

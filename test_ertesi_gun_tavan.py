@@ -47,6 +47,7 @@ class ErtesiGunTavanTests(unittest.TestCase):
         self.assertIsNone(result["ertesi_gun_tavan_olasiligi"])
         self.assertEqual(result["olasilik_notu"], PROBABILITY_UNAVAILABLE)
         calibrated = aday_degerlendir(features, {}, {"samples": 30, "ceiling_probability": 100,
+                                                      "out_of_sample": True, "calibration_end": "2024-12-31",
                                                       "eight_plus_probability": 64})
         self.assertEqual(calibrated["ertesi_gun_tavan_olasiligi"], 99)
 
