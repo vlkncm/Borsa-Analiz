@@ -32,7 +32,7 @@ from dashboard_ui import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.3.3"
+APP_VERSION = "10.4.2"
 _CRASH_STREAM = None
 
 

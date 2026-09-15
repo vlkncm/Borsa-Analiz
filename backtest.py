@@ -23,7 +23,7 @@ def macd_hesapla(df):
 def atr_hesapla(df, period=14):
     """Deprecated: v10.2 kanonik Wilder ATR motoruna yönlendirir."""
     values = atr(df, period)
-    return values.bfill().fillna(0.0)
+    return values
 
 
 def backtest_hisse(
@@ -46,7 +46,7 @@ def backtest_hisse(
             period=period,
             interval="1d",
             progress=False,
-            auto_adjust=False,
+            auto_adjust=True,
             threads=False
         )
 
@@ -56,6 +56,9 @@ def backtest_hisse(
         if df.empty or len(df) < 260:
             return None
 
+        if df.attrs.get("stale_fallback"):
+            raise ValueError("Stale market cache cannot validate a strategy")
+        df = df[~df.index.duplicated(keep="last")].sort_index()
         df = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"]).copy()
 
         df = daily_features(df)

@@ -1,7 +1,10 @@
 #define MyAppName "Borsa Analiz Pro MAX"
-#define MyAppVersion "10.3.3"
+#define MyAppVersion "10.4.2"
 #define MyAppPublisher "V Software"
 #define MyAppExeName "BorsaAnalizProMAX.exe"
+#ifndef MyBuildRoot
+  #define MyBuildRoot "dist"
+#endif
 
 [Setup]
 AppId={{A83B4F11-7F95-4E9F-B6A5-123456789001}
@@ -11,7 +14,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=SetupOutput
-OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v10.3.3
+OutputBaseFilename=Setup_Borsa_Analiz_Pro_MAX_v10.4.2
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -30,8 +33,8 @@ Name: "turkish"; MessagesFile: "compiler:Languages\Turkish.isl"
 Name: "desktopicon"; Description: "Masaüstüne kısayol oluştur"; GroupDescription: "Ek görevler:"
 
 [Files]
-Source: "dist\BorsaAnalizProMAX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "dist\BorsaTaramaMotoru\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyBuildRoot}\BorsaAnalizProMAX\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyBuildRoot}\BorsaTaramaMotoru\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "KULLANIM_KOSULLARI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "SORUMLULUK_REDDI.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "GIZLILIK_BILDIRIMI.txt"; DestDir: "{app}"; Flags: ignoreversion

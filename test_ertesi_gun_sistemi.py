@@ -34,7 +34,7 @@ class ErtesiGunSistemiTests(unittest.TestCase):
         spec = Path("BorsaAnalizProMAX.spec").read_text(encoding="utf-8")
         build = Path("EXE_VE_SETUP_OLUSTUR.bat").read_text(encoding="utf-8")
         self.assertIn("bist_hisseleri_613_aktif.txt", spec)
-        self.assertIn("bist_hisseleri_613_aktif.txt", build)
+        self.assertIn("BorsaAnalizProMAX.spec", build)
 
     def test_tavan_fiyati_fiyat_adimina_asagi_yuvarlanir(self):
         result = pay_fiyat_limitleri(49.99)

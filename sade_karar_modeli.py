@@ -35,6 +35,20 @@ def _risk(risk_pct: pd.Series) -> pd.Series:
     return pd.cut(risk_pct, [-math.inf, 3, 7, math.inf], labels=["DÜŞÜK RİSK", "ORTA RİSK", "YÜKSEK RİSK"]).astype(str)
 
 
+def _verisi_guvenilir(frame: pd.DataFrame) -> pd.DataFrame:
+    """Apply data vetoes to fallback lists too, preserving their visible schema."""
+    valid = pd.Series(True, index=frame.index)
+    if "DATA_CONFIDENCE" in frame:
+        valid &= frame["DATA_CONFIDENCE"].isin(["HIGH", "MEDIUM"])
+    if "Veri Durumu" in frame:
+        valid &= frame["Veri Durumu"].eq("GÜVENİLİR")
+    if "Veri Yaşı (Gün)" in frame:
+        valid &= _num(frame, ("Veri Yaşı (Gün)",), 999).le(4)
+    if "Veri Kalite Notu" in frame:
+        valid &= frame["Veri Kalite Notu"].eq("Güncel resmî kapanış verisi doğrulandı")
+    return frame.loc[valid].copy()
+
+
 def sade_gerekce(row: dict) -> str:
     reasons = []
     if float(row.get("Güven Skoru", 0) or 0) >= 75:
@@ -49,7 +63,7 @@ def sade_gerekce(row: dict) -> str:
 def sade_firsatlar(df: pd.DataFrame, vade: str, limit: int = 5, sure: str | None = None) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=SADE_KOLONLAR)
-    work = df.copy()
+    work = _verisi_guvenilir(df)
     price = _num(work, ("Referans Fiyat", "Fiyat"))
     buy_low = _num(work, ("Önerilen Alış Alt", "Alış Alt"), price)
     buy_high = _num(work, ("Önerilen Alış Üst", "Alış Üst"), price)
@@ -84,7 +98,7 @@ def gunluk_rapor_adaylari(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
     """Intraday servis yokken son güvenilir günlük raporu görünür yedek listeye çevirir."""
     if df is None or df.empty:
         return pd.DataFrame(columns=SADE_KOLONLAR)
-    work = df.copy()
+    work = _verisi_guvenilir(df)
     price = _num(work, ("Fiyat", "Referans Fiyat"))
     low = _num(work, ("Önerilen Alış Alt", "Alış Alt"), price)
     high = _num(work, ("Önerilen Alış Üst", "Alış Üst"), price)
@@ -123,7 +137,7 @@ def vade_rapor_adaylari(df: pd.DataFrame, sure: str, limit: int = 5, haric: Iter
     """Katı fırsat filtresi boş kaldığında hesaplanmış hedef/stopu olan izleme adaylarını gösterir."""
     if df is None or df.empty:
         return pd.DataFrame(columns=SADE_KOLONLAR)
-    work = df.copy()
+    work = _verisi_guvenilir(df)
     symbols = _text(work, ("Hisse",)).str.replace(".IS", "", regex=False).str.upper()
     if haric:
         work = work.loc[~symbols.isin({str(x).replace(".IS", "").upper() for x in haric})].copy()
@@ -152,7 +166,7 @@ def elli_tl_adaylari(df: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     columns = ["Hisse", "Durum", "Mevcut Fiyat", "Alım Bölgesi", "Hedef", "Stop", "Potansiyel %", "Hedefe Ulaşma Olasılığı %", "Tahmini Hedef Süresi", "Süre Güveni", "Beklenen Getiri / Süre", "Skor", "Risk/Getiri"]
     if df is None or df.empty:
         return pd.DataFrame(columns=columns)
-    work = df.copy()
+    work = _verisi_guvenilir(df)
     price = _num(work, ("Fiyat", "Referans Fiyat"))
     turnover = _num(work, ("Ortalama Günlük İşlem Tutarı",))
     e20, e50, e200 = (_num(work, (name,)) for name in ("EMA20", "EMA50", "EMA200"))
@@ -309,7 +323,7 @@ def orta_vadeden_kisa_adaylari_cikar(short_frame: pd.DataFrame, medium_source: p
 def buyume_adaylari(df: pd.DataFrame, fiyat_limiti: float | None = None, limit: int = 5, min_score: float = 65) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=["Hisse", "Büyüme Skoru", "Mevcut Fiyat", "Risk", "Beklenen Süre", "Büyüme Potansiyeli", "Ana Gerekçe"])
-    work = df.copy()
+    work = _verisi_guvenilir(df)
     price = _num(work, ("Fiyat", "Referans Fiyat"))
     financial = _num(work, ("Temel Puan", "Faaliyet Puanı"), 50)
     quality = _num(work, ("Usta Skor", "v4 Güven Puanı", "AI Güven Puanı"), 50)

@@ -1081,7 +1081,7 @@ def ozet_yazdir(results, baslangic_zamani):
 
 def main():
     baslangic_zamani = time.time()
-    print("Borsa Analiz Pro MAX v10.3.3 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
+    print("Borsa Analiz Pro MAX v10.4.2 başladı:", datetime.now().strftime("%d.%m.%Y %H:%M"))
 
     hisseler = hisseleri_txt_oku()
     print(f"Toplam taranacak hisse: {len(hisseler)}")

@@ -17,3 +17,6 @@ artifacts/*.log
 *.xlsx
 *.csv
 .wrangler/
+.validation/
+release/
+downloads/**/*.exe

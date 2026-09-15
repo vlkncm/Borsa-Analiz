@@ -54,17 +54,17 @@ def performans_ozeti(trades: pd.DataFrame) -> dict:
         return {"toplam_islem": 0, "uyari": "Geçmiş performans, gelecek sonucu garanti etmez."}
     net = pd.to_numeric(trades["net_getiri"], errors="coerce").dropna()
     equity = (1 + net).cumprod()
-    drawdown = equity/equity.cummax()-1
+    drawdown = equity/equity.cummax().clip(lower=1)-1
     gains, losses = net[net > 0].sum(), abs(net[net < 0].sum())
-    probs = pd.to_numeric(trades.get("tahmin_olasiligi"), errors="coerce")
-    actual = pd.to_numeric(trades.get("hedef_once"), errors="coerce")
+    probs = pd.to_numeric(trades.get("tahmin_olasiligi", pd.Series(np.nan, index=trades.index)), errors="coerce")
+    actual = pd.to_numeric(trades.get("hedef_once", pd.Series(np.nan, index=trades.index)), errors="coerce")
     valid = probs.notna() & actual.notna()
     brier = float(((probs[valid]/100-actual[valid])**2).mean()) if valid.any() else None
     return {
         "toplam_islem": len(net), "hedef": int(trades["sonuc"].astype(str).eq("HEDEF").sum()),
         "stop": int(trades["sonuc"].astype(str).str.startswith("STOP").sum()),
         "gun_sonu": int(trades["sonuc"].astype(str).eq("GÜN SONU").sum()),
-        "belirsiz": int(trades.get("belirsiz", False).sum()), "kazanma_orani": float((net > 0).mean()),
+        "belirsiz": int(trades.get("belirsiz", pd.Series(False, index=trades.index)).sum()), "kazanma_orani": float((net > 0).mean()),
         "ortalama_net_getiri": float(net.mean()), "medyan_net_getiri": float(net.median()),
         "beklenen_deger": float(net.mean()), "profit_factor": None if losses == 0 else float(gains/losses),
         "maksimum_dusus": float(drawdown.min()), "brier_skoru": brier,
@@ -76,8 +76,13 @@ def walk_forward_tahminleri(outcomes: pd.DataFrame, min_train: int = 30) -> pd.D
     """Her satırı yalnız kendisinden önceki sonuçlarla tahmin ederek sızıntıyı önler."""
     ordered = outcomes.sort_values("sinyal_zamani").reset_index(drop=True).copy()
     estimates = []
+    signal_times = pd.to_datetime(ordered["sinyal_zamani"], errors="coerce", utc=True)
+    # Missing resolution timestamps cannot establish when a label became known.
+    outcome_times = (pd.to_datetime(ordered["sonuc_zamani"], errors="coerce", utc=True)
+                     if "sonuc_zamani" in ordered else pd.Series(pd.NaT, index=ordered.index, dtype="datetime64[ns, UTC]"))
     for i in range(len(ordered)):
-        evidence = ampirik_kanit(ordered.iloc[:i], min_samples=min_train)
+        known = signal_times.lt(signal_times.iloc[i]) & outcome_times.lt(signal_times.iloc[i])
+        evidence = ampirik_kanit(ordered.loc[known], min_samples=min_train)
         estimates.append(evidence["olasilik"])
     ordered["tahmin_olasiligi"] = estimates
     return ordered

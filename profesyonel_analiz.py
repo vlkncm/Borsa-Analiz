@@ -167,6 +167,16 @@ def profesyonel_analiz(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = Non
     for ad, (gun, esik) in VADELER.items():
         ileri = _ileri_getiri(close, gun)
         uygun = regime & ileri.notna()
+        # Overlapping forward windows are not independent observations.
+        positions = np.flatnonzero(uygun.to_numpy())
+        independent = []
+        last_position = -gun
+        for position in positions:
+            if position - last_position >= gun:
+                independent.append(position)
+                last_position = position
+        uygun = pd.Series(False, index=close.index)
+        uygun.iloc[independent] = True
         ornek = int(uygun.sum())
         kazanan = int((ileri[uygun] >= esik).sum())
         ham = kazanan / ornek if ornek else 0.0

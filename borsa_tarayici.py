@@ -206,6 +206,8 @@ def guvenli_yf_download(symbol, period="9mo", interval="1d", retries=3):
                 timeout=20
             )
             if df is not None and not df.empty:
+                if df.attrs.get("stale_fallback"):
+                    raise ValueError("Stale fallback cannot produce a trading signal")
                 return df
         except Exception as exc:
             son_hata = exc
@@ -255,10 +257,10 @@ def teknik_analiz(symbol, kategori):
         ema50 = float(last["EMA50"])
         volume = float(last["Volume"])
         volume_ma20 = float(last["VOLUME_MA20"])
-        volume_ratio = (volume / volume_ma20) if volume_ma20 > 0 else 1.0
+        volume_ratio = (volume / volume_ma20) if volume_ma20 > 0 else 0.0
         macd = float(last["MACD"])
         macd_signal = float(last["MACD_SIGNAL"])
-        ema200 = guvenli_sayi(last.get("EMA200"), 0)
+        ema200 = guvenli_sayi(last.get("EMA200"), price)
         atr = guvenli_sayi(last.get("ATR"), price * 0.02)
         adx = guvenli_sayi(last.get("ADX"), 0)
         ret20 = guvenli_sayi(last.get("RET20"), 0)
@@ -266,11 +268,12 @@ def teknik_analiz(symbol, kategori):
         ret252 = guvenli_sayi(last.get("RET252"), 0)
         veri_yasi = max(0, (pd.Timestamp.now().normalize() - pd.Timestamp(df.index[-1]).tz_localize(None).normalize()).days)
         islem_gunu_gecikmesi = veri_islem_gunu_gecikmesi(df.index[-1])
-        resmi_bist = "Borsa İstanbul" in veri_kaynagi
+        resmi_bist = ("Borsa İstanbul" in veri_kaynagi and
+                      df.attrs.get("bist_bulten_tarihi") == pd.Timestamp(df.index[-1]).strftime("%Y-%m-%d"))
         veri_guven = 95 if resmi_bist else 90
         veri_guven -= min(20, temizlenen_satir * 5)
         veri_guven -= max(0, veri_yasi - 1) * 5
-        if len(df) < 300:
+        if len(df) < 200:
             veri_guven -= 10
         if islem_gunu_gecikmesi > 0:
             veri_guven = min(veri_guven, 50)
@@ -412,6 +415,10 @@ def teknik_analiz(symbol, kategori):
         else:
             aksiyon = "TUT"
         return {
+            "cache_fallback": bool(df.attrs.get("stale_fallback")),
+            "kurumsal_aksiyon_riski": int(bool(df.attrs.get("corporate_action_warning"))),
+            "hacim_verisi_gecerli": bool(df["Volume"].tail(20).gt(0).all()),
+            "resmi_kapanis_dogrulandi": resmi_bist,
             "symbol": symbol,
             "veri_tarihi": pd.Timestamp(df.index[-1]).strftime("%Y-%m-%d"),
             "veri_yasi_gun": veri_yasi,

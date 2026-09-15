@@ -1,4 +1,50 @@
-# Borsa Analiz Pro MAX v10.3.3
+# Borsa Analiz Pro MAX v10.4.2
+
+## Windows için sıfırdan kurulum — v10.4.2
+
+**[v10.4.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe)**
+
+1. Yukarıdaki `Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe` dosyasını indir.
+2. Dosyayı çalıştır ve kurulumu tamamla. Eski sürümleri önce kurman gerekmez.
+3. Başlat menüsündeki **Borsa Analiz Pro MAX** kısayolunu aç; pencere başlığında **v10.4.2** görünür.
+
+Hazır installer Python, PyCharm veya Inno Setup kurulumu gerektirmez; uygulamayı,
+tarama motorunu, indikatörleri ve model kaynaklarını birlikte yükler.
+GitHub'ın **Code → Download ZIP** seçeneği kaynak kodu indirir; doğrudan kurulum
+için yukarıdaki installer bağlantısını kullan.
+
+[En son yayımlanan sürüm](https://github.com/vlkncm/Borsa-Analiz/releases/latest) ·
+[v10.4.2 SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/SHA256SUMS.txt)
+
+## v10.4.2 analiz ve veri bütünlüğü
+
+- Yerel çalışan arayüz ve mevcut özellikler korunmuştur.
+- Tamamlanmamış barlar, eski cache, eksik hacim ve resmî kapanış tarihinin uyuşmaması alım kararını engeller.
+- Risk/getiri hesapları ve vade skorları daha ihtiyatlıdır; backtest split/temettü düzeltilmiş veriyi kullanır.
+- Sonuç zamanı bilinmeyen işlemlerden öğrenme ve örtüşen tarihsel örneklerle güveni şişirme engellenir.
+- 240 test ve 4 alt test başarılı; paketlenmiş uygulamanın açılması doğrulanmıştır.
+- Gerçek piyasa başarısındaki artış kanıtlanmış değildir; kesin getiri vaat edilmez.
+
+Ayrıntılar: [backend karşılaştırma ve doğrulama raporu](BACKEND_V10_4_2.md).
+
+## Kaynak koddan çalıştırma ve build
+
+Varsayılan `main` dalı ve `v10.4.2` etiketi bu sürümün kaynak kodunu içerir.
+Kaynak koddan çalıştırmak isteyen geliştiriciler:
+
+```powershell
+git clone https://github.com/vlkncm/Borsa-Analiz.git
+cd Borsa-Analiz
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app_qt.py
+```
+
+Installer üretmek için Python ve Inno Setup 6 bulunan Windows bilgisayarda
+`EXE_VE_SETUP_OLUSTUR.bat` çalıştırılır. Script depodaki `.spec` dosyalarını kullanır;
+sonuç `SetupOutput/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe` olur.
+
+## Önceki sürümlerin değişiklikleri
 
 ## v10.3.3 kurtarma sürümü
 
@@ -243,8 +289,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v8.8.0 kurulum dosyasını indir](downloads/v8.8.0/Setup_Borsa_Analiz_Pro_MAX_v8.8.0.exe)
-- SHA-256: `2E036351D6900B15EA787F3C7B399795DF01CD3B2C34B9B21327AEE0AF649731`
+- [Borsa Analiz Pro MAX v10.4.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe)
+- [SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/SHA256SUMS.txt)
 
 ## v7.2 merkezi veri katmanı
 

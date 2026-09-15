@@ -42,7 +42,7 @@ def vade_listeleri_uret(df: pd.DataFrame):
     # kullanır. UI başlığı ile backend evreni böylece aynıdır.
 
     guven = _num(work, "v4 Güven Puanı", 50)
-    olasilik = _num(work, "Model Olasılığı %", 50)
+    olasilik = _num(work, "Model Olasılığı %", 50)  # compatibility: scenario score, not calibrated probability
     getiri = _num(work, "Beklenen Getiri %", 0)
     rr = _num(work, "Karar Risk/Getiri", 0)
     fib = _num(work, "Fibonacci Puanı", 50)
@@ -102,17 +102,26 @@ def vade_listeleri_uret(df: pd.DataFrame):
         getiri.clip(0, 50) / 50 * 100 * 0.06 + kanit * 0.10
     )
 
+    work[["_kisa", "_orta", "_uzun"]] = (work[["_kisa", "_orta", "_uzun"]] / 1.10).clip(0, 100)
+    safe_data = pd.Series(True, index=work.index)
+    if "Veri Durumu" in work:
+        safe_data &= work["Veri Durumu"].eq("GÜVENİLİR")
+    if "Veri Kalite Onaylı" in work:
+        safe_data &= work["Veri Kalite Onaylı"].eq(True)
+    if "Veri Kalite Notu" in work:
+        safe_data &= work["Veri Kalite Notu"].eq("Güncel resmî kapanış verisi doğrulandı")
+
     def sec(score_col: str, sure: str, min_score: float, min_rr: float) -> pd.DataFrame:
         vade_kaniti = {"_kisa": kisa_guvenli, "_orta": orta_guvenli, "_uzun": uzun_guvenli}[score_col]
         # Sıralama motoru sert kapı zinciriyle evreni tek hisseye indirmez.
         # Kalite koşulları puanı etkiler; veri yoksa yalnızca geçerli fiyat/target/stop tutulur.
-        kalite = ((fiyat > 0) & (hedef > alis_ust) & (stop < alis_alt) &
+        kalite = (safe_data & (fiyat > 0) & (alis_alt > 0) & (alis_ust >= alis_alt) & (stop > 0) & (hedef > alis_ust) & (stop < alis_alt) &
                   (veri_yasi <= 4) & (rr >= min_rr))
         aday = work[kalite].copy()
         # Eksik alış bandında hedef/fiyat fallback'i kullanılabilir; stale veri
         # veya yetersiz R/R hiçbir koşulda yeniden aday havuzuna giremez.
         if aday.empty and (alis_alt.le(0) | alis_ust.le(0)).any():
-            aday = work[(fiyat > 0) & (hedef > fiyat) & (stop < fiyat) &
+            aday = work[safe_data & (fiyat > 0) & (hedef > fiyat) & (stop > 0) & (stop < fiyat) &
                         (veri_yasi <= 4) & (rr >= min_rr)].copy()
         if aday.empty:
             return pd.DataFrame(columns=["Hisse", "Vade", "Vade Skoru"] + GORUNEN_KOLONLAR[1:])

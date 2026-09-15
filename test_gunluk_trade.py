@@ -147,6 +147,7 @@ class BacktestTests(unittest.TestCase):
 
     def test_low_sample_probability_hidden_and_walk_forward_no_leak(self):
         rows = pd.DataFrame({"sinyal_zamani": pd.date_range("2026-01-01", periods=31),
+                             "sonuc_zamani": pd.date_range("2026-01-01 18:00", periods=31),
                              "net_getiri": [0.01]*31, "hedef_once": [1]*31})
         self.assertIsNone(ampirik_kanit(rows.iloc[:29])["olasilik"])
         out = walk_forward_tahminleri(rows, min_train=30)

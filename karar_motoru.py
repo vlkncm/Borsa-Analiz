@@ -106,8 +106,6 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
         if x > price * 1.015
     ]
     target = min(candidates) if candidates else price + atr * 3.0
-    if target < price * 1.04:
-        target = price + atr * 3.0
 
     stop_candidates = [
         x for x in [technical_stop, base_support - atr * 0.65]
@@ -116,9 +114,9 @@ def karar_uret(item: Dict[str, Any]) -> Dict[str, Any]:
     stop = max(stop_candidates) if stop_candidates else price - atr * 1.8
 
     expected_return = max(0.0, (target / max(buy_high, 0.01) - 1) * 100)
-    possible_loss = max(0.1, (1 - stop / max(buy_low, 0.01)) * 100)
+    possible_loss = max(0.1, (1 - stop / max(buy_high, 0.01)) * 100)
     calculated_rr = expected_return / possible_loss if possible_loss > 0 else 0
-    rr = max(rr, calculated_rr)
+    rr = calculated_rr
     validation = canli_sinyal_dogrula(item, expected_return, possible_loss, rr)
     advanced = {
         **gelismis_sinyal_degerlendir({**item, "onerilen_satis": target, "onerilen_stop": stop}),

@@ -76,9 +76,12 @@ class IndicatorTests(unittest.TestCase):
         frame = self._frame(np.linspace(10, 30, 100))
         macd, signal = macd_hesapla(frame)
         atr = atr_hesapla(frame)
-        for series in (rsi_hesapla(frame), macd, signal, atr):
+        for series in (rsi_hesapla(frame), macd, signal):
             self.assertEqual(len(series), len(frame))
             self.assertTrue(np.isfinite(series.astype(float)).all())
+        self.assertEqual(len(atr), len(frame))
+        self.assertTrue(atr.iloc[:13].isna().all())
+        self.assertTrue(np.isfinite(atr.iloc[13:]).all())
 
     def test_incomplete_latest_bar_is_removed(self):
         frame = pd.DataFrame({

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -86,7 +87,14 @@ def _normalize(df: pd.DataFrame | None) -> pd.DataFrame:
     for c in gerekli + ["Volume"]:
         out[c] = pd.to_numeric(out[c], errors="coerce")
     if isinstance(out.index, pd.DatetimeIndex):
-        out.index = pd.DatetimeIndex(out.index.as_unit("ns").values)
+        out.index = out.index.as_unit("ns")
+        if out.index.tz is not None:
+            out.index = out.index.tz_convert(ISTANBUL).tz_localize(None)
+        out.index.freq = None
+    out[gerekli + ["Volume"]] = out[gerekli + ["Volume"]].replace([np.inf, -np.inf], np.nan)
+    if not isinstance(out.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+    out = out[~out.index.isna()]
     nan_rows = int(out[gerekli].isna().any(axis=1).sum())
     out = out.dropna(subset=gerekli)
     invalid_price = ~(out[gerekli] > 0).all(axis=1)
@@ -98,7 +106,7 @@ def _normalize(df: pd.DataFrame | None) -> pd.DataFrame:
     duplicates = int(out.index.duplicated(keep="last").sum())
     out = out[~out.index.duplicated(keep="last")].sort_index()
     ratios = out["Close"].pct_change(fill_method=None).add(1).replace([float("inf"), float("-inf")], pd.NA)
-    corporate_warning = bool(((ratios > 3) | (ratios < 1/3)).fillna(False).any())
+    corporate_warning = bool(((ratios > 1.25) | (ratios < 0.75)).fillna(False).any())
     out.attrs["quality_report"] = {"input_rows": input_rows, "output_rows": len(out),
                                    "nan_rows": nan_rows, "invalid_price_rows": int(invalid_price.sum()),
                                    "invalid_volume_rows": int(invalid_volume.sum()),
@@ -173,16 +181,30 @@ def _bist_ile_birlestir(symbol: str, interval: str, df: pd.DataFrame) -> pd.Data
         return df
 
 
+def tamamlanmis_gunluk_barlar(frame: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
+    if frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
+        return frame.copy()
+    now = now or datetime.now(ISTANBUL)
+    now = now.replace(tzinfo=ISTANBUL) if now.tzinfo is None else now.astimezone(ISTANBUL)
+    local = frame.index
+    if local.tz is not None:
+        local = local.tz_convert(ISTANBUL)
+    complete = (local.date < now.date()) | ((local.date == now.date()) & ((now.hour, now.minute) >= (18, 15)))
+    return frame.loc[complete].copy()
+
+
 def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -> pd.DataFrame:
     """yfinance.download uyumlu, kalite kontrollu ve onbellekli indirme."""
     symbol = saglayici_sembolu(symbol, "yahoo")
-    key = json.dumps(["YAHOO", symbol, period, interval, datetime.now(ISTANBUL).date().isoformat()], ensure_ascii=False)
+    adjusted = bool(kwargs.get("auto_adjust", False))
+    key = json.dumps(["v3", symbol, period, interval, adjusted], ensure_ascii=False)
     cached = _oku(key, _ttl(interval))
     if not cached.empty:
-        birlesik = _bist_ile_birlestir(symbol, interval, cached)
+        birlesik = cached if adjusted else _bist_ile_birlestir(symbol, interval, cached)
+        birlesik.attrs.update(cached.attrs)
         if len(birlesik) != len(cached) or birlesik.attrs.get("veri_kaynagi") != cached.attrs.get("veri_kaynagi"):
             _kaydet(key, symbol, period, interval, birlesik, birlesik.attrs.get("veri_kaynagi", "yahoo+bist"))
-        return birlesik.copy()
+        return tamamlanmis_gunluk_barlar(birlesik) if interval == "1d" else birlesik.copy()
     try:
         raw = yf.download(symbol, period=period, interval=interval,
                           progress=kwargs.get("progress", False),
@@ -193,15 +215,16 @@ def download(symbol: str, period: str = "1mo", interval: str = "1d", **kwargs) -
         if df.empty:
             raise ValueError("Saglayici bos veya gecersiz OHLC verisi dondurdu")
         df.attrs["veri_kaynagi"] = "Yahoo Finance"
-        df = _bist_ile_birlestir(symbol, interval, df)
+        df = df if adjusted else _bist_ile_birlestir(symbol, interval, df)
         _kaydet(key, symbol, period, interval, df, df.attrs.get("veri_kaynagi", "yahoo"))
         _olay(symbol, "BASARILI", f"{len(df)} satir")
-        return df.copy()
+        return tamamlanmis_gunluk_barlar(df) if interval == "1d" else df.copy()
     except Exception as exc:
         stale = _oku(key, None)
         _olay(symbol, "YEDEK_CACHE" if not stale.empty else "HATA", str(exc))
         if not stale.empty:
-            return stale.copy()
+            stale.attrs["stale_fallback"] = True
+            return tamamlanmis_gunluk_barlar(stale) if interval == "1d" else stale.copy()
         raise
 
 
@@ -245,12 +268,16 @@ class YahooPiyasaVeriAdapteri:
         fetched = datetime.now(ISTANBUL)
         frame = download(symbol, period=period, interval="1d", progress=False, auto_adjust=False)
         frame = _istanbul_index(frame)
+        # Günlük bar gün ortasında kesinleşmiş kapanış değildir.
+        today = fetched.date()
+        complete = (frame.index.date < today) | ((frame.index.date == today) & ((fetched.hour, fetched.minute) >= (18, 15)))
+        frame = frame.loc[complete].copy()
         last = frame.index[-1].to_pydatetime() if not frame.empty else None
         meta = VeriMetadatasi(
             source=frame.attrs.get("veri_kaynagi", self.source), fetched_at=fetched,
             last_bar_at=last, symbol=symbol, first_bar_at=(frame.index[0].to_pydatetime() if not frame.empty else None),
             interval="1d", is_delayed=True, delay_minutes=None,
-            is_stale=frame.empty or last is None or (fetched.date() - last.date()).days > 4,
+            is_stale=bool(frame.attrs.get("stale_fallback")) or frame.empty or last is None or (fetched.date() - last.date()).days > 4,
             is_complete_bar=True, price_basis="raw",
             official_close_verified="Borsa" in frame.attrs.get("veri_kaynagi", ""),
             corporate_action_warning=bool(frame.attrs.get("corporate_action_warning", False)),
@@ -271,9 +298,7 @@ class YahooPiyasaVeriAdapteri:
         minutes = _interval_dakika(interval)
         last = frame.index[-1].to_pydatetime()
         last_complete = fetched >= last + timedelta(minutes=minutes)
-        frame["is_complete_bar"] = True
-        if not last_complete:
-            frame.iloc[-1, frame.columns.get_loc("is_complete_bar")] = False
+        frame["is_complete_bar"] = frame.index + pd.Timedelta(minutes=minutes) <= fetched
         completed = frame[frame["is_complete_bar"]].copy()
         last_completed = completed.index[-1].to_pydatetime() if not completed.empty else None
         delay = None if last_completed is None else max(0.0, (fetched-last_completed).total_seconds()/60.0-minutes)

@@ -20,6 +20,15 @@ def veri_kalite_kapisi(item: Dict[str, Any]) -> Dict[str, Any]:
     if age > 0: reasons.append("Son işlem gününün kapanış verisi yok")
     if confidence < 80: reasons.append("Veri güven puanı 80 altında")
     if "Borsa İstanbul" not in source: reasons.append("Resmî BIST kapanışıyla doğrulanmadı")
+    if item.get("resmi_kapanis_dogrulandi") is False:
+        reasons.append("Son barın tarihi resmî bültenle eşleşmiyor")
+    if item.get("cache_fallback") or item.get("stale_fallback"):
+        reasons.append("Sağlayıcı hatası sonrası eski cache")
+    bars = item.get("veri_satir_sayisi")
+    if bars is not None and _f(bars) < 60:
+        reasons.append("Yetersiz OHLCV geçmişi")
+    if item.get("hacim_verisi_gecerli") is False:
+        reasons.append("Eksik veya sıfır hacim teyidi")
     adjustment = _f(item.get("kurumsal_aksiyon_riski"))
     if adjustment > 0: reasons.append("Kurumsal aksiyon/fiyat serisi kontrolü gerekli")
     return {"veri_kalite_onayli": not reasons, "veri_kalite_notu": " | ".join(reasons) if reasons else "Güncel resmî kapanış verisi doğrulandı", "fiyat_tipi": "SON RESMÎ KAPANIŞ (CANLI DEĞİL)"}
