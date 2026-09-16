@@ -1,5 +1,13 @@
 # Değişiklik Günlüğü
 
+## 10.4.3
+
+- Güncel v10.4.2 tabanında Yüksek Hareket Radarı skor doygunluğu giderildi; yuvarlanmamış, yönlü sürekli skorla deterministik sıralama eklendi.
+- Relative Strength, para akışı, fiyat/hacim teyidi ve risk cezaları güçlendirildi. Canlı fiyat teyidi olmayan aday yüksek güvenli/seçkin gösterilmiyor.
+- Hareket skoru, model olasılığı ve veri güveni ayrıldı; look-ahead ve değerlendirme metrikleri kontrolleri geliştirildi.
+- Günlük Trade motoru, diğer analizler ve arayüz düzeni korundu.
+- **Performans kabulü FAIL:** üç ortak tarihsel oturumda T+1 Precision@10 %20 → %16,67; ortalama ileri getiri %0,04 → −%0,39. Teknik düzeltme başarılı olsa da tahmin performansında iyileşme doğrulanmadı. Ayrıntılar: `MOVEMENT_FIX_REPORT.md`.
+
 ## 10.3.3
 
 - Gerçek v10.3.1 installer davranışından ilerleme paneli ve T+1/T+2 görünümü kurtarıldı.

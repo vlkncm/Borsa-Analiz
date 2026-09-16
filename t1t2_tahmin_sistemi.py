@@ -24,7 +24,7 @@ from fiyat_limitleri import fiyat_adimi, pay_fiyat_limitleri
 
 
 DATA_VERSION = "t1t2-pit-v2"
-MODEL_VERSION = "t1t2-reference-v2"
+MODEL_VERSION = "t1t2-directional-v3"
 HORIZONS = ("T+1", "T+2")
 TARGETS_BY_HORIZON = {
     "T+1": ("max_5", "max_7", "max_8", "limit_up", "close_5", "target_before_stop"),
@@ -103,6 +103,8 @@ class Prediction:
     risk_reward: float | None = None
     net_ev_pct: float | None = None
     levels_valid: bool = False
+    live_confirmed: bool = False
+    confidence: float = 0.0
 
     def dict(self):
         return asdict(self)
@@ -158,6 +160,16 @@ def point_in_time_features(frame: pd.DataFrame, as_of: Any,
         "estimated_slippage": float(min(.03, max(.0002, 2_000_000/max(last*v.iloc[-20:].mean(), 1)))),
         "move_realized_5_atr": float((last-c.iloc[-6])/max(float(atr.iloc[-1]), .01)),
     }
+    extra = _vectorized_feature_frame(work).iloc[-1]
+    for name in ("breakout_return", "failed_breakout", "upper_wick", "gap_return", "mfi14"):
+        result[name] = float(extra[name])
+    result["stale_sessions"] = float(max(0, np.busday_count(work.index[-1].date(), cutoff.date())))
+    result["risk_reward"] = max(0., .07 - .15 * result["atr_pct"]) / max(1.35 * result["atr_pct"], .0001)
+    # Optional VWAP must already be point-in-time data, never a daily proxy for live VWAP.
+    if "VWAP" in work:
+        vw = _series(work, "VWAP")
+        result["vwap_distance"] = last / float(vw.iloc[-1]) - 1
+        result["vwap_slope"] = float(vw.pct_change().iloc[-1])
     for prefix, other in (("bist", benchmark), ("sector", sector)):
         if other is not None and not other.empty and "Close" in other:
             oc = _series(other.loc[other.index <= cutoff], "Close")
@@ -165,6 +177,8 @@ def point_in_time_features(frame: pd.DataFrame, as_of: Any,
             result[f"relative_strength_{prefix}_5"] = (float(aligned.iloc[-1, 0]/aligned.iloc[-6, 0] -
                                                                    aligned.iloc[-1, 1]/aligned.iloc[-6, 1])
                                                          if len(aligned) >= 6 else np.nan)
+            if prefix == "bist" and len(aligned) >= 6:
+                result["benchmark_ret_5"] = float(aligned.iloc[-1, 1]/aligned.iloc[-6, 1]-1)
         else:
             result[f"relative_strength_{prefix}_5"] = np.nan
     return {key: float(value) for key, value in result.items()
@@ -277,6 +291,12 @@ def _vectorized_feature_frame(work: pd.DataFrame) -> pd.DataFrame:
     result["mfi14"]=100-100/(1+positive/negative.replace(0,np.nan)); result["turnover20"]=c*v.rolling(20).mean()
     result["estimated_slippage"]=(2_000_000/result["turnover20"].clip(lower=1)).clip(.0002,.03)
     result["move_realized_5_atr"]=(c-c.shift(5))/atr.clip(lower=.01)
+    previous_high=h.shift(1).rolling(20).max()
+    result["breakout_return"]=c/previous_high-1
+    result["failed_breakout"]=((h/previous_high-1).clip(lower=0) * (c<previous_high))
+    result["upper_wick"]=(h-pd.concat([o,c],axis=1).max(axis=1))/(h-l).replace(0,np.nan)
+    result["gap_return"]=o/c.shift()-1
+    result["mfi14"]=100*positive/(positive+negative).replace(0,np.nan)
     return result
 
 
@@ -309,7 +329,8 @@ def predict_symbol(symbol: str, frame: pd.DataFrame, as_of: Any, horizon: str,
     raw_scores = []
     for target in TARGETS_BY_HORIZON[horizon]:
         artifact = None if short_history else artifacts.get(f"{horizon}:{target}")
-        if artifact is None or not artifact.reliable:
+        if (artifact is None or not artifact.reliable or
+                pd.Timestamp(artifact.untouched_test_end).date() >= pd.Timestamp(as_of).date()):
             probabilities[target] = None
             continue
         vector = [features.get(name) for name in artifact.feature_names]
@@ -352,31 +373,24 @@ def predict_symbol(symbol: str, frame: pd.DataFrame, as_of: Any, horizon: str,
             net_ev=(p/100)*(target7/entry_high-1)*100-(1-p/100)*(1-stop/entry_high)*100-.4
     return Prediction(symbol, pd.Timestamp(as_of).isoformat(), horizon, security_type,
                       feature_hash(features), len(features), missing,
-                      float(np.mean(raw_scores)) if raw_scores else score,
+                      score,
                       dict(probabilities), status, tuple(reasons[:3]), tuple(risks[:3]),
                       identity.key, MODEL_VERSION, DATA_VERSION, price,
                       (float(pay_fiyat_limitleri(price).ust_limit) if price else None),
-                      entry_low,entry_high,target7,target8,stop,rr,net_ev,levels_valid)
+                      entry_low,entry_high,target7,target8,stop,rr,net_ev,levels_valid,
+                      False, 45. * len(features) / max(1, len(features)+len(missing)) /
+                      (1 + features.get("stale_sessions", 0)))
 
 
 def _rule_score(f):
     if not f: return None
-    score = 50 + 12*np.tanh(f.get("ret_5", 0)*10) + 10*np.tanh((f.get("relative_volume", 1)-1))
-    score += 8*(f.get("close_location", .5)-.5) + 6*np.tanh(f.get("obv_slope_5", 0))
-    score -= 10*max(0, f.get("move_realized_5_atr", 0)-3)/3
-    return float(max(0, min(100, score)))
+    from ertesi_gun_motoru import t1_movement_trade_scores
+    return t1_movement_trade_scores(f)[0]
 
 
 def _rule_scores_frame(rows: pd.DataFrame) -> np.ndarray:
     """Ayni ozelliklerden egitimsiz, aciklanabilir kural tabanli referans skor."""
-    ret5=pd.to_numeric(rows.get("ret_5",0),errors="coerce").fillna(0).to_numpy(float)
-    rvol=pd.to_numeric(rows.get("relative_volume",1),errors="coerce").fillna(1).to_numpy(float)
-    location=pd.to_numeric(rows.get("close_location",.5),errors="coerce").fillna(.5).to_numpy(float)
-    obv=pd.to_numeric(rows.get("obv_slope_5",0),errors="coerce").fillna(0).to_numpy(float)
-    moved=pd.to_numeric(rows.get("move_realized_5_atr",0),errors="coerce").fillna(0).to_numpy(float)
-    score=50+12*np.tanh(ret5*10)+10*np.tanh(rvol-1)+8*(location-.5)+6*np.tanh(obv)
-    score-=10*np.maximum(0,moved-3)/3
-    return np.clip(score,0,100)
+    return np.array([_rule_score(row) for row in rows.to_dict("records")], dtype=float)
 
 
 def _feature_reasons(f):
@@ -399,20 +413,17 @@ def cross_sectional_rank(predictions: Iterable[Prediction]) -> list[dict[str, An
     rows = [p.dict() for p in predictions]
     if not rows: return []
     frame = pd.DataFrame(rows)
-    frame["raw_score"] = pd.to_numeric(frame["raw_score"], errors="coerce")
+    frame["raw_score"] = pd.to_numeric(frame["raw_score"], errors="coerce").replace([np.inf,-np.inf],np.nan)
     def ranking_score(probabilities):
         values=[probabilities.get(name) for name in ("max_7","max_8","limit_up")]
         return None if any(value is None for value in values) else .45*values[0]+.40*values[1]+.15*values[2]
     frame["ranking_score"]=frame["probabilities"].map(ranking_score)
     frame["calibrated"]=frame["ranking_score"].notna()
     # Kalibrasyon yokken radarı boşaltmamak için point-in-time kural skoru hareket skoru olarak korunur.
-    frame["movement_score"] = frame["raw_score"].clip(0, 100)
-    frame["trade_quality_score"] = frame.apply(
-        lambda r: max(0.0, min(100.0, float(r.get("movement_score") or 0) +
-                               (10.0 if r.get("levels_valid") else -8.0) +
-                               (min(10.0, float(r.get("net_ev_pct") or 0)) if r.get("net_ev_pct") is not None else -5.0))), axis=1)
-    frame = frame.sort_values(["calibrated","ranking_score","raw_score","symbol"],
-                              ascending=[False,False,False,True],na_position="last").reset_index(drop=True)
+    frame["movement_score"] = frame["raw_score"]
+    frame["trade_quality_score"] = frame["movement_score"].fillna(0) - 8 * (~frame["levels_valid"].fillna(False))
+    frame = frame.sort_values(["raw_score","ranking_score","symbol"],
+                              ascending=[False,False,True],na_position="last",kind="stable").reset_index(drop=True)
     total = len(frame)
     frame["rank"] = np.arange(1, total+1)
     frame["percentile"] = (total-frame["rank"]+1)/total*100
@@ -433,7 +444,7 @@ def radar_lists(predictions: Iterable[Prediction], wide_limit: int = 30) -> dict
     for row in ranked:
         probs=row.get("probabilities",{}); risks=" ".join(row.get("risks",())).upper()
         calibrated=all(probs.get(name) is not None for name in ("max_7","max_8","limit_up"))
-        if (calibrated and row.get("percentile",0)>=95 and row.get("trade_quality_score", 0)>=65 and probs["max_7"]>=20 and
+        if (row.get("live_confirmed") is True and calibrated and row.get("percentile",0)>=95 and row.get("trade_quality_score", 0)>=65 and probs["max_7"]>=20 and
                 probs["max_8"]>=10 and "KAYMA" not in risks and "ILERLEMIS" not in risks and
                 row.get("security_type") in NORMAL_SECURITY_TYPES and row.get("levels_valid") and
                 row.get("net_ev_pct") is not None and row["net_ev_pct"]>0):
@@ -452,8 +463,9 @@ def ranking_metrics(rows: pd.DataFrame, score_column: str, label_column: str,
         hits = int(top[label_column].sum())
         result[f"precision_at_{k}"] = hits/len(top) if len(top) else None
         result[f"recall_at_{k}"] = hits/positives if positives else None
-    result["false_positive_rate_at_10"] = (int((ordered.head(10)[label_column] == 0).sum())/len(ordered.head(10))
-                                            if len(ordered.head(10)) else None)
+    negatives = int((ordered[label_column] == 0).sum())
+    result["false_positive_rate_at_10"] = (int((ordered.head(10)[label_column] == 0).sum())/negatives
+                                            if negatives else None)
     return result
 
 
@@ -462,7 +474,7 @@ def daily_ranking_metrics(rows: pd.DataFrame, date_column: str, score_column: st
     """Precision/recall'i her gunun tum hisseleri icindeki kesitsel siradan olcer."""
     reports=[]
     for _date,group in rows.groupby(date_column):
-        if group[label_column].sum()>0: reports.append(ranking_metrics(group,score_column,label_column,ks))
+        reports.append(ranking_metrics(group,score_column,label_column,ks))
     keys={key for report in reports for key in report}
     return {key:(float(np.mean([r[key] for r in reports if r.get(key) is not None]))
                  if any(r.get(key) is not None for r in reports) else None) for key in keys}
@@ -512,6 +524,8 @@ def train_reference_artifact(dataset: pd.DataFrame, horizon: str, target: str,
         ("T+2","close_positive"):"y_t2_close_positive",
     }.get((horizon,target))
     names=tuple(feature_names)
+    if any(name.startswith("y_") or "forward" in name or "outcome" in name for name in names):
+        raise ValueError("Outcome labels cannot be prediction features")
     if label is None or not names or dataset.empty or not {label,"as_of",*names}.issubset(dataset):
         return None,{"status":"YETERSIZ_VERI"}
     rows=dataset.dropna(subset=[label,"as_of",*names]).copy(); rows["as_of"]=pd.to_datetime(rows["as_of"])
@@ -526,7 +540,8 @@ def train_reference_artifact(dataset: pd.DataFrame, horizon: str, target: str,
     train=rows[rows.as_of.dt.normalize().isin(train_dates)]
     cal=rows[rows.as_of.dt.normalize().isin(cal_dates)]
     test=rows[rows.as_of.dt.normalize().isin(test_dates)]
-    if len(cal)<minimum_calibration or len(test)<minimum_calibration or cal[label].nunique()<2 or test[label].nunique()<2:
+    if (len(cal)<minimum_calibration or len(test)<minimum_calibration or
+            any(part[label].nunique()<2 or part[label].value_counts().min()<5 for part in (train,cal,test))):
         return None,{"status":"KALIBRASYON_YETERSIZ","train":len(train),"calibration":len(cal),"test":len(test)}
     mean=train[list(names)].mean(); std=train[list(names)].std(ddof=0).replace(0,1)
     # Standardizasyon parametreleri artefakt ozelliklerine gomulmedigi icin katsayilar ham olcege donusturulur.
@@ -535,6 +550,8 @@ def train_reference_artifact(dataset: pd.DataFrame, horizon: str, target: str,
     cal_raw=cal[list(names)].to_numpy(float)@weights+intercept; cal_y=cal[label].to_numpy(float)
     split=max(1,int(len(cal)*.7)); fit_raw,select_raw=cal_raw[:split],cal_raw[split:]
     fit_y,select_y=cal_y[:split],cal_y[split:]
+    if any(len(np.unique(y)) < 2 for y in (fit_y, select_y)):
+        return None, {"status":"KALIBRASYON_SINIF_YETERSIZ"}
     candidate_w,candidate_b=_fit_logistic(fit_raw.reshape(-1,1),fit_y,iterations=180,learning_rate=.02,l2=.001)
     iso_x,iso_y=_fit_isotonic(fit_raw,fit_y)
     sigmoid_select=1/(1+np.exp(-np.clip(candidate_w[0]*select_raw+candidate_b,-30,30)))
@@ -564,6 +581,8 @@ def train_reference_artifact(dataset: pd.DataFrame, horizon: str, target: str,
     rule_rank=daily_ranking_metrics(pd.DataFrame({"as_of":test.as_of.to_numpy(),"probability":rule_prob,"actual":actual}),
                                     "as_of","probability","actual")
     metrics={"status":"OK","train":len(train),"calibration":len(cal),"test":len(test),"brier":brier,
+             "class_counts": {name: {str(k): int(v) for k,v in part[label].value_counts().items()}
+                              for name,part in (("train",train),("calibration",cal),("test",test))},
              "positive_rate_test":float(actual.mean()),"test_start":artifact.untouched_test_start,
              "test_end":artifact.untouched_test_end,"calibration_method":method,
              "calibration_selection_brier":selection_brier,

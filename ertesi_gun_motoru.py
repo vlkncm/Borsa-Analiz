@@ -91,30 +91,64 @@ def teknik_ozellikler(frame: pd.DataFrame) -> dict[str, float]:
 
 
 def t1_movement_trade_scores(features: dict[str, float]) -> tuple[float, float, dict[str, float]]:
-    """Hareket ihtimali ile işlem kalitesini ayırır; sert veto kullanmaz."""
+    """Signed evidence; atan preserves ordering without clipping at 100.
+
+    Fixed weight norm does not reward missing factors by renormalising them.
+    This is a ranking score, never a calibrated probability or confidence.
+    """
     if not features:
         return 0.0, 0.0, {}
-    f = features
-    directional = 1.0 if f.get("plus_di", 0) > f.get("minus_di", 0) else -1.0
-    close_strength = max(0.0, min(1.0, f.get("close_location", .5)))
-    movement_parts = {
-        "momentum": 24 * np.tanh(max(-.2, min(.2, f.get("ret_5", 0))) * 8),
-        "momentum_acceleration": 10 * np.tanh(f.get("price_acceleration_2", 0) * 80),
-        "relative_volume": 10 * np.tanh(f.get("relative_volume", 1) - 1),
-        "volume_acceleration": 6 * np.tanh(f.get("volume_acceleration_2", 0) * 5),
-        "breakout_proximity": 10 * max(0, 1 - min(1, f.get("resistance20_distance", 1) / .08)),
-        "ema_slope": 8 * np.tanh(f.get("ema20_slope", 0) * 40) + 4 * np.tanh(f.get("ema50_slope", 0) * 40),
-        "rsi_slope": 5 * np.tanh(f.get("rsi_slope", 0) / 5),
-        "macd_acceleration": 6 * np.tanh(f.get("macd_hist_slope", 0) / max(f.get("atr_pct", .01), .001)),
-        "adx_direction": 7 * np.tanh((f.get("adx14", 0)-18) / 12) * directional,
-        "close_strength": 8 * (close_strength - .5),
+    f = {}
+    for key, value in features.items():
+        try:
+            if math.isfinite(float(value)): f[key] = float(value)
+        except (TypeError, ValueError):
+            pass
+    for canonical, alias in (("cmf20", "cmf"), ("mfi14", "mfi"),
+                             ("obv_slope_5", "obv_slope"), ("turnover20", "turnover")):
+        if canonical not in f and alias in f: f[canonical] = f[alias]
+    g = lambda key, default=0.: f.get(key, default)
+    t = math.tanh
+    direction = t(g("ret_1") / .02)
+    volume = t(max(0., g("relative_volume", 1.) - 1.))
+    rs = g("relative_strength_bist_5")
+    weights = {"momentum": 12, "relative_strength": 18, "sector_strength": 6,
+               "price_volume": 10, "volume_acceleration": 5, "close": 8,
+               "cmf": 10, "obv": 6, "mfi": 4, "breakout": 8,
+               "vwap": 6, "vwap_slope": 4, "acceleration": 5}
+    signals = {
+        "momentum": t(g("ret_5") / .06), "relative_strength": t(rs / .04),
+        "sector_strength": t(g("relative_strength_sector_5") / .04),
+        "price_volume": direction * volume,
+        "volume_acceleration": direction * t(max(0., g("volume_acceleration_2"))),
+        "close": t((g("close_location", .5) - .5) * 3),
+        "cmf": t(g("cmf20") / .15), "obv": t(g("obv_slope_5") / 2),
+        "mfi": t((g("mfi14", 50) - 50) / 25),
+        "breakout": t(g("breakout_return") / .02) * volume,
+        "vwap": t(g("vwap_distance") / .02),
+        "vwap_slope": t(g("vwap_slope") / .005),
+        "acceleration": t(g("price_acceleration_2") / .02),
     }
-    movement_parts = {k: (0.0 if not math.isfinite(float(v)) else float(v)) for k, v in movement_parts.items()}
-    movement = float(np.clip(50 + sum(movement_parts.values()), 0, 100))
-    risk_penalty = 18 * min(1, max(0, f.get("atr_pct", 0) / .06))
-    resistance_penalty = 10 * max(0, 1 - min(1, f.get("resistance20_distance", 1) / .02))
-    trade = float(np.clip(movement - risk_penalty - resistance_penalty + (8 if directional > 0 else -8), 0, 100))
-    return movement, trade, {k: round(float(v), 2) for k, v in movement_parts.items()}
+    parts = {key: weights[key] * value for key, value in signals.items()}
+    required = ("ret_1", "ret_5", "relative_volume", "close_location", "cmf20",
+                "obv_slope_5", "turnover20", "relative_strength_bist_5")
+    parts.update({
+        "failed_breakout": -12 * t(max(0., g("failed_breakout")) / .02),
+        "upper_wick": -8 * t(max(0., g("upper_wick") - .25) * 3),
+        "gap": -8 * t(max(0., abs(g("gap_return")) - .03) / .03),
+        "liquidity": -12 / (1 + max(0., g("turnover20")) / 10_000_000),
+        "undirected_volatility": -10 * t(max(0., g("atr_pct") - .03) / .03) * (1 - max(0., direction)),
+        "stale": -20 * t(max(0., g("stale_sessions"))),
+        "missing": -12 * sum(key not in f for key in required) / len(required),
+        "risk_reward": -8 * t(max(0., 1.5 - g("risk_reward", 1.5))),
+        "bearish_weak_rs": -15 * t(max(0., -g("benchmark_ret_5")) / .04) * (1 - max(0., t(rs / .04))),
+        "overextension": -8 * t(max(0., g("move_realized_5_atr") - 3) / 3),
+    })
+    scale = math.sqrt(sum(w*w for w in weights.values()))
+    raw = sum(parts.values()) / scale
+    movement = 50 + 100 / math.pi * math.atan(raw)
+    trade = 50 + 100 / math.pi * math.atan(raw - max(0., g("atr_pct")) / .06)
+    return movement, trade, {**parts, "raw_continuous": raw}
 
 
 def piyasa_rejimi(index_frame: pd.DataFrame, breadth: dict[str, float] | None = None) -> str:
@@ -135,7 +169,9 @@ def piyasa_rejimi(index_frame: pd.DataFrame, breadth: dict[str, float] | None = 
 
 def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any] | None = None,
                sector_score: float | None = None, calibration: KalibrasyonKaniti | None = None,
-               ipo_info: dict[str, Any] | None = None, as_of=None) -> dict[str, Any]:
+               ipo_info: dict[str, Any] | None = None, as_of=None, benchmark=None, metadata=None) -> dict[str, Any]:
+    if frame is not None and as_of is not None:
+        frame = frame.loc[frame.index <= pd.Timestamp(as_of)].copy()
     session_count = 0 if frame is None else len(frame.loc[frame.index <= pd.Timestamp(as_of)] if as_of is not None else frame)
     path, _level = model_yolu(session_count, IPO_AYARLARI)
     if path == "YENI_HALKA_ARZ" and session_count > 0:
@@ -154,6 +190,10 @@ def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any
                 "Neden Kodu": "MISSING_PRICE_DATA", "Eleme Nedeni": NEDEN_ACIKLAMALARI["MISSING_PRICE_DATA"],
                 "Riskler": ["Geçerli OHLCV yok"]}
     reasons, risks, score = [], [], 0.0
+    from t1t2_tahmin_sistemi import point_in_time_features
+    f.update(point_in_time_features(frame, frame.index[-1], benchmark=benchmark))
+    if metadata is not None and getattr(metadata, "is_stale", True):
+        f["stale_sessions"] = max(1., f.get("stale_sessions", 0.))
     movement_score, trade_quality, contributions = t1_movement_trade_scores(f)
     score = movement_score
     if 0 < f["ema20_distance"] < .06 and f["ema50_distance"] > 0: score += 14; reasons.append("Trend üzerinde, EMA20'den kopmamış")
@@ -183,7 +223,8 @@ def erken_aday(symbol: str, frame: pd.DataFrame, regime: str, kap: dict[str, Any
             "Tavana Kalan %": (float(limit.ust_limit)/f["price"]-1)*100,
             "%8+ Olasılığı": probability, "Tavan Olasılığı": probability, "Kapanış %8+ Olasılığı": probability,
             "Tahmini En Yüksek Fiyat": None, "Durum": status, "Referans Skor": round(score, 1),
-            "Movement Score": round(movement_score, 1), "Trade Quality Score": round(trade_quality, 1),
+            **f, "Movement Score": movement_score, "Trade Quality Score": trade_quality,
+            "Raw Movement Score": contributions["raw_continuous"],
             "Feature Contributions": contributions,
             "Aday Nedenleri": reasons, "Riskler": risks, "Piyasa Rejimi": regime,
             "Sektör Puanı": sector_score, "Veri Zamanı": str(frame.index[-1]),

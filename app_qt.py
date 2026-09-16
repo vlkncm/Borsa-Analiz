@@ -32,7 +32,7 @@ from dashboard_ui import (
 )
 
 APP_NAME = "Borsa Analiz Pro MAX"
-APP_VERSION = "10.4.2"
+APP_VERSION = "10.4.3"
 _CRASH_STREAM = None
 
 
@@ -1890,26 +1890,30 @@ class NextDayWorker(QObject):
             artifacts, model_metrics = load_artifacts(paket_kaynak_klasoru() / "models" / "t1t2_reference.json")
             # Endeks/breadth kaynağı doğrulanamadığında rejim uydurulmaz.
             regime = "VERİ YETERSİZ"
+            try:
+                benchmark, benchmark_meta = get_daily_ohlcv("XU100.IS", "2y")
+                if getattr(benchmark_meta, "is_stale", True): benchmark = None
+            except Exception:
+                benchmark = None
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
                     break
                 self.progress.emit(f"{index}/{len(symbols)} aktif BIST hissesi T+1 için inceleniyor · {len(rows)} güçlü/erken aday")
                 try:
                     history, _meta = get_daily_ohlcv(symbol, "2y")
-                    row = erken_aday(symbol, history, regime, kap=None)
+                    row = erken_aday(symbol, history, regime, kap=None, benchmark=benchmark, metadata=_meta)
                     if not history.empty:
                         as_of = history.index[-1]
-                        features = point_in_time_features(history, as_of)
-                        row.update({key: features.get(key) for key in (
-                            "price_acceleration_2", "volume_acceleration_2", "relative_volume",
-                            "resistance20_distance", "relative_strength_bist_5", "close_location",
-                            "turnover20")})
+                        features = point_in_time_features(history, as_of, benchmark=benchmark)
+                        row.update(features)
+                        row["stale_sessions"] = max(features.get("stale_sessions", 0), int(getattr(_meta, "is_stale", True)))
+                        row["live_confirmed"] = False  # Daily OHLCV cannot certify a live entry price.
                         row["Hacim Oranı"] = features.get("relative_volume")
                         row["Veri Kaynağı"] = getattr(_meta, "source", "Yahoo")
                         # Menkul turu kaynaktan kesinlestirilmedigi surece normal pay varsayilmaz.
                         security_type = security_types.get(symbol, "BELIRSIZ")
-                        t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type))
-                        t2_predictions.append(predict_symbol(symbol, history, as_of, "T+2", artifacts, security_type=security_type))
+                        t1_predictions.append(predict_symbol(symbol, history, as_of, "T+1", artifacts, security_type=security_type, benchmark=benchmark))
+                        t2_predictions.append(predict_symbol(symbol, history, as_of, "T+2", artifacts, security_type=security_type, benchmark=benchmark))
                     strong = row.get("Durum") in {"GÜÇLÜ ERTESİ GÜN ADAYI", "ERKEN BİRİKİM ADAYI"}
                     if row.get("Model Yolu") == "STANDART" and not strong:
                         row["Neden Kodu"] = "REJECTED_LOW_SCORE"

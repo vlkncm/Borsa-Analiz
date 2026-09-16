@@ -49,7 +49,21 @@ def t1_listeleri(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
         empty = pd.DataFrame()
         return {"wide": empty, "radar": pd.DataFrame(columns=RADAR_COLUMNS), "elite": empty}
     work = frame.copy()
-    work["Movement Score"] = _num(work, "Movement Score", _num(work, "Referans Skor", 0))
+    from ertesi_gun_motoru import t1_movement_trade_scores
+    # Recompute from evidence, never from the already clipped legacy display score.
+    evidence = work.to_dict("records")
+    for row in evidence:
+        for target, source, scale in (("ret_1", "Günlük Değişim %", .01),
+                                      ("relative_volume", "Hacim Oranı", 1),
+                                      ("risk_reward", "T+1 Risk/Getiri", 1)):
+            if target not in row and source in row:
+                row[target] = row[source] * scale if pd.notna(row[source]) else np.nan
+        stale_text = " ".join(str(row.get(k, "")) for k in ("Veri Durumu", "Durum" )).upper()
+        if any(s in stale_text for s in ("ESKİ", "STALE", "YETERSİZ", "VERİ ALINAMADI")):
+            row["stale_sessions"] = max(1., row.get("stale_sessions", 0.) or 0.)
+    scores = [t1_movement_trade_scores(row) for row in evidence]
+    work["Movement Score"] = [s[0] for s in scores]
+    work["Raw Movement Score"] = [s[2].get("raw_continuous", -np.inf) for s in scores]
     work["T+1 Geniş 30 Sırası"] = np.arange(1, len(work)+1)
     # Veri kalitesi ve likidite zayıf satırların ham hareket skoruyla üste çıkmasını önler.
     turnover = _num(work, "Ortalama İşlem Tutarı", _num(work, "Turnover", 0))
@@ -57,36 +71,30 @@ def t1_listeleri(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
         turnover = _num(work, "turnover20", 0)
     liquidity = _normalise(np.log10(turnover.clip(lower=1)), 7.0, 9.0)
     data_ok = (~_text(work, "Durum").str.contains("VERİ ALINAMADI|YETERSİZ", case=False)).astype(float)*100
-    rvol = _num(work, "Hacim Oranı", _num(work, "relative_volume", 1))
-    vacc = _num(work, "Hacim İvmesi", _num(work, "volume_acceleration_2", 0))
-    accel = _num(work, "Momentum İvmesi", _num(work, "price_acceleration_2", 0))
-    daily = _num(work, "Günlük Değişim %", _num(work, "Günlük %", 0))
-    close_strength = _num(work, "close_location", .5).clip(0, 1)*100
-    resistance = _num(work, "resistance20_distance", .08)
-    breakout = (100-(resistance.clip(0, .08)/.08*100)).clip(0, 100)
-    relative_strength = _normalise(_num(work, "relative_strength_bist_5", 0), -.05, .08)
-    # Hacim ancak fiyat/kapanış yönü pozitifse teyittir; dağıtım günleri ödüllendirilmez.
-    directed_volume = _normalise(rvol, .7, 2.5) * ((daily > 0) & (close_strength >= 50)).astype(float)
-    work["Radar Kalite Skoru"] = (
-        work["Movement Score"]*.34 + _normalise(accel, -.02, .03)*.10 +
-        directed_volume*.11 + _normalise(vacc, -.5, 1.5)*.07 + breakout*.09 +
-        relative_strength*.08 + liquidity*.10 + data_ok*.07 + close_strength*.04
-    ).round(2)
+    work["Radar Kalite Skoru"] = [s[1] for s in scores]
     weak = (liquidity < 25) | (data_ok < 100)
     work.loc[weak, "Radar Kalite Skoru"] -= 25
-    wide = work.sort_values(["Movement Score", "Radar Kalite Skoru"], ascending=False).head(30).copy()
+    # Explicit evidence is required; level arithmetic is not a live-price confirmation.
+    live = work.get("live_confirmed", pd.Series(False, index=work.index)).eq(True)
+    unconfirmed = _text(work, "Karar").str.contains("GÜNCEL FİYATLA DOĞRULA", case=False)
+    live &= ~unconfirmed & (data_ok == 100) & (_num(work, "stale_sessions", 0) == 0)
+    coverage = pd.DataFrame(evidence, index=work.index).reindex(columns=
+        ["ret_1", "ret_5", "relative_volume", "cmf20", "obv_slope_5", "relative_strength_bist_5"]
+        ).apply(pd.to_numeric, errors="coerce").replace([np.inf,-np.inf],np.nan).notna().mean(axis=1)
+    work["Confidence"] = 100 * coverage * np.where(live, 1., .45) * (data_ok / 100)
+    wide = work.sort_values(["Raw Movement Score", "Hisse"], ascending=[False,True],kind="stable").head(30).copy()
     wide["T+1 Geniş 30 Sırası"] = np.arange(1, len(wide)+1)
-    radar = wide.sort_values(["Radar Kalite Skoru", "Movement Score"], ascending=False).head(10).copy()
+    radar = wide.sort_values(["Raw Movement Score", "Hisse"], ascending=[False,True],kind="stable").head(10).copy()
     # Seçkin kendi precision kapılarına sahiptir; geniş/radar boolean'ını paylaşmaz.
     security = _text(wide, "Menkul Türü", "NORMAL_PAY")
     levels = wide.get("T+1 Seviye Doğrulandı", pd.Series(False, index=wide.index)).fillna(False).astype(bool)
     directional = (_num(wide, "plus_di", 1) > _num(wide, "minus_di", 0)) & (_num(wide, "Günlük Değişim %", 0) >= 0)
-    elite_mask = ((wide["Movement Score"] >= 62) & (wide["Radar Kalite Skoru"] >= 60) &
+    elite_mask = (live.reindex(wide.index) & (wide["Confidence"] >= 70) & (wide["Movement Score"] >= 62) & (wide["Radar Kalite Skoru"] >= 60) &
                   (liquidity.reindex(wide.index) >= 35) & directional & levels & security.eq("NORMAL_PAY"))
     elite = wide[elite_mask].sort_values(["Radar Kalite Skoru", "Movement Score"], ascending=False).head(10).copy()
     elite_symbols = set(elite.get("Hisse", pd.Series(dtype=str)).astype(str))
     radar["Sıra"] = np.arange(1, len(radar)+1)
-    radar["Güven"] = pd.cut(radar["Radar Kalite Skoru"], [-np.inf,55,70,np.inf], labels=["ORTA","YÜKSEK","ÇOK YÜKSEK"]).astype(str)
+    radar["Güven"] = pd.cut(radar["Confidence"], [-np.inf,50,70,85,np.inf], labels=["DÜŞÜK","ORTA","YÜKSEK","ÇOK YÜKSEK"]).astype(str)
     radar["Günlük %"] = _num(radar, "Günlük Değişim %", 0).round(2)
     radar["Hacim Oranı"] = _num(radar, "Hacim Oranı", _num(radar, "relative_volume", 1)).round(2)
     radar["Breakout Durumu"] = np.where(_num(radar,"resistance20_distance",.08)<=.01,"KIRILIM/YAKIN",np.where(_num(radar,"resistance20_distance",.08)<=.04,"YAKLAŞIYOR","UZAK"))

@@ -1,12 +1,12 @@
-# Borsa Analiz Pro MAX v10.4.2
+# Borsa Analiz Pro MAX v10.4.3
 
-## Windows için sıfırdan kurulum — v10.4.2
+## Windows için sıfırdan kurulum — v10.4.3
 
-**[v10.4.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe)**
+**[v10.4.3 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.3/Setup_Borsa_Analiz_Pro_MAX_v10.4.3.exe)**
 
-1. Yukarıdaki `Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe` dosyasını indir.
+1. Yukarıdaki `Setup_Borsa_Analiz_Pro_MAX_v10.4.3.exe` dosyasını indir.
 2. Dosyayı çalıştır ve kurulumu tamamla. Eski sürümleri önce kurman gerekmez.
-3. Başlat menüsündeki **Borsa Analiz Pro MAX** kısayolunu aç; pencere başlığında **v10.4.2** görünür.
+3. Başlat menüsündeki **Borsa Analiz Pro MAX** kısayolunu aç; pencere başlığında **v10.4.3** görünür.
 
 Hazır installer Python, PyCharm veya Inno Setup kurulumu gerektirmez; uygulamayı,
 tarama motorunu, indikatörleri ve model kaynaklarını birlikte yükler.
@@ -14,7 +14,17 @@ GitHub'ın **Code → Download ZIP** seçeneği kaynak kodu indirir; doğrudan k
 için yukarıdaki installer bağlantısını kullan.
 
 [En son yayımlanan sürüm](https://github.com/vlkncm/Borsa-Analiz/releases/latest) ·
-[v10.4.2 SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/SHA256SUMS.txt)
+[v10.4.3 SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.3/SHA256SUMS.txt)
+
+## v10.4.3 radar düzeltmesi
+
+- Güncel v10.4.2 tabanında skor doygunluğu, yönlü sıralama ve canlı teyit/güven ayrımı düzeltildi.
+- Günlük Trade motoru, diğer analizler ve arayüz düzeni korundu.
+- 259 test ve 4 alt test geçti; 1 tarihsel baseline testi atlandı.
+
+**Performans kabulü FAIL:** aynı üç tarihsel oturumda T+1 Precision@10 %20'den
+%16,67'ye, ortalama ileri getiri %0,04'ten −%0,39'a geriledi. Daha başarılı tahmin
+modeli olduğu iddia edilmez. [Düzeltme ve karşılaştırma raporu](MOVEMENT_FIX_REPORT.md).
 
 ## v10.4.2 analiz ve veri bütünlüğü
 
@@ -29,7 +39,7 @@ Ayrıntılar: [backend karşılaştırma ve doğrulama raporu](BACKEND_V10_4_2.m
 
 ## Kaynak koddan çalıştırma ve build
 
-Varsayılan `main` dalı ve `v10.4.2` etiketi bu sürümün kaynak kodunu içerir.
+Varsayılan `main` dalı ve `v10.4.3` etiketi bu sürümün kaynak kodunu içerir.
 Kaynak koddan çalıştırmak isteyen geliştiriciler:
 
 ```powershell
@@ -42,7 +52,7 @@ py -m venv .venv
 
 Installer üretmek için Python ve Inno Setup 6 bulunan Windows bilgisayarda
 `EXE_VE_SETUP_OLUSTUR.bat` çalıştırılır. Script depodaki `.spec` dosyalarını kullanır;
-sonuç `SetupOutput/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe` olur.
+sonuç `SetupOutput/Setup_Borsa_Analiz_Pro_MAX_v10.4.3.exe` olur.
 
 ## Önceki sürümlerin değişiklikleri
 
@@ -289,8 +299,8 @@ Sadeleştirilmiş BIST 30 yatırım karar motoru.
 
 ## Windows kurulumu
 
-- [Borsa Analiz Pro MAX v10.4.2 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/Setup_Borsa_Analiz_Pro_MAX_v10.4.2.exe)
-- [SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.2/SHA256SUMS.txt)
+- [Borsa Analiz Pro MAX v10.4.3 kurulum dosyasını indir](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.3/Setup_Borsa_Analiz_Pro_MAX_v10.4.3.exe)
+- [SHA-256 kontrol dosyası](https://github.com/vlkncm/Borsa-Analiz/releases/download/v10.4.3/SHA256SUMS.txt)
 
 ## v7.2 merkezi veri katmanı
 
