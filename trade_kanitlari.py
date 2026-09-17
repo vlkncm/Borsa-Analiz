@@ -280,7 +280,7 @@ def classify_market_regime(index_close: pd.Series | None, breadth_ratio: float |
     if not data_fresh or index_close is None:
         return {"rejim": MarketRegime.UNKNOWN.value, "islem_uygun": False, "nedenler": ["Piyasa verisi eksik/eski"]}
     close = pd.to_numeric(index_close, errors="coerce").dropna()
-    if len(close) < 60:
+    if len(close) < 61:
         return {"rejim": MarketRegime.UNKNOWN.value, "islem_uygun": False, "nedenler": ["Piyasa warm-up yetersiz"]}
     ret = close.pct_change(fill_method=None).dropna()
     volatility = ret.rolling(20).std(ddof=0)*math.sqrt(252)

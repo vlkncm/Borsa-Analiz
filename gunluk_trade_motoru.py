@@ -138,14 +138,19 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
         "sektor_verisi_var": False, "rs_bist_5": None, "rs_bist_20": None,
         "rs_sektor_5": None, "rs_sektor_20": None, "uyari": "BIST/sektör verisi yok"}
     regime = market_context or classify_market_regime(benchmark_close, data_fresh=not meta.is_stale)
+    sector_known = rs.get("rs_sektor_5") is not None and rs.get("rs_sektor_20") is not None
     rs_ok = (rs.get("rs_bist_5") is not None and rs.get("rs_bist_20") is not None
              and rs["rs_bist_5"] > 0 and rs["rs_bist_20"] > 0
-             and rs.get("rs_sektor_5") is not None and rs.get("rs_sektor_20") is not None
-             and rs["rs_sektor_5"] > 0 and rs["rs_sektor_20"] > 0)
+             and (not sector_known or (rs["rs_sektor_5"] > 0 and rs["rs_sektor_20"] > 0)))
+    # A falling market requires distinct positive divergence as well as
+    # positive continuation; regime alone must not reject every candidate.
+    effective_regime = dict(regime)
+    if regime.get("rejim") == "RISK_OFF" and rs.get("rs_bist_5") is not None:
+        effective_regime["islem_uygun"] = bool(rs["rs_bist_5"] >= 3 and momentum and above_vwap)
     rvol_ok = rvol["rvol"] is not None and rvol["rvol"] >= .8
     net_expectancy = None if expectancy is None else expectancy["net_beklenti_pct"]
     probability_gate_evidence = {"yeterli": horizon_evidence["probability_target_before_stop"] is not None}
-    gates = decision_gates(data_ok=not meta.is_stale, evidence=probability_gate_evidence, regime=regime,
+    gates = decision_gates(data_ok=not meta.is_stale, evidence=probability_gate_evidence, regime=effective_regime,
                            liquid=bool(session["Volume"].median() > 0),
                            net_expectancy_pct=net_expectancy, risk_reward=rr,
                            relative_strength_ok=rs_ok,
@@ -153,7 +158,7 @@ def gunluk_trade_analiz(symbol: str, interval: str = "15m", hesap_buyuklugu: flo
                            min_risk_reward=min_risk_getiri)
     probability_lower = horizon_evidence["probability_ci_low"] or 0.0
     rank = (ranking_score(net_expectancy_pct=net_expectancy, probability_lower_pct=probability_lower,
-                          relative_strength_pct=min(rs["rs_bist_5"], rs["rs_sektor_5"]),
+                          relative_strength_pct=min(rs["rs_bist_5"], rs["rs_sektor_5"] if sector_known else rs["rs_bist_5"]),
                           rvol=rvol["rvol"], risk_reward=rr, reliability_pct=100)
             if gates["uygun"] else None)
     excursions = mfe_mae_summary([] if historical_outcomes is None else historical_outcomes)

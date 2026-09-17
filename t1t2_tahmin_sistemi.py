@@ -692,6 +692,8 @@ class EveningSnapshotStore:
         for as_of,horizon,rank,prediction_json,outcome_json in rows:
             try:
                 prediction=json.loads(prediction_json); outcome=json.loads(outcome_json)
+                if not prediction.get("signal_timestamp") or not prediction.get("signal_price"):
+                    continue
                 records.append({"as_of":as_of,"horizon":horizon,"rank":rank,
                                 "p7":prediction.get("probabilities",{}).get("max_7"),
                                 "p8":prediction.get("probabilities",{}).get("max_8"),
@@ -731,6 +733,8 @@ class EveningSnapshotStore:
         for symbol,as_of,horizon,rank,payload_json,outcome_json in rows:
             try:
                 prediction=json.loads(payload_json); outcome=json.loads(outcome_json)
+                if not prediction.get("signal_timestamp") or not prediction.get("signal_price"):
+                    continue
                 if float(outcome.get("max_return_pct",-999))<minimum_return: continue
                 result.append({"Tarih":as_of,"Hisse":symbol.replace(".IS",""),"Vade":horizon,
                                "Gerçekleşen Maksimum %":round(float(outcome["max_return_pct"]),2),
@@ -755,6 +759,8 @@ class EveningSnapshotStore:
         for symbol,as_of,horizon,rank,payload,outcome in rows:
             try:
                 p=json.loads(payload); o=json.loads(outcome)
+                if not p.get("signal_timestamp") or not p.get("signal_price"):
+                    continue
                 records.append({"symbol":symbol.replace(".IS",""),"as_of":as_of,"horizon":horizon,
                                 "rank":int(rank) if rank is not None else 9999,
                                 "max_return_pct":float(o.get("max_return_pct",0) or 0),
@@ -782,16 +788,20 @@ def settle_pending_snapshots(store: EveningSnapshotStore, history_loader,
     for snapshot in store.pending():
         result["pending"]+=1
         try:
+            if not snapshot.get("signal_timestamp") or not snapshot.get("signal_price"):
+                result["not_ready"]+=1; continue
             history=history_loader(snapshot["symbol"])
             if isinstance(history,tuple): history=history[0]
             if history is None or history.empty:
                 result["not_ready"]+=1; continue
-            cutoff=pd.Timestamp(snapshot["as_of_timestamp"])
+            cutoff=pd.Timestamp(snapshot["signal_timestamp"])
             future=history[pd.DatetimeIndex(history.index).date>cutoff.date()]
             required=1 if snapshot["horizon"]=="T+1" else 2
             if len(future)<required:
                 result["not_ready"]+=1; continue
             outcome=evaluate_prediction(snapshot,future.head(required))
+            if outcome.get("status") != "TAMAMLANDI":
+                result["not_ready"]+=1; continue
             ok,_error=store.attach_outcome(int(snapshot["id"]),outcome,evaluated_at or datetime.now(timezone.utc).isoformat())
             result["settled" if ok else "errors"]+=1
         except Exception:
@@ -801,10 +811,18 @@ def settle_pending_snapshots(store: EveningSnapshotStore, history_loader,
 
 def evaluate_prediction(snapshot: Mapping[str,Any], future_bars: pd.DataFrame) -> dict[str,Any]:
     """Kayitli tahmini degistirmeden T+1/T+2 gerceklesmesini ayri hesaplar."""
-    if future_bars is None or future_bars.empty or snapshot.get("current_price") in (None,0):
+    if "signal_timestamp" in snapshot and snapshot.get("signal_price") in (None, 0):
+        return {"status": "SIGNAL_PRICE_MISSING"}
+    base_price = snapshot.get("signal_price", snapshot.get("current_price"))
+    if future_bars is None or future_bars.empty or base_price in (None,0):
         return {"status":"GERCEKLESME_VERISI_YOK"}
+    if snapshot.get("signal_timestamp"):
+        signal_day = pd.Timestamp(snapshot["signal_timestamp"]).date()
+        future_bars = future_bars[pd.DatetimeIndex(future_bars.index).date > signal_day]
+        if future_bars.empty:
+            return {"status":"GERCEKLESME_VERISI_YOK"}
     horizon=1 if snapshot.get("horizon")=="T+1" else 2
-    bars=future_bars.sort_index().head(horizon); base=float(snapshot["current_price"])
+    bars=future_bars.sort_index().head(horizon); base=float(base_price)
     max_return=float(bars.High.max()/base-1); close_return=float(bars.Close.iloc[-1]/base-1)
     mae=float(bars.Low.min()/base-1); ceiling_hits=[]
     prior=base; last_ceiling=None

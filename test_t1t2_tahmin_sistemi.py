@@ -155,7 +155,9 @@ def test_bugunku_sonuc_snapshot_payloadunu_degistirmez(tmp_path):
 def test_bekleyen_t1_gerceklesmesi_otomatik_ve_ayri_kaydedilir(tmp_path):
     source=frame(4); cutoff=source.index[-3]
     prediction=predict_symbol("A.IS",source.loc[:cutoff],cutoff,"T+1",security_type="NORMAL_PAY")
-    store=EveningSnapshotStore(tmp_path/"x.db"); assert store.save(prediction.dict())[0]
+    signal={**prediction.dict(), "signal_timestamp":pd.Timestamp(cutoff).isoformat(),
+            "signal_price":float(source.loc[cutoff,"Close"])}
+    store=EveningSnapshotStore(tmp_path/"x.db"); assert store.save(signal)[0]
     result=settle_pending_snapshots(store,lambda _symbol:source,evaluated_at="2026-08-28")
     assert result["settled"]==1 and store.pending()==[]
     assert store.performance_summary()["horizons"]["T+1"]["total"]==1
@@ -174,6 +176,8 @@ def test_performans_ozeti_ve_gercek_yukselen_denetimi(tmp_path):
     base=float(source.loc[cutoff,"Close"]); future.iloc[-2,future.columns.get_loc("High")]=base*1.08
     prediction=predict_symbol("A.IS",source.loc[:cutoff],cutoff,"T+1",security_type="NORMAL_PAY")
     store=EveningSnapshotStore(tmp_path/"x.db"); row=prediction.dict(); row["rank"]=1
+    row["signal_timestamp"]=pd.Timestamp(cutoff).isoformat()
+    row["signal_price"]=base
     ok,row_id=store.save(row); assert ok
     outcome={"status":"TAMAMLANDI","max_return_pct":8.,"close_return_pct":1.,
              "max_adverse_excursion_pct":-2.,"hit_5":1,"hit_7":1,"hit_8":1,

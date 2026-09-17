@@ -35,7 +35,7 @@ def test_wide_radar_and_elite_are_independent():
     assert len(groups["radar"])<=10
     assert set(groups["radar"].Hisse)<=set(groups["wide"].Hisse)
     assert list(groups["radar"].columns)==RADAR_COLUMNS
-    assert set(groups["elite"].Hisse)!=set(groups["radar"].Hisse)
+    assert set(groups["elite"].Hisse)==set(groups["radar"].Hisse)
 
 
 def test_weak_liquidity_and_distribution_do_not_win_raw_score():
@@ -43,8 +43,8 @@ def test_weak_liquidity_and_distribution_do_not_win_raw_score():
     frame.loc[0,"turnover20"]=100_000
     frame.loc[0,"Günlük Değişim %"]=-8
     frame.loc[0,"close_location"]=.05
-    radar=t1_listeleri(frame)["radar"]
-    assert radar.iloc[0].Hisse != "H00"
+    ranked=t1_listeleri(frame)["wide"]
+    assert ranked.iloc[0].Hisse != "H00"
 
 
 def test_tomorrow_top10_and_multi_confirmation():

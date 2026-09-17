@@ -16,6 +16,56 @@ import numpy as np
 import pandas as pd
 
 
+def intraday_entry_evidence(bars: pd.DataFrame, metadata: Any,
+                            benchmark: pd.DataFrame | None = None) -> dict[str, Any]:
+    """Use only completed, recent bars available at the signal cut-off."""
+    if (bars is None or len(bars) < 3 or getattr(metadata, "is_stale", True)
+            or getattr(metadata, "is_delayed", True)):
+        return {"live_confirmed": False}
+    last_at = pd.Timestamp(bars.index[-1])
+    fetched = pd.Timestamp(getattr(metadata, "fetched_at", None))
+    if pd.isna(fetched) or last_at.date() != fetched.date():
+        return {"live_confirmed": False}
+    interval = pd.Timedelta(minutes=15)
+    signal_at = last_at + interval
+    if fetched < signal_at or fetched - signal_at > pd.Timedelta(minutes=2):
+        return {"live_confirmed": False}
+    session = bars[bars.index.date == last_at.date()].copy()
+    if len(session) < 3 or session["Volume"].fillna(0).le(0).all():
+        return {"live_confirmed": False}
+    typical = (session["High"] + session["Low"] + session["Close"]) / 3
+    cumulative = session["Volume"].cumsum().replace(0, np.nan)
+    vwap = (typical * session["Volume"]).cumsum() / cumulative
+    price = float(session["Close"].iloc[-1])
+    if not np.isfinite(price) or price <= 0 or not np.isfinite(vwap.iloc[-1]):
+        return {"live_confirmed": False}
+    high = float(session["High"].max())
+    last = session.iloc[-1]
+    spread = max(float(last.High-last.Low), .000001)
+    upper_wick = float(last.High-max(last.Open,last.Close)) / spread
+    prior_high = float(session["High"].iloc[:-1].max())
+    failed_breakout = max(0., (prior_high-price)/price) if float(last.High) > prior_high else 0.
+    flow = (2 * session["Close"]-session["High"]-session["Low"])/(
+        session["High"]-session["Low"]).replace(0, np.nan)
+    cmf = float((flow.fillna(0)*session["Volume"]).sum()/session["Volume"].sum())
+    market_return = None
+    if benchmark is not None and not benchmark.empty:
+        market = benchmark[benchmark.index.date == last_at.date()]
+        market = market.loc[:last_at]
+        if len(market) >= 2 and market["Close"].iloc[0] > 0:
+            market_return = float(market["Close"].iloc[-1]/market["Close"].iloc[0]-1)
+    stock_return = float(price/session["Open"].iloc[0]-1)
+    return {"live_confirmed": True, "signal_timestamp": signal_at.isoformat(),
+            "signal_price": price, "Güncel Fiyat": price,
+            "vwap_distance": price/float(vwap.iloc[-1])-1,
+            "vwap_slope": float(vwap.iloc[-1]/vwap.iloc[-3]-1) if vwap.iloc[-3] > 0 else 0.,
+            "upper_wick": upper_wick, "failed_breakout": failed_breakout,
+            "cmf20": cmf, "distance_intraday_high": max(0., high/price-1),
+            "intraday_return": stock_return,
+            "intraday_relative_strength": (stock_return-market_return if market_return is not None else None),
+            "intraday_bar_count": len(session)}
+
+
 MODEL_VERSION = "v10.3.3-final-update-1"
 RADAR_COLUMNS = ["Sıra", "Hisse", "Movement Score", "Güven", "Günlük %",
                  "Hacim Oranı", "Breakout Durumu", "T+1 Geniş 30 Sırası",
@@ -84,14 +134,26 @@ def t1_listeleri(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
     work["Confidence"] = 100 * coverage * np.where(live, 1., .45) * (data_ok / 100)
     wide = work.sort_values(["Raw Movement Score", "Hisse"], ascending=[False,True],kind="stable").head(30).copy()
     wide["T+1 Geniş 30 Sırası"] = np.arange(1, len(wide)+1)
-    radar = wide.sort_values(["Raw Movement Score", "Hisse"], ascending=[False,True],kind="stable").head(10).copy()
+    # The visible top list is a qualified signal list, not a compulsory ranking.
     # Seçkin kendi precision kapılarına sahiptir; geniş/radar boolean'ını paylaşmaz.
     security = _text(wide, "Menkul Türü", "NORMAL_PAY")
     levels = wide.get("T+1 Seviye Doğrulandı", pd.Series(False, index=wide.index)).fillna(False).astype(bool)
     directional = (_num(wide, "plus_di", 1) > _num(wide, "minus_di", 0)) & (_num(wide, "Günlük Değişim %", 0) >= 0)
-    elite_mask = (live.reindex(wide.index) & (wide["Confidence"] >= 70) & (wide["Movement Score"] >= 62) & (wide["Radar Kalite Skoru"] >= 60) &
+    entry = ((_num(wide, "vwap_distance", 0).between(-.015, .045)) &
+             (_num(wide, "vwap_slope", 0) >= -.002) &
+             (_num(wide, "upper_wick", 0) <= .45) &
+             (_num(wide, "failed_breakout", 0) <= .005) &
+             (_num(wide, "cmf20", 0) > 0) &
+             (_num(wide, "intraday_return", 0) > 0) &
+             (_num(wide, "distance_intraday_high", 0) <= .035) &
+             (_num(wide, "intraday_relative_strength", 0) > 0))
+    evidence_threshold = ((wide["Confidence"] >= 70) |
+                          ((wide["Confidence"] >= 55) & (wide["Movement Score"] >= 82) &
+                           (wide["Radar Kalite Skoru"] >= 75)))
+    elite_mask = (live.reindex(wide.index) & evidence_threshold & entry & (wide["Movement Score"] >= 62) & (wide["Radar Kalite Skoru"] >= 60) &
                   (liquidity.reindex(wide.index) >= 35) & directional & levels & security.eq("NORMAL_PAY"))
     elite = wide[elite_mask].sort_values(["Radar Kalite Skoru", "Movement Score"], ascending=False).head(10).copy()
+    radar = elite.sort_values(["Raw Movement Score", "Hisse"], ascending=[False, True], kind="stable").copy()
     elite_symbols = set(elite.get("Hisse", pd.Series(dtype=str)).astype(str))
     radar["Sıra"] = np.arange(1, len(radar)+1)
     radar["Güven"] = pd.cut(radar["Confidence"], [-np.inf,50,70,85,np.inf], labels=["DÜŞÜK","ORTA","YÜKSEK","ÇOK YÜKSEK"]).astype(str)

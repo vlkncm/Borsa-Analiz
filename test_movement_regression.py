@@ -39,13 +39,13 @@ def test_top10_no_saturation_and_deterministic_ranking():
     rows = [changed(Hisse=f"S{i:02}", ret_5=.02+i*.006,
                     relative_strength_bist_5=.015+i*.005) for i in range(40)]
     frame = pd.DataFrame(rows)
-    a = t1_listeleri(frame)["radar"]
-    b = t1_listeleri(frame.sample(frac=1, random_state=8))["radar"]
+    a = t1_listeleri(frame)["wide"].head(10)
+    b = t1_listeleri(frame.sample(frac=1, random_state=8))["wide"].head(10)
     assert list(a.Hisse) == list(b.Hisse)
     assert a["Movement Score"].nunique() == 10
     assert (a["Movement Score"].round(1) < 100).all()
     tied = pd.DataFrame([changed(Hisse=s) for s in ("Z", "A", "B")])
-    assert list(t1_listeleri(tied)["radar"].Hisse) == ["A", "B", "Z"]
+    assert list(t1_listeleri(tied)["wide"].Hisse) == ["A", "B", "Z"]
 
 
 def test_missing_and_nonfinite_are_not_positive_defaults():
@@ -60,7 +60,8 @@ def test_unconfirmed_price_cannot_be_elite_or_high_confidence():
                   "T+1 Seviye Doğrulandı": True, "Günlük Değişim %": 2.5})
     groups = t1_listeleri(pd.DataFrame([row]))
     assert groups["elite"].empty
-    assert groups["radar"].iloc[0]["Güven"] == "DÜŞÜK"
+    assert groups["radar"].empty
+    assert groups["wide"].iloc[0]["Confidence"] < 50
     assert groups["wide"].iloc[0]["Movement Score"] > groups["wide"].iloc[0]["Confidence"]
 
 
@@ -68,7 +69,7 @@ def test_bearish_market_allows_positive_divergence():
     strong = changed(Hisse="STRONG", benchmark_ret_5=-.05)
     weak = changed(Hisse="WEAK", benchmark_ret_5=-.05, relative_strength_bist_5=-.04, ret_5=-.09, ret_1=-.02)
     groups = t1_listeleri(pd.DataFrame([weak, strong]))
-    assert groups["radar"].iloc[0].Hisse == "STRONG"
+    assert groups["wide"].iloc[0].Hisse == "STRONG"
     assert groups["wide"].iloc[0]["Movement Score"] > 62
     assert t1_movement_trade_scores(weak)[0] < 62
 

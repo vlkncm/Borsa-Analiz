@@ -1424,6 +1424,14 @@ class DailyTradeWorker(QObject):
             from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
             from gunluk_trade_motoru import gunluk_trade_analiz
             rows, attempted, received, unavailable = [], 0, 0, 0
+            from veri_saglayici import get_daily_ohlcv
+            try:
+                benchmark, benchmark_meta = get_daily_ohlcv("XU100.IS", "6mo")
+                if benchmark_meta.is_stale or len(benchmark) < 61:
+                    benchmark = None
+            except Exception:
+                benchmark = None
+            benchmark_close = benchmark["Close"] if benchmark is not None else None
             symbols = tum_bist_hisseleri()
             for index, symbol in enumerate(symbols, 1):
                 if QThread.currentThread().isInterruptionRequested():
@@ -1433,6 +1441,7 @@ class DailyTradeWorker(QObject):
                     symbol, interval=self.interval, hesap_buyuklugu=self.account or None,
                     risk_yuzdesi=self.risk, min_risk_getiri=self.min_rr,
                     sadece_teyitli=self.confirmed_only,
+                    benchmark_close=benchmark_close,
                 )
                 attempted += 1
                 if row.get("Neden Kodu") in {"MISSING_PRICE_DATA", "SYMBOL_MAPPING_FAILED"}: unavailable += 1
@@ -1871,12 +1880,12 @@ class NextDayWorker(QObject):
     def run(self):
         try:
             from bist_evreni import kap_menkul_turleri, son_evren_durumu, tum_bist_hisseleri
-            from ertesi_gun_motoru import erken_aday
+            from ertesi_gun_motoru import erken_aday, piyasa_rejimi
             from tarama_seffafligi import TaramaOzeti
             from tahmin_deposu import TahminDeposu
             from t1t2_tahmin_sistemi import (EveningSnapshotStore, cross_sectional_rank, point_in_time_features,
                                              load_artifacts, predict_symbol, settle_pending_snapshots)
-            from veri_saglayici import get_daily_ohlcv
+            from veri_saglayici import get_daily_ohlcv, get_intraday_ohlcv
             symbols, rows = tum_bist_hisseleri(), []
             security_types = kap_menkul_turleri()
             t1_predictions, t2_predictions = [], []
@@ -1893,6 +1902,8 @@ class NextDayWorker(QObject):
             try:
                 benchmark, benchmark_meta = get_daily_ohlcv("XU100.IS", "2y")
                 if getattr(benchmark_meta, "is_stale", True): benchmark = None
+                if benchmark is not None:
+                    regime = piyasa_rejimi(benchmark)
             except Exception:
                 benchmark = None
             for index, symbol in enumerate(symbols, 1):
@@ -1980,9 +1991,6 @@ class NextDayWorker(QObject):
                     frame[f"{prefix} Risk/Getiri"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("risk_reward"))
                     frame[f"{prefix} Net EV"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("net_ev_pct"))
                     frame[f"{prefix} Seviye Doğrulandı"] = frame["Hisse"].map(lambda s, r=ranks: r.get(str(s), {}).get("levels_valid", False))
-                # Aksam siralamasi degistirilemez snapshot olarak saklanir.
-                for item in (*t1_ranked, *t2_ranked):
-                    snapshot_store.save(item)
                 duplicate_hashes = pd.Series([p.feature_hash for p in t1_predictions]).duplicated(keep=False)
                 if duplicate_hashes.any():
                     message_hash = f" | UYARI: {int(duplicate_hashes.sum())} sembolde ayni feature hash"
@@ -2000,6 +2008,84 @@ class NextDayWorker(QObject):
                 message += message_hash
             if frame.empty:
                 message += " Bugün güvenilir güçlü hareket adayı bulunamadı."
+            # Verify a current entry only during the session. Daily OHLCV never
+            # certifies a live signal or supplies its entry price.
+            if not frame.empty and datetime.now().weekday() < 5 and 10 <= datetime.now().hour < 18:
+                from trade_adaylari import intraday_entry_evidence, t1_listeleri
+                try:
+                    benchmark_intra, benchmark_intra_meta = get_intraday_ohlcv("XU100.IS", "15m", "5d")
+                    if benchmark_intra_meta.is_stale or benchmark_intra_meta.is_delayed:
+                        benchmark_intra = None
+                except Exception:
+                    benchmark_intra = None
+                wide_symbols = set(t1_listeleri(frame)["wide"]["Hisse"].astype(str).head(30))
+                verified = 0
+                for idx in (frame.index[frame["Hisse"].astype(str).isin(wide_symbols)]
+                            if benchmark_intra is not None else []):
+                    if QThread.currentThread().isInterruptionRequested():
+                        break
+                    try:
+                        symbol = str(frame.at[idx, "Hisse"]) + ".IS"
+                        intra, intra_meta = get_intraday_ohlcv(symbol, "15m", "5d")
+                        evidence = intraday_entry_evidence(intra, intra_meta, benchmark_intra)
+                        for key, value in evidence.items():
+                            frame.at[idx, key] = value
+                        if evidence.get("live_confirmed") and str(frame.at[idx, "Karar"]) == "GÜNCEL FİYATLA DOĞRULA":
+                            frame.at[idx, "Karar"] = "GÜNCEL FİYAT DOĞRULANDI"
+                        verified += bool(evidence.get("live_confirmed"))
+                    except Exception:
+                        frame.at[idx, "live_confirmed"] = False
+                message += f" | Intraday fiyat teyidi: {verified}/{len(wide_symbols)}"
+            if not frame.empty and "signal_timestamp" in frame:
+                now_at = pd.Timestamp.now(tz="Europe/Istanbul")
+                ages = now_at - pd.to_datetime(frame["signal_timestamp"], errors="coerce", utc=True).dt.tz_convert("Europe/Istanbul")
+                frame.loc[ages > pd.Timedelta(minutes=2), "live_confirmed"] = False
+            if not frame.empty:
+                from post_signal_performance import RadarSignalStore, evaluate_intraday_signal
+                from trade_adaylari import t1_listeleri
+                # Preserve the complete model ranking, but only a verified
+                # intraday price may create a measurable issued signal.
+                issued_at = datetime.now().astimezone().isoformat(timespec="seconds")
+                by_symbol = frame.set_index("Hisse")
+                for item in (*t1_ranked, *t2_ranked):
+                    symbol = str(item["symbol"]).replace(".IS", "")
+                    source = by_symbol.loc[symbol] if symbol in by_symbol.index else None
+                    verified_price = (source.get("signal_price") if source is not None and
+                                      source.get("live_confirmed") == True else None)
+                    recorded = {**item, "signal_timestamp": issued_at,
+                                "signal_price": verified_price,
+                                "signal_price_verified": verified_price is not None}
+                    recorded["cache_key"] = (f"{item.get('cache_key') or (symbol + ':' + str(item['horizon']))}"
+                                             f"|issued:{issued_at}")
+                    snapshot_store.save(recorded)
+                signal_store = RadarSignalStore(veri_klasoru() / "tahmin_gecmisi.sqlite3")
+                groups = t1_listeleri(frame)
+                qualified = groups["wide"].set_index("Hisse")
+                for _, item in groups["radar"].iterrows():
+                    symbol = str(item["Hisse"])
+                    evidence = qualified.loc[symbol]
+                    signal_store.save({
+                        "signal_timestamp": evidence.get("signal_timestamp"),
+                        "symbol": symbol, "signal_price": evidence.get("signal_price"),
+                        "movement_score": float(evidence["Movement Score"]),
+                        "confidence": float(evidence["Confidence"]),
+                        "market_regime": str(evidence.get("Piyasa Rejimi", regime)),
+                        "rank": int(item["Sıra"]), "bar_minutes": 15,
+                    })
+                # Only completed future bars may attach labels to immutable signals.
+                settled = 0
+                for pending in signal_store.pending():
+                    try:
+                        signal_day = pd.Timestamp(pending["signal_timestamp"]).date()
+                        if (datetime.now().date() - signal_day).days > 7:
+                            continue
+                        future, _ = get_intraday_ohlcv(str(pending["symbol"]) + ".IS", "15m", "5d")
+                        result = evaluate_intraday_signal(pending, future)
+                        settled += signal_store.attach_outcome(
+                            int(pending["id"]), result, datetime.now().isoformat(timespec="seconds"))
+                    except Exception:
+                        continue
+                message += f" | Sinyal sonrası etiket: {settled}"
             self.finished.emit(True, frame, message)
         except Exception:
             self.finished.emit(False, pd.DataFrame(), traceback.format_exc())
@@ -2228,9 +2314,9 @@ class MainWindow(QMainWindow):
             compact = all_results[[c for c in visible_columns if c in all_results.columns]].copy()
             self.tum.load(compact)
 
-            trade_frame = sade_firsatlar(all_results, "gunluk", limit=5, sure="Gün içi")
-            if trade_frame.empty:
-                trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
+            # A daily report has no verified intraday entry. Its fallback rows
+            # must retain the explicit current-price confirmation requirement.
+            trade_frame = gunluk_rapor_adaylari(all_results, limit=5)
             self.daily_trade.report_fallback = trade_frame.copy()
             self.daily_trade.table.load(trade_frame)
 

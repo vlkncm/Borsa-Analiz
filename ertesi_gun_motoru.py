@@ -143,6 +143,11 @@ def t1_movement_trade_scores(features: dict[str, float]) -> tuple[float, float, 
         "risk_reward": -8 * t(max(0., 1.5 - g("risk_reward", 1.5))),
         "bearish_weak_rs": -15 * t(max(0., -g("benchmark_ret_5")) / .04) * (1 - max(0., t(rs / .04))),
         "overextension": -8 * t(max(0., g("move_realized_5_atr") - 3) / 3),
+        "vwap_extension": -12 * t(max(0., g("vwap_distance") - .045) / .025),
+        "late_entry": -10 * t(max(0., g("intraday_return") - .06) / .04)
+        * t(max(0., g("distance_intraday_high") - .01) / .02),
+        "volume_climax": -8 * t(max(0., g("relative_volume") - 3) / 2)
+        * t(max(0., .5 - g("close_location", .5)) * 3),
     })
     scale = math.sqrt(sum(w*w for w in weights.values()))
     raw = sum(parts.values()) / scale
